@@ -226,7 +226,15 @@ mon__supervise_all() {
   printf '\n  %s== 🔁 Supervisor 全適用 ==%s\n' "$C_CYAN" "$C_RESET"
   printf '  Projects 配下の Git リポジトリを列挙し、起動対象を確認してから開始します。\n'
   printf '  既に稼働中、cron 登録あり、自分自身のリポジトリは既定で skip します。\n\n'
-  bash "$SCRIPT_DIR/autonomy.sh" start --all || true
+  bash "$SCRIPT_DIR/autonomy.sh" start --all --dry-run || true
+  printf '\n'
+  local ans
+  read -rp "  上記対象で supervisor 全適用を実行しますか? (Y/N): " ans || true
+  if [[ "${ans^^}" == "Y" ]]; then
+    bash "$SCRIPT_DIR/autonomy.sh" start --all --yes || true
+  else
+    printf '  全適用をキャンセルしました\n'
+  fi
   read -rp "  Enter で監視ダッシュボードへ戻る " _ || true
   tput civis 2>/dev/null || true
 }
@@ -376,7 +384,7 @@ mon__project_state_badge() {
   if sup__is_running "$project"; then printf '🔁 自律中(supervisor)'; return 0; fi
   if "$TMUX_BIN" has-session -t "claudeos-$safe" 2>/dev/null; then printf '🟢 稼働中'; return 0; fi
   if cron__list 2>/dev/null | awk -F'|' -v p="$project" '$2==p {f=1} END{exit !f}'; then printf '📅 cron登録'; return 0; fi
-  printf '⚪ 未管理'
+  printf '○ 未管理'
 }
 
 # mon__cron_register <project> — cron スケジュール登録 (cron-schedule.sh add へ委譲)
@@ -421,7 +429,7 @@ mon__onboard() {
     if mon__is_github "${projs[$i]}"; then gh="🐙"; else gh="　"; fi
     printf '   %s[%d]%s %s %-30s %s\n' "$C_YELLOW" "$((i + 1))" "$C_RESET" "$gh" "${projs[$i]}" "$(mon__project_state_badge "${projs[$i]}")"
   done
-  printf '   %s🐙=GitHubレポジトリ  ⚪未管理 が追加候補  番号を選ぶと管理方法を選べます%s\n' "$C_GRAY" "$C_RESET"
+  printf '   %s🐙=GitHubレポジトリ  ○未管理 が追加候補  番号を選ぶと管理方法を選べます%s\n' "$C_CYAN" "$C_RESET"
   local sel p; read -rp "  追加する番号 (0=キャンセル / u=未管理のみ / a=全表示): " sel || true
   case "$sel" in
     u|U) mon__onboard unmanaged; return 0 ;;
@@ -434,7 +442,7 @@ mon__onboard() {
     printf '   %s[1]%s 🔁 supervisor 開始  (Goal到達まで自動で再開し続ける)\n' "$C_GREEN" "$C_RESET"
     printf '   %s[2]%s ▶️  1回だけ自律起動 (BG)  (まず1セッションだけ試す)\n' "$C_GREEN" "$C_RESET"
     printf '   %s[3]%s 📅 cron スケジュール登録  (毎週この曜日・時刻に動かす)\n' "$C_GREEN" "$C_RESET"
-    printf '   %s[0]%s キャンセル\n\n' "$C_GRAY" "$C_RESET"
+    printf '   %s[0]%s キャンセル\n\n' "$C_YELLOW" "$C_RESET"
     local act; read -rp "  番号を選択: " act || true
     case "$act" in
       1) mon__supervise_start "$p" ;;
@@ -450,32 +458,43 @@ mon__onboard() {
 # ------------------------------------------------------------
 # 描画
 # ------------------------------------------------------------
-mon__hr() { printf '  %s%s%s\n' "$C_GRAY" "$(printf '─%.0s' {1..56})" "$C_RESET"; }
+mon__eol() {
+  [[ -t 1 && "${CLAUDEOS_PLAIN_OUTPUT:-0}" != "1" ]] && printf '\033[K'
+  return 0
+}
+mon__hr() { printf '  %s%s%s' "$C_CYAN" "$(printf '─%.0s' {1..56})" "$C_RESET"; mon__eol; printf '\n'; }
 
 mon__render_once() {
   local stamp; stamp="$(date '+%Y-%m-%d %H:%M:%S')"
-  printf '\n  %s🎛️  ClaudeOS コントロールセンター%s  (%s秒更新)   %s%s%s\n' \
-    "$C_CYAN" "$C_RESET" "$MON_REFRESH" "$C_GRAY" "$stamp" "$C_RESET"
+  printf '\n  %s🎛️  ClaudeOS コントロールセンター%s  (%s秒更新)   %s%s%s' \
+    "$C_CYAN" "$C_RESET" "$MON_REFRESH" "$C_CYAN" "$stamp" "$C_RESET"
+  mon__eol; printf '\n'
   mon__hr
   # --- 実行中セッション (タブ) ---
-  printf '   %s● 実行中セッション%s  %s#  %-22s %-9s %-9s%s\n' \
-    "$C_GREEN" "$C_RESET" "$C_GRAY" "プロジェクト" "経過" "残り" "$C_RESET"
+  printf '   %s● 実行中セッション%s  %s#  %-22s %-9s %-9s%s' \
+    "$C_GREEN" "$C_RESET" "$C_CYAN" "プロジェクト" "経過" "残り" "$C_RESET"
+  mon__eol; printf '\n'
   local any=0 tab proj el rem has ic rem_s
   while IFS='|' read -r tab proj el rem has; do
     [[ -z "$tab" ]] && continue
     any=1
     ic="$(mon__status_icon "$rem" "$has")"
     if [[ "$has" == "1" ]]; then rem_s="$(mon__fmt_hms "$rem")"; else rem_s="—"; fi
-    printf '   %s%2s%s  %-22s %-9s %-9s %s\n' \
+    printf '   %s%2s%s  %-22s %-9s %-9s %s' \
       "$C_YELLOW" "$tab" "$C_RESET" "$proj" "$(mon__fmt_hms "$el")" "$rem_s" "$ic"
+    mon__eol; printf '\n'
   done < <(mon__collect)
-  (( any == 0 )) && printf '   %s(実行中なし)%s\n' "$C_GRAY" "$C_RESET"
+  if (( any == 0 )); then
+    printf '   %s(実行中なし)%s' "$C_YELLOW" "$C_RESET"
+    mon__eol; printf '\n'
+  fi
   mon__hr
   # --- 登録プロジェクト + supervisor ---
   # NOTE: CJK header compensation: "プロジェクト"=6chars×2display_cols=12display.
   #       %-20s → 6chars+14spaces = 12+14=26 display cols (matches data %-26s).
-  printf '   %s● 登録 / supervisor%s  %s#  %-20s %-4s %-14s %5s%s\n' \
-    "$C_GREEN" "$C_RESET" "$C_GRAY" "プロジェクト" "tmux" "supervisor" "rst/min" "$C_RESET"
+  printf '   %s● 登録 / supervisor%s  %s#  %-20s %-4s %-14s %5s%s' \
+    "$C_GREEN" "$C_RESET" "$C_CYAN" "プロジェクト" "tmux" "supervisor" "rst/min" "$C_RESET"
+  mon__eol; printf '\n'
   local rn=0 rp rrun rstat rrst rmin sicon supcol
   while IFS='|' read -r rp rrun rstat rrst rmin; do
     [[ -z "$rp" ]] && continue
@@ -486,17 +505,23 @@ mon__render_once() {
       running)            supcol="$C_GREEN" ;;
       goal-reached)       supcol="$C_CYAN" ;;
       blocked|crash-loop) supcol="$C_RED" ;;
-      *)                  supcol="$C_GRAY" ;;
+      *)                  supcol="$C_YELLOW" ;;
     esac
-    printf '   %s%2s%s  %-26s %-4s %s%-14s%s %3s/%-3s\n' \
+    printf '   %s%2s%s  %-26s %-4s %s%-14s%s %3s/%-3s' \
       "$C_YELLOW" "$rn" "$C_RESET" "$rp" "$sicon" "$supcol" "$rstat" "$C_RESET" "$rrst" "$rmin"
+    mon__eol; printf '\n'
   done < <(mon__collect_registered)
-  (( rn == 0 )) && printf '   %s(登録なし — 項14 cron 登録 / autonomy.sh start)%s\n' "$C_GRAY" "$C_RESET"
+  if (( rn == 0 )); then
+    printf '   %s(登録なし — 項14 cron 登録 / autonomy.sh start)%s' "$C_YELLOW" "$C_RESET"
+    mon__eol; printf '\n'
+  fi
   mon__hr
-  printf '   %s[1-9]%s介入FG %sCtrl-b 0%s監視 %s[n]%s新規追加 %s[a]%s全監督 %s[l]%s起動 %s[s]%s監督開始 %s[x]%s監督停止 %s[d]%s登録削除 %s[q]%s終了\n' \
+  printf '   %s[1-9]%s介入FG %sCtrl-b 0%s監視 %s[n]%s新規追加 %s[a]%s全監督 %s[l]%s起動 %s[s]%s監督開始 %s[x]%s監督停止 %s[d]%s登録削除 %s[q]%s終了' \
     "$C_GREEN" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_YELLOW" "$C_RESET" \
     "$C_YELLOW" "$C_RESET" "$C_YELLOW" "$C_RESET" "$C_YELLOW" "$C_RESET" "$C_RED" "$C_RESET" "$C_YELLOW" "$C_RESET"
-  printf '   %s※ 操作キーはこの画面でのみ有効。Claude介入中は Ctrl-b 0 で戻ってから押す%s\n' "$C_GRAY" "$C_RESET"
+  mon__eol; printf '\n'
+  printf '   %s※ 操作キーはこの画面でのみ有効。Claude介入中は Ctrl-b 0 で戻ってから押す%s' "$C_CYAN" "$C_RESET"
+  mon__eol; printf '\n'
 }
 
 # mon__dashboard — window 0 で動くライブループ (open が内部起動)

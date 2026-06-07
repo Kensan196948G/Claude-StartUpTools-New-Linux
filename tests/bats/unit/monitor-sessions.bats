@@ -15,6 +15,7 @@ setup() {
 
   # tmux スタブ: MON_TEST_SESSIONS (空白区切り) をセッション表として応答
   make_stub_bin tmux '
+echo "$@" >> "$TEST_TEMP/tmux.log"
 case "${1:-}" in
   list-sessions)
     for s in ${MON_TEST_SESSIONS:-}; do echo "$s"; done ;;
@@ -35,6 +36,13 @@ case "${1:-}" in
   *) exit 0 ;;
 esac
 '
+  # autonomy.sh が supervisor を spawn する経路を安全に記録する
+  make_stub_bin setsid '
+echo "$@" >> "$TEST_TEMP/setsid.log"
+p="${4:-}"
+[[ -n "$p" ]] && { mkdir -p "$CCSU_SUP_DIR"; printf "{\"project\":\"%s\",\"status\":\"running\",\"pid\":%s,\"restarts_today\":0,\"minutes_today\":0}\n" "$p" "$$" > "$CCSU_SUP_DIR/$p.json"; }
+exit 0
+'
   # cron-manager 用 crontab スタブ (CRON_STORE 不在 → 登録なし)
   export CRON_STORE="$TEST_TEMP/crontab.store"
   make_stub_bin crontab '
@@ -47,6 +55,13 @@ esac
 '
   # supervisor 状態ディレクトリ (空 → supervisor なし)
   export CCSU_SUP_DIR="$TEST_TEMP/sup"
+  export CCSU_SUP_CRON_LAUNCHER="$TEST_TEMP/supervisor-cron-launcher.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$CCSU_SUP_CRON_LAUNCHER"
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  export CCSU_CRON_LAUNCHER="$TEST_TEMP/cron-launcher.sh"
+  export CCSU_CRON_LOGS_DIR="$TEST_TEMP/logs"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$CCSU_CRON_LAUNCHER"
+  chmod +x "$CCSU_CRON_LAUNCHER"
   # config (全プロジェクト列挙 mon__all_projects 用)
   export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config.json"
   printf '{ "projects": "%s/projects" }\n' "$TEST_TEMP" > "$AI_STARTUP_CONFIG_PATH"
@@ -128,6 +143,15 @@ EOF
   [[ "$output" == *"(実行中なし)"* ]]
 }
 
+@test "--once: 実行中なしの行に旧プロジェクト名の残骸を出さない" {
+  export MON_TEST_SESSIONS=""
+  export MON_TEST_PROJ="CivilPDF-DX"
+  run bash "$SCRIPT" --once
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(実行中なし)"* ]]
+  [[ "$output" != *"(実行中なし)-DX"* ]]
+}
+
 @test "--once: duration ありで経過/残りと プロジェクト名を表示" {
   export MON_TEST_SESSIONS="claudeos-MyProj"
   export MON_TEST_CREATED=$(( $(date +%s) - 3600 ))
@@ -202,6 +226,54 @@ EOF
   [[ "$output" != *"project=ProjA"* ]]
 }
 
+@test "mon__action l: 登録プロジェクトを1回だけBG起動し起動確認する" {
+  _mon_seed_cron Alpha
+  export MON_TEST_SESSIONS="claudeos-Alpha"
+  run bash -c "source '$SCRIPT'; printf '1\n\n' | mon__action l"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"セッション起動: claudeos-Alpha"* ]]
+}
+
+@test "mon__action s: cronを外してsupervisor開始する" {
+  _mon_seed_cron Alpha
+  run bash -c "source '$SCRIPT'; printf '1\nY\n\n' | mon__action s"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cron 削除: Alpha"* ]]
+  grep -q "__run Alpha" "$TEST_TEMP/setsid.log"
+  run cat "$CRON_STORE"
+  [[ "$output" != *"project=Alpha"* ]]
+}
+
+@test "mon__action x: supervisor停止要求を出す" {
+  mkdir -p "$CCSU_SUP_DIR"
+  printf '{ "project":"Alpha","status":"running","pid":%s,"restarts_today":0,"minutes_today":0 }\n' "$$" > "$CCSU_SUP_DIR/Alpha.json"
+  run bash -c "source '$SCRIPT'; printf '1\n\n' | mon__action x"
+  [ "$status" -eq 0 ]
+  [ -f "$CCSU_SUP_DIR/Alpha.stop" ]
+}
+
+@test "mon__deregister: cron/state/tmuxを削除する" {
+  _mon_seed_cron Alpha
+  mkdir -p "$CCSU_SUP_DIR"
+  printf '{ "project":"Alpha","status":"running","pid":999999,"restarts_today":0,"minutes_today":0 }\n' > "$CCSU_SUP_DIR/Alpha.json"
+  export MON_TEST_SESSIONS="claudeos-Alpha"
+  run bash -c "source '$SCRIPT'; printf '1\nY\n\n' | mon__deregister"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"登録削除完了: Alpha"* ]]
+  [ ! -f "$CCSU_SUP_DIR/Alpha.json" ]
+  run cat "$CRON_STORE"
+  [[ "$output" != *"project=Alpha"* ]]
+  grep -q "kill-session -t claudeos-Alpha" "$TEST_TEMP/tmux.log"
+}
+
+@test "mon__supervise_all: dry-run後に人間確認Yで全適用する" {
+  run bash -c "source '$SCRIPT'; printf 'Y\n\n' | mon__supervise_all"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"全適用 計画"* ]]
+  grep -q "__run Alpha" "$TEST_TEMP/setsid.log"
+  grep -q "__run Beta" "$TEST_TEMP/setsid.log"
+}
+
 @test "--once: 登録セクションに cron プロジェクトを表示" {
   _mon_seed_cron ProjA
   export MON_TEST_SESSIONS=""
@@ -224,9 +296,11 @@ EOF
   [[ "$output" == *"Beta"* ]]
 }
 
-@test "mon__project_state_badge: 未管理は ⚪" {
+@test "mon__project_state_badge: 未管理は ○" {
   run bash -c "source '$SCRIPT'; mon__project_state_badge Alpha"
   [[ "$output" == *"未管理"* ]]
+  [[ "$output" == *"○"* ]]
+  [[ "$output" != *"⚪"* ]]
 }
 
 @test "mon__project_state_badge: cron 登録は 📅" {
@@ -258,5 +332,10 @@ EOF
 @test "mon__is_github: .git なし/origin なしは非0" {
   mkdir -p "$TEST_TEMP/projects/PlainDir"   # .git を持たないディレクトリ
   run bash -c "source '$SCRIPT'; mon__is_github PlainDir"
+  [ "$status" -ne 0 ]
+}
+
+@test "monitor UI: 灰色互換変数 C_GRAY を描画に使わない" {
+  run grep -n 'C_GRAY' "$SCRIPT"
   [ "$status" -ne 0 ]
 }
