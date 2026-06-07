@@ -1,0 +1,28 @@
+{
+  "_comment": "/home/kensan/Projects 配下に存在するローカル Git プロジェクト候補の参考一覧。実際の起動候補は config.projects を動的走査する。",
+  "basePath": "/home/kensan/Projects",
+  "projects": [
+    "ArcSphere3D",
+    "Civil-Construction-IMS",
+    "Civil-Draw",
+    "Civil-ITSM-Support",
+    "CivilPDF-DX",
+    "ClaudeCode-StartUpTools-New",
+    "Codex-StartUpTools",
+    "Codex-StartUpTools-New-Linux",
+    "Construction-DX-OS",
+    "Construction-DX-OnePlatform",
+    "Construction-Enterprise-OS",
+    "Construction-LegalOps-DX",
+    "Enterprise-AI-HelpDesk-System",
+    "IT-BCP-ITSCM-System",
+    "ITSM-Management",
+    "Open-BIM-Information-Platform",
+    "PC-Ops-Orchestrator",
+    "Remote-Service-Platform",
+    "ServiceHub-Construction-Platform",
+    "Synapse-OS",
+    "Weather-Marine-Construction-Decision-Support-System",
+    "Windows-Deploy-Management-System"
+  ]
+}

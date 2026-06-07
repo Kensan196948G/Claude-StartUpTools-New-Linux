@@ -1,0 +1,38 @@
+{
+  "PreCompact": [
+    {
+      "name": "memory-mcp-evacuation",
+      "description": "/compact 前に作業状態を Memory MCP へ退避し再開継続性を確保（Memory MCP 未接続時は no-op）"
+    }
+  ],
+  "PreToolUse": [
+    {
+      "name": "agent-risk-check",
+      "description": "2 番目の Claude がリスク判定 (SAFE/CAUTION/BLOCK)",
+      "matcher": "Bash|Edit|Write",
+      "type": "agent"
+    }
+  ],
+  "PostToolUse": [
+    {
+      "name": "capture-result",
+      "description": "主要ツール結果を次の判断に使える形へ整理する"
+    },
+    {
+      "name": "usage-history-recorder",
+      "description": "Agent / Skill / Command / Hook の呼び出しを state.json.learning.usage_history に記録",
+      "matcher": "Agent|Skill|Task"
+    },
+    {
+      "name": "onboarding-refresh-on-stable",
+      "description": "STABLE 判定成立時に /team-onboarding を再実行し ONBOARDING.md を更新（1 時間レート制限 + セッションロック）",
+      "matcher": "Bash"
+    }
+  ],
+  "Stop": [
+    {
+      "name": "session-end",
+      "description": "終了時に状態と再開点を保存する"
+    }
+  ]
+}

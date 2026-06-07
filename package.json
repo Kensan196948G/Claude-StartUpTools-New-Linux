@@ -1,0 +1,36 @@
+{
+  "name": "claude-startup-tools-new-linux",
+  "version": "4.0.0-linux",
+  "description": "ClaudeOS autonomous development startup tools for Linux",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node scripts/dashboards/serve-dashboard.js",
+    "start:dashboard": "node scripts/dashboards/serve-dashboard.js --port 3737",
+    "start:watch": "node scripts/dashboards/watch-and-run.js",
+    "test": "npm run test:bats && npm run test:node",
+    "test:bats": "bats tests/bats/unit/",
+    "test:node": "node --test scripts/**/*.test.js 2>/dev/null || echo 'No Node test files found'",
+    "lint": "shellcheck -S error start.sh lib/*.sh bin/*.sh libexec/*.sh Claude/templates/linux/*.sh scripts/setup/*.sh scripts/tools/*.sh",
+    "audit:scan": "node scripts/tools/run-audit-scan.js",
+    "cmdb:scan": "node scripts/tools/run-cmdb-scan.js"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "keywords": [
+    "claude-code",
+    "autonomous-development",
+    "claudeos",
+    "dashboard",
+    "mission-control"
+  ],
+  "author": "Kensan (Enterprise IT Team)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux.git"
+  },
+  "homepage": "http://localhost:3737/mission-control"
+}

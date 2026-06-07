@@ -1,0 +1,15 @@
+# Default: auto CRLF for Windows text files
+* text=auto
+
+# Shell scripts must always use LF (Linux/macOS execution)
+*.sh text eol=lf
+*.bash text eol=lf
+*.bats text eol=lf
+
+# Node.js hooks run on Linux — must be LF
+*.js text eol=lf
+*.json text eol=lf
+
+# Other Unix-only files
+Makefile text eol=lf
+*.mk text eol=lf

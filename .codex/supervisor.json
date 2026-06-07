@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": "Claude-StartUpTools-New-Linux",
+  "managedBy": "Codex-StartUpTools-New-Linux",
+  "mode": "cto-autonomous",
+  "agentLoop": [
+    "monitor",
+    "build",
+    "verify",
+    "improve"
+  ],
+  "codexOnly": true,
+  "sshEnabled": false,
+  "humanDecisionRequired": [
+    "final-choice",
+    "merge",
+    "release"
+  ],
+  "supervisorAppliedAt": "2026-06-07T10:00:28.2403473+09:00"
+}
