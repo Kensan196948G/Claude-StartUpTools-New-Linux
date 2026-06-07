@@ -1,80 +1,214 @@
-# Claude-StartUpTools-New-Linux
+# 🚀 Claude-StartUpTools-New-Linux
 
-Linux 用の Claude Code 自律開発スタートアップツールです。`/home/kensan/Projects` 配下の Git リポジトリを起動候補として列挙し、Claude Code を tmux 上で起動・監視・自律再開します。
+Linux ローカルで Claude Code を起動し、`/home/kensan/Projects` 配下の Git リポジトリを自律開発対象として管理するスタートアップツールです。
+SSH 接続や Windows/PowerShell 経路は持たず、`tmux`、Supervisor、cron、GitHub Actions を Linux 上で扱います。
 
-## 目的
+```text
+🎛️ Menu       🧠 CTO Claude       🔁 Supervisor       🧪 CI
+   │              │                    │                │
+   ├─ L1/S1 ─────▶│ 1セッション起動     │                │
+   ├─ MO ─────────┼───────────────────▶│ 監視/再開管理   │
+   └─ Tests ──────┴────────────────────┴───────────────▶│
+```
 
-- SSH 接続機能を持たない Linux ローカル専用ランチャー
-- Project ルート配下のフォルダを登録プロジェクト候補として動的検出
-- Supervisor による全登録プロジェクトへの安全な自律再開
-- 数字付き個別選択と全適用の両方を提供
-- CTO 全権委任による自律開発。ただし最終決断は人間が選択
+## ✨ 何をするツールか
 
-## 基本起動
+| アイコン | 機能 | 内容 |
+|---|---|---|
+| 🐧 | Linux専用 | ローカルの `claude` / `tmux` / `cron` / `systemd` を使用 |
+| 📂 | Project候補検出 | `/home/kensan/Projects` 配下の `.git` 付きディレクトリを候補化 |
+| 🎛️ | コントロールセンター | セッション監視、介入、起動、停止、登録削除を1画面で操作 |
+| 🔁 | Supervisor | Goal到達・Blocked・上限到達まで自律再開 |
+| 🔢 | 数字付き選択 | 個別プロジェクトを番号で選んで管理 |
+| 🌐 | 全適用 | 全登録候補へ Supervisor 適用。実行前に人間確認 |
+| 🧠 | CTO委任 | 実装・検証・レビューはClaudeへ委任 |
+| 🧍 | 人間最終判断 | 公開、merge、Secrets、破壊的操作は人間が選択 |
+| 🧪 | 自動検証 | Bats、Node test、shellcheck、GitHub Actions |
+
+## 🧭 全体アーキテクチャ
+
+```mermaid
+flowchart LR
+  User[🧍 人間<br/>最終判断] --> Menu[🎛️ start.sh / menu.sh]
+  Menu --> Start[🚀 start-claude.sh]
+  Menu --> Monitor[🎛️ monitor-sessions.sh]
+  Menu --> Cron[⏰ cron-schedule.sh]
+  Monitor --> Autonomy[🔁 autonomy.sh]
+  Autonomy --> Supervisor[🧩 supervisor.sh]
+  Supervisor --> Launcher[🌙 cron-launcher.sh]
+  Launcher --> Tmux[🖥️ tmux session]
+  Tmux --> Claude[🧠 Claude Code]
+  Claude --> Project[📂 /home/kensan/Projects/*]
+  Project --> GitHub[🐙 GitHub]
+  GitHub --> CI[🧪 Actions CI]
+```
+
+## 🗂️ ディレクトリ構成
+
+```mermaid
+flowchart TD
+  Root[📦 Claude-StartUpTools-New-Linux] --> Bin[🚀 bin/ 起動・操作CLI]
+  Root --> Lib[🧩 lib/ 共通関数]
+  Root --> Exec[🛠️ libexec/ 診断補助]
+  Root --> Config[⚙️ config/ 設定テンプレート]
+  Root --> ClaudeTpl[🧠 Claude/templates/ ClaudeOS正本]
+  Root --> Tests[🧪 tests/bats/ 検証]
+  Root --> Docs[📚 docs/ 運用文書]
+  Root --> GHA[🐙 .github/workflows/ CI]
+```
+
+## ⚡ クイックスタート
 
 ```bash
 cp config/config.json.template config/config.json
 ./start.sh
 ```
 
-メニューでは `L1` がフォアグラウンド起動、`S1` がバックグラウンド自律起動、`MO` が統合コントロールセンターです。
+| キー | アイコン | 動作 |
+|---|---|---|
+| `L1` | 🖥️ | Claude をフォアグラウンド起動 |
+| `S1` | 🌙 | Claude をバックグラウンド自律起動 |
+| `MO` | 🎛️ | コントロールセンターを開く |
+| `15` | 📺 | セッション監視を開く |
+| `14` | ⏰ | cron登録・編集・削除 |
 
-## コントロールセンター
+## 🎛️ コントロールセンター
 
 ```bash
 bash bin/monitor-sessions.sh open
 ```
 
-主な操作:
+```text
+🎛️ ClaudeOS コントロールセンター
+────────────────────────────────────────────────────────
+🟢 実行中セッション      #  プロジェクト     経過    残り
+🟢 登録 / supervisor     #  プロジェクト     tmux   supervisor
+────────────────────────────────────────────────────────
+[1-9]介入  [n]新規追加  [a]全監督  [l]起動  [s]監督開始
+[x]監督停止 [d]登録削除 [q]終了
+```
 
-| キー | 動作 |
-|---|---|
-| `1`-`9` | 実行中Claudeセッションへ介入 |
-| `n` | 全プロジェクトから数字付きで個別追加 |
-| `a` | Supervisor全適用の計画表示と実行確認 |
-| `l` | 登録済みプロジェクトを1回だけ自律起動 |
-| `s` | 登録済みプロジェクトを選んでSupervisor開始 |
-| `x` | Supervisor停止 |
-| `d` | 登録削除 |
-| `q` | コントロールセンター終了 |
+| キー | アイコン | 操作 | 検証方針 |
+|---|---|---|---|
+| `1`-`9` | 🎯 | 実行中セッションへ介入 | tmux window選択を検証 |
+| `n` | 🆕 | 全プロジェクトから個別追加 | 候補列挙・状態バッジを検証 |
+| `a` | 🌐 | Supervisor全適用 | dry-run後に人間確認Yで実行する経路を検証 |
+| `l` | ▶️ | 1回だけBG起動 | cron launcher呼び出しと起動確認を検証 |
+| `s` | 🔁 | Supervisor開始 | cron削除確認とSupervisor起動を検証 |
+| `x` | 🛑 | Supervisor停止 | stop flag生成を検証 |
+| `d` | 🗑️ | 登録削除 | cron/state/tmux削除を検証 |
+| `q` | 🚪 | 終了 | dashboard loop終了 |
 
-## Supervisor 全適用
+## 🔁 Supervisor全適用
 
-まず対象を確認します。
+```mermaid
+sequenceDiagram
+  participant H as 🧍 Human
+  participant M as 🎛️ monitor-sessions.sh
+  participant A as 🔁 autonomy.sh
+  participant P as 📂 Projects
+  participant S as 🧩 Supervisor
+
+  H->>M: [a] 全監督
+  M->>A: start --all --dry-run
+  A->>P: .git付き候補を列挙
+  A-->>H: 対象とskip理由を表示
+  H->>M: Y / N 最終判断
+  M->>A: start --all --yes
+  A->>S: 各プロジェクトをSupervisor管理へ
+```
+
+事前確認:
 
 ```bash
 bash bin/autonomy.sh start --all --dry-run
 ```
 
-確認後に開始します。
+人間確認後の実行:
 
 ```bash
 bash bin/autonomy.sh start --all --yes
 ```
 
-既定では以下を安全のため skip します。
+安全のため、既定では次を skip します。
 
-- 既にSupervisor稼働中のプロジェクト
-- cron登録が残っているプロジェクト
-- このランチャー自身のリポジトリ
+| アイコン | skip対象 |
+|---|---|
+| 🔁 | 既にSupervisor稼働中 |
+| ⏰ | cron登録が残っている |
+| 🧰 | このランチャー自身 |
 
-cron登録済みも含めて開始する場合のみ、意図を理解した上で `--force` を付けます。
+## 🧠 CTO自律開発の境界
 
-## 人間の最終決断
+```mermaid
+flowchart TB
+  CTO[🧠 CTO Claude] --> Do[✅ 自律実行OK]
+  CTO --> Ask[🧍 人間判断が必要]
+  Do --> D1[🔍 調査]
+  Do --> D2[🛠️ 実装]
+  Do --> D3[🧪 テスト]
+  Do --> D4[📚 文書更新]
+  Do --> D5[📦 PR準備]
+  Ask --> A1[🚀 本番公開]
+  Ask --> A2[🔐 Secrets]
+  Ask --> A3[💳 課金]
+  Ask --> A4[🗑️ 破壊的削除]
+  Ask --> A5[🔀 merge / main直push]
+  Ask --> A6[🌐 Supervisor全適用の最終実行]
+```
 
-Claude/CTO は実装、検証、修正、レビュー、文書更新、PR準備を自律実行します。以下は人間の明示選択が必要です。
-
-- 本番公開、外部公開URL切替、課金が発生する操作
-- 秘密情報の登録・削除
-- データ削除、履歴改変、force push
-- main 直push、PR merge
-- 全プロジェクトSupervisor適用の最終実行
-
-## 検証
+## 🧪 検証
 
 ```bash
 npm test
 npm run lint
+bash bin/autonomy.sh start --all --dry-run
 ```
 
-CI は Ubuntu 上で `bats`、Node test、`shellcheck` を実行します。
+| アイコン | コマンド | 確認内容 |
+|---|---|---|
+| 🧪 | `npm test` | Bats + Node test |
+| 🧹 | `npm run lint` | shellcheck |
+| 🌐 | `start --all --dry-run` | 全適用対象とskip理由 |
+| 🎛️ | `monitor-sessions.bats` | 操作キー、色、表示残骸防止 |
+| 🔐 | Security Scan | gitleaks |
+
+## 🎨 表示ポリシー
+
+運用メニューとコントロールセンターは、灰色表示を使いません。
+
+| 用途 | 色 |
+|---|---|
+| 見出し・罫線 | 🟦 シアン |
+| 正常・稼働 | 🟩 緑 |
+| 選択・注意 | 🟨 黄 |
+| 異常・停止 | 🟥 赤 |
+| 補助カテゴリ | 🟪 マゼンタ |
+
+## 🚫 対象外
+
+| アイコン | 対象外 |
+|---|---|
+| 🔌 | SSH接続 |
+| 🪟 | Windows起動経路 |
+| 📜 | PowerShell/Pester |
+| 🌉 | PTY bridge |
+| 📤 | リモート配布 |
+
+## 🐙 GitHub / CI
+
+```mermaid
+flowchart LR
+  Commit[📦 push] --> CI[🧪 CI]
+  Commit --> Sec[🔐 Security Scan]
+  CI --> Bats[🧪 Bats]
+  CI --> Node[🟢 Node test]
+  CI --> Shell[🧹 shellcheck]
+  Sec --> Gitleaks[🔎 gitleaks]
+```
+
+Repository:
+
+```text
+https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux
+```
