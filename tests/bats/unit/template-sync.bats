@@ -63,29 +63,29 @@ teardown() { _bats_common_teardown; }
   grep -q "ClaudeOS project template" "$proj/.claude/CLAUDE.md"
 }
 
-@test "template_sync__apply: CLAUDE.md が同内容ならバックアップを作らない" {
+@test "template_sync__apply: CLAUDE.md が既に存在する場合は上書きしない" {
   printf '# ClaudeOS project template\n%0.sx' {1..90} > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
   local proj="$TEST_TEMP/proj5"
   mkdir -p "$proj/.claude"
-  cp "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md" "$proj/.claude/CLAUDE.md"
+  printf '# project specific config\n%0.sx' {1..90} > "$proj/.claude/CLAUDE.md"
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
-  # .bak ファイルが存在しないこと
+  # プロジェクト固有設定が保護されること
+  grep -q "project specific config" "$proj/.claude/CLAUDE.md"
+  # バックアップが作られないこと
   local bak_count; bak_count="$(find "$proj/.claude" -name "CLAUDE.md.bak-*" | wc -l)"
   [ "$bak_count" -eq 0 ]
 }
 
-@test "template_sync__apply: CLAUDE.md が差分ありならバックアップ→上書き" {
+@test "template_sync__apply: CLAUDE.md が存在しない場合のみ初回配布する" {
   printf '# ClaudeOS project template new\n%0.sx' {1..90} > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
   local proj="$TEST_TEMP/proj6"
-  mkdir -p "$proj/.claude"
-  printf '# old project config\n%0.sx' {1..90} > "$proj/.claude/CLAUDE.md"
+  mkdir -p "$proj"
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
-  # 固定スタンプのバックアップが作られること
-  [ -f "$proj/.claude/CLAUDE.md.bak-20991231-000000" ]
-  # 新内容に更新されること
-  grep -q "new" "$proj/.claude/CLAUDE.md"
+  # 存在しなかった場合は作成されること
+  [ -f "$proj/.claude/CLAUDE.md" ]
+  grep -q "ClaudeOS project template new" "$proj/.claude/CLAUDE.md"
 }
 
 @test "template_sync__apply: .claude ディレクトリがなくても作成する" {

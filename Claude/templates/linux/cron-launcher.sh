@@ -289,13 +289,14 @@ mkdir -p "$PROJECT_DIR/.claude"
 if [[ -f "$_CCSU_TMPL_DIR/START_PROMPT.md" ]]; then
   cp "$_CCSU_TMPL_DIR/START_PROMPT.md" "$PROJECT_DIR/.claude/START_PROMPT.md"
 fi
-# CLAUDE.md: 差分ありならバックアップ→上書き
+# CLAUDE.md: 存在しない場合のみ配布（プロジェクト固有設定を保護）
 if [[ -f "$_CCSU_TMPL_DIR/CLAUDE.md" ]]; then
   _CCSU_DST_CM="$PROJECT_DIR/.claude/CLAUDE.md"
-  if [[ -f "$_CCSU_DST_CM" ]] && ! diff -q "$_CCSU_TMPL_DIR/CLAUDE.md" "$_CCSU_DST_CM" >/dev/null 2>&1; then
-    cp "$_CCSU_DST_CM" "${_CCSU_DST_CM}.bak-$(date +%Y%m%d-%H%M%S)"
+  _CCSU_TMPL_SIZE=$(stat -c%s "$_CCSU_TMPL_DIR/CLAUDE.md" 2>/dev/null || echo 0)
+  if [[ ! -f "$_CCSU_DST_CM" ]] && [[ "$_CCSU_TMPL_SIZE" -ge 100 ]]; then
+    cp "$_CCSU_TMPL_DIR/CLAUDE.md" "$_CCSU_DST_CM"
+    echo "📄 [cron-launcher] CLAUDE.md 初回配布: $PROJECT" >> "$LOG_FILE"
   fi
-  cp "$_CCSU_TMPL_DIR/CLAUDE.md" "$_CCSU_DST_CM"
 fi
 
 # START_PROMPT.md が存在すれば引数として渡し、ClaudeCode を auto mode で起動

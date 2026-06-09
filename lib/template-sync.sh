@@ -40,7 +40,7 @@ template_sync__apply() {
     log_info "📄 START_PROMPT.md 配布済み: $project_dir/.claude/"
   fi
 
-  # CLAUDE.md: 差分ありならバックアップ→上書き
+  # CLAUDE.md: 存在しない場合のみ配布（プロジェクト固有設定を保護）
   local src_cm="$tmpl_dir/CLAUDE.md"
   if [[ -f "$src_cm" ]]; then
     local tmpl_size; tmpl_size=$(stat -c%s "$src_cm" 2>/dev/null || echo 0)
@@ -49,12 +49,9 @@ template_sync__apply() {
       return 0
     fi
     local dst_cm="$project_dir/.claude/CLAUDE.md"
-    if [[ -f "$dst_cm" ]] && ! diff -q "$src_cm" "$dst_cm" >/dev/null 2>&1; then
-      local bak="${dst_cm}.bak-$(_tmpsync__date_stamp)"
-      cp "$dst_cm" "$bak"
-      log_info "💾 CLAUDE.md バックアップ: $(basename "$bak")"
+    if [[ ! -f "$dst_cm" ]]; then
+      cp "$src_cm" "$dst_cm"
+      log_info "📄 CLAUDE.md 初回配布: $dst_cm"
     fi
-    cp "$src_cm" "$dst_cm"
-    log_info "📄 CLAUDE.md 配布済み: $dst_cm"
   fi
 }
