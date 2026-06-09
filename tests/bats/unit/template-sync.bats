@@ -53,20 +53,21 @@ teardown() { _bats_common_teardown; }
 
 # ---- CLAUDE.md -------------------------------------------------
 @test "template_sync__apply: CLAUDE.md を初回配布する" {
-  printf 'claude md content\n' > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
+  # 100 bytes 以上のテンプレートが必要（サイズガード対応）
+  printf '# ClaudeOS project template\n%0.sx' {1..90} > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
   local proj="$TEST_TEMP/proj4"
   mkdir -p "$proj"
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
   [ -f "$proj/.claude/CLAUDE.md" ]
-  grep -q "claude md content" "$proj/.claude/CLAUDE.md"
+  grep -q "ClaudeOS project template" "$proj/.claude/CLAUDE.md"
 }
 
 @test "template_sync__apply: CLAUDE.md が同内容ならバックアップを作らない" {
-  printf 'same\n' > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
+  printf '# ClaudeOS project template\n%0.sx' {1..90} > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
   local proj="$TEST_TEMP/proj5"
   mkdir -p "$proj/.claude"
-  printf 'same\n' > "$proj/.claude/CLAUDE.md"
+  cp "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md" "$proj/.claude/CLAUDE.md"
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
   # .bak ファイルが存在しないこと
@@ -75,16 +76,16 @@ teardown() { _bats_common_teardown; }
 }
 
 @test "template_sync__apply: CLAUDE.md が差分ありならバックアップ→上書き" {
-  printf 'new content\n' > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
+  printf '# ClaudeOS project template new\n%0.sx' {1..90} > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
   local proj="$TEST_TEMP/proj6"
   mkdir -p "$proj/.claude"
-  printf 'old content\n' > "$proj/.claude/CLAUDE.md"
+  printf '# old project config\n%0.sx' {1..90} > "$proj/.claude/CLAUDE.md"
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
   # 固定スタンプのバックアップが作られること
   [ -f "$proj/.claude/CLAUDE.md.bak-20991231-000000" ]
   # 新内容に更新されること
-  grep -q "new content" "$proj/.claude/CLAUDE.md"
+  grep -q "new" "$proj/.claude/CLAUDE.md"
 }
 
 @test "template_sync__apply: .claude ディレクトリがなくても作成する" {
@@ -94,4 +95,39 @@ teardown() { _bats_common_teardown; }
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
   [ -d "$proj/.claude" ]
+}
+
+# ---- CLAUDE.md サイズガード ------------------------------------
+@test "template_sync__apply: CLAUDE.md テンプレートが 100 bytes 未満なら配布しない" {
+  # 12 bytes のプレースホルダー（今回の障害再現）
+  printf 'new content\n' > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
+  local proj="$TEST_TEMP/proj8"
+  mkdir -p "$proj/.claude"
+  printf 'existing project config\n' > "$proj/.claude/CLAUDE.md"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # 既存ファイルが上書きされていないこと
+  grep -q "existing project config" "$proj/.claude/CLAUDE.md"
+  # バックアップが作られていないこと
+  local bak_count; bak_count="$(find "$proj/.claude" -name "CLAUDE.md.bak-*" | wc -l)"
+  [ "$bak_count" -eq 0 ]
+}
+
+@test "template_sync__apply: CLAUDE.md テンプレートが 100 bytes 未満なら警告ログを出す" {
+  printf 'tiny\n' > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
+  local proj="$TEST_TEMP/proj9"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"テンプレートが小さすぎます"* ]]
+}
+
+@test "template_sync__apply: CLAUDE.md テンプレートが 100 bytes 以上なら配布する" {
+  # 100 bytes を超えるテンプレートは正常配布
+  printf '%0.s=' {1..101} > "$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
+  local proj="$TEST_TEMP/proj10"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ -f "$proj/.claude/CLAUDE.md" ]
 }

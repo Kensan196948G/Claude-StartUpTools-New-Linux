@@ -30,9 +30,9 @@ teardown() { _bats_common_teardown; }
 @test "sup__abnormal_reason: 正常は空" { run sup__abnormal_reason 0 0; [ -z "$output" ]; }
 @test "sup__cap_reason: minutes 到達" { run sup__cap_reason 600 600 0 6; [[ "$output" == daily-cap:minutes* ]]; }
 @test "sup__cap_reason: restarts 到達" { run sup__cap_reason 0 600 6 6; [[ "$output" == daily-cap:restarts* ]]; }
-@test "sup__cap_reason: 上限内は空" { run sup__cap_reason 10 600 1 6; [ -z "$output" ]; }
+@test "sup__cap_reason: 上限内は空" { run sup__cap_reason 10 600 1 6; [ -z "$output" ]; [ "$status" -eq 0 ]; }
 @test "sup__crash_reason: 閾値到達" { run sup__crash_reason 3 3; [[ "$output" == crash-loop* ]]; }
-@test "sup__crash_reason: 閾値未満は空" { run sup__crash_reason 1 3; [ -z "$output" ]; }
+@test "sup__crash_reason: 閾値未満は空" { run sup__crash_reason 1 3; [ -z "$output" ]; [ "$status" -eq 0 ]; }
 
 # ---- project state.json 読取判定 ---------------------------
 @test "sup__project_stop_reason: deploy.ready=true → goal-reached" {
@@ -49,6 +49,7 @@ teardown() { _bats_common_teardown; }
   echo '{ "project": {"phase_mode":"development"}, "deploy": {"ready": false} }' > "$TEST_TEMP/p.json"
   run sup__project_stop_reason "$TEST_TEMP/p.json"
   [ -z "$output" ]
+  [ "$status" -eq 0 ]
 }
 @test "sup__project_stop_reason: blocked_issues 非空 → blocked" {
   echo '{ "deploy": {"ready": false}, "blocked_issues": [101,102] }' > "$TEST_TEMP/p.json"

@@ -43,6 +43,11 @@ template_sync__apply() {
   # CLAUDE.md: 差分ありならバックアップ→上書き
   local src_cm="$tmpl_dir/CLAUDE.md"
   if [[ -f "$src_cm" ]]; then
+    local tmpl_size; tmpl_size=$(stat -c%s "$src_cm" 2>/dev/null || echo 0)
+    if [[ "$tmpl_size" -lt 100 ]]; then
+      log_warn "⚠️ CLAUDE.md テンプレートが小さすぎます(${tmpl_size} bytes) — 配布スキップ"
+      return 0
+    fi
     local dst_cm="$project_dir/.claude/CLAUDE.md"
     if [[ -f "$dst_cm" ]] && ! diff -q "$src_cm" "$dst_cm" >/dev/null 2>&1; then
       local bak="${dst_cm}.bak-$(_tmpsync__date_stamp)"

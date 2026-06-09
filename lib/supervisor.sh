@@ -95,7 +95,7 @@ sup__cap_reason() {
 # sup__crash_reason <consecutive_short> <threshold>
 sup__crash_reason() {
   local cs="${1:-0}" th="${2:-3}"
-  (( th > 0 && cs >= th )) && printf 'crash-loop:short_sessions=%s' "$cs"
+  if (( th > 0 && cs >= th )); then printf 'crash-loop:short_sessions=%s' "$cs"; fi
 }
 
 # sup__project_stop_reason <project_state_json> — 到達/異常を集約 (空=継続)
@@ -109,6 +109,7 @@ sup__project_stop_reason() {
   blocked="$(json_get "$pstate" '.blocked_issues | length' '0')"
   reason="$(sup__goal_reason "$ready" "$mode")"; [[ -n "$reason" ]] && { printf '%s' "$reason"; return 0; }
   reason="$(sup__abnormal_reason "$sec" "$blocked")"; [[ -n "$reason" ]] && { printf '%s' "$reason"; return 0; }
+  return 0
 }
 
 # ------------------------------------------------------------
@@ -202,7 +203,7 @@ sup__loop() {
   # 注: stop フラグのクリアは呼び出し側 (au__start) が起動前に行う。
   #     ここでクリアしないことで、起動前/実行中に立てたフラグを確実に拾える。
   sup__persist "$project"
-  log_info "[supervisor] start: $project (daily_max=${daily_max}m restarts=${max_restarts} session=${session_min}m)"
+  log_info "🤖 [supervisor] 🚀 start: $project (daily_max=${daily_max}m restarts=${max_restarts} session=${session_min}m)"
 
   local stop_reason="" sess_start sess_end sess_secs
   while true; do
@@ -251,5 +252,5 @@ sup__loop() {
   SUP_LAST_REASON="$stop_reason"; SUP_ENDED_AT="$(sup__now_iso)"
   sup__persist "$project"
   rm -f "$(sup__stop_file "$project")"
-  log_info "[supervisor] stop: $project → status=$SUP_STATUS reason=$stop_reason restarts=$SUP_RESTARTS minutes=$SUP_MINUTES"
+  log_info "🤖 [supervisor] 🛑 stop: $project → status=$SUP_STATUS reason=$stop_reason restarts=$SUP_RESTARTS minutes=$SUP_MINUTES"
 }

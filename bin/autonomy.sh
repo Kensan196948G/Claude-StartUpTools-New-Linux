@@ -103,9 +103,9 @@ au__start() {
     [[ -f "$(sup__state_file "$project")" ]] && break
     sleep 0.2
   done
-  log_ok "supervisor 起動: $project"
-  log_info "  状態: bash bin/autonomy.sh status $project   ログ: $logf"
-  log_info "  停止: bash bin/autonomy.sh stop $project    (--now で即停止)"
+  log_ok "🤖 supervisor 起動: $project"
+  log_info "  📊 状態: bash bin/autonomy.sh status $project   ログ: $logf"
+  log_info "  🛑 停止: bash bin/autonomy.sh stop $project    (--now で即停止)"
 }
 
 # au__start_all [--duration N] [--force] [--yes] [--include-self] [--dry-run]
@@ -138,14 +138,14 @@ au__start_all() {
     projects+=("$p")
   done < <(au__project_list "$include_self")
 
-  printf '  %sAutonomy Supervisor 全適用 計画%s\n' "$C_CYAN" "$C_RESET"
-  printf '  対象: %d 件 / skip: %d 件\n' "${#projects[@]}" "${#skips[@]}"
+  printf '  %s🤖 Autonomy Supervisor 全適用 計画%s\n' "$C_CYAN" "$C_RESET"
+  printf '  📊 対象: %d 件 / skip: %d 件\n' "${#projects[@]}" "${#skips[@]}"
   local i
   for i in "${!projects[@]}"; do
-    printf '   [%d] %s\n' "$((i + 1))" "${projects[$i]}"
+    printf '   🔹 [%d] %s\n' "$((i + 1))" "${projects[$i]}"
   done
   for p in "${skips[@]}"; do
-    printf '   %sSKIP%s %s\n' "$C_YELLOW" "$C_RESET" "$p"
+    printf '   %s⏭️  SKIP%s %s\n' "$C_YELLOW" "$C_RESET" "$p"
   done
 
   if (( ${#projects[@]} == 0 )); then
@@ -173,7 +173,7 @@ au__start_all() {
   for p in "${projects[@]}"; do
     if au__start "$p" "${args[@]}"; then ok=$((ok + 1)); else fail=$((fail + 1)); fi
   done
-  log_ok "全適用完了: started=$ok failed=$fail skipped=${#skips[@]}"
+  log_ok "🎉 全適用完了: started=$ok failed=$fail skipped=${#skips[@]}"
 }
 
 # au__stop <project> [--now]
@@ -193,7 +193,7 @@ au__stop() {
     return 0
   fi
   sup__request_stop "$project"
-  log_ok "停止要求: $project (現セッション終了後に再起動を止めます)"
+  log_ok "🛑 停止要求: $project (現セッション終了後に再起動を止めます)"
 
   if (( now )); then
     local pid safe; pid="$(sup__get "$project" pid 0)"; safe="$(ccsu_safe_name "$project")"
@@ -247,13 +247,13 @@ au__list_projects_from_state() {
 au__render() {
   local project="$1" f status restarts minutes reason alive
   f="$(sup__state_file "$project")"
-  [[ -f "$f" ]] || { printf '  %-26s %s(状態ファイルなし)%s\n' "$project" "$C_GRAY" "$C_RESET"; return 0; }
+  [[ -f "$f" ]] || { printf '  %-26s %s❓ (状態ファイルなし)%s\n' "$project" "$C_GRAY" "$C_RESET"; return 0; }
   status="$(json_get "$f" '.status' '?')"
   restarts="$(json_get "$f" '.restarts_today' '0')"
   minutes="$(json_get "$f" '.minutes_today' '0')"
   reason="$(json_get "$f" '.last_reason' '')"
-  if sup__is_running "$project"; then alive="● 稼働"; else alive="○ 停止"; fi
-  printf '  %-26s %-8s %-10s restarts=%-3s minutes=%-4s %s\n' \
+  if sup__is_running "$project"; then alive="🟢 稼働"; else alive="⚫ 停止"; fi
+  printf '  %-26s %-10s %-10s restarts=%-3s minutes=%-4s %s\n' \
     "$project" "$alive" "$status" "$restarts" "$minutes" "$reason"
 }
 
@@ -265,7 +265,7 @@ au__status() {
 
 # au__list — 全 supervisor を列挙
 au__list() {
-  printf '  %s● Autonomy Supervisor 一覧:%s\n' "$C_GREEN" "$C_RESET"
+  printf '  %s📋 Autonomy Supervisor 一覧:%s\n' "$C_GREEN" "$C_RESET"
   local found=0 f project
   if [[ -d "$SUP_DIR" ]]; then
     for f in "$SUP_DIR"/*.json; do

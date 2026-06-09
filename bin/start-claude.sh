@@ -69,7 +69,7 @@ main() {
 
   # supervisor 経由で起動 (--force: cron 競合があっても手動起動を優先)
   bash "$SCRIPT_DIR/autonomy.sh" start "$project" --duration "$duration" --force || {
-    log_error "supervisor 起動に失敗しました: $project"; exit 1
+    log_error "🤖 supervisor 起動に失敗しました: $project"; exit 1
   }
 
   # supervisor が今回の起動で state を更新する (mtime 前進) のを最大 ~3 秒待機。
@@ -89,8 +89,8 @@ main() {
   fi
 
   if [[ "$_sup_status" =~ ^(blocked|stopped|goal-reached)$ ]]; then
-    log_warn "supervisor 停止 (status=$_sup_status)"
-    log_warn "  停止理由: $_sup_reason"
+    log_warn "🛑 supervisor 停止 (status=$_sup_status)"
+    log_warn "📋 停止理由: $_sup_reason"
 
     # プロジェクトの blocked_issues をリスト表示
     local _pstate _blocked_list
@@ -98,37 +98,37 @@ main() {
     if [[ -f "$_pstate" ]] && has_cmd jq; then
       _blocked_list="$(jq -r '.blocked_issues[]? // empty' "$_pstate" 2>/dev/null || true)"
       if [[ -n "$_blocked_list" ]]; then
-        log_warn "  Blocked Issues:"
+        log_warn "🚫 Blocked Issues:"
         while IFS= read -r _bi; do
-          log_warn "    - $_bi"
+          log_warn "  🔒 $_bi"
         done <<< "$_blocked_list"
       fi
     fi
 
     printf "\n"
-    log_info "  ※ supervisorは blocked_issues が存在する間、自律起動を行いません"
-    log_info "  ※ Y で起動した場合: 自動再起動なし (手動起動モード)"
+    log_info "📌 ※ supervisorは blocked_issues が存在する間、自律起動を行いません"
+    log_info "📌 ※ Y で起動した場合: 自動再起動なし (手動起動モード)"
 
     if [[ "$mode" == "foreground" ]]; then
       local _ans
       printf "  直接起動しますか? (Y/N): "
       read -r _ans
       if [[ "${_ans^^}" == "Y" ]]; then
-        log_info "手動モードで起動します (supervisor なし・自動再起動なし)"
+        log_info "🔧 手動モードで起動します (supervisor なし・自動再起動なし)"
         tmux_run "$project" "$duration" "$mode"
       else
-        log_info "起動をキャンセルしました"
-        log_info "  blocked_issues を解消すると supervisor 経由で正常起動できます"
+        log_info "⏹️  起動をキャンセルしました"
+        log_info "  💡 blocked_issues を解消すると supervisor 経由で正常起動できます"
       fi
     elif [[ "$mode" == "background" ]]; then
       local _ans
       printf "  直接起動しますか? (Y/N) [背景: 自動再起動なし]: "
       read -r _ans
       if [[ "${_ans^^}" == "Y" ]]; then
-        log_info "手動モードで起動します (supervisor なし・自動再起動なし)"
+        log_info "🔧 手動モードで起動します (supervisor なし・自動再起動なし)"
         tmux_run "$project" "$duration" "$mode"
       else
-        log_info "起動をキャンセルしました"
+        log_info "⏹️  起動をキャンセルしました"
       fi
     fi
     return 0
@@ -142,11 +142,11 @@ main() {
       sleep 0.5
     done
     if "$TMUX_BIN" has-session -t "$session" 2>/dev/null; then
-      log_info "セッションへ接続: $session"
+      log_info "🔗 セッションへ接続: $session"
       "$TMUX_BIN" attach-session -t "$session"
     else
-      log_warn "tmux セッション起動待ちタイムアウト: $session"
-      log_info "  確認: tmux ls  /  bash bin/autonomy.sh status $project"
+      log_warn "⏱️  tmux セッション起動待ちタイムアウト: $session"
+      log_info "  🔍 確認: tmux ls  /  bash bin/autonomy.sh status $project"
     fi
   fi
 }
