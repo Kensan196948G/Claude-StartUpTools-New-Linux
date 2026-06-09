@@ -21,6 +21,8 @@ _CCSU_TMUX_LOADED=1
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/config-loader.sh"
+# shellcheck source=lib/template-sync.sh
+source "$(dirname "${BASH_SOURCE[0]}")/template-sync.sh"
 
 # tmux/claude コマンド (テストでスタブ差し替え可)
 TMUX_BIN="${CCSU_TMUX_BIN:-tmux}"
@@ -137,12 +139,8 @@ tmux_run() {
   export CLAUDEOS_HOOKS_DIR="$project_dir/.claude/claudeos/scripts/hooks"
   export CLAUDE_PROJECT="$project"
 
-  # Copy latest START_PROMPT template to project before launch (always overwrite)
-  local _tmpl_sp="$CCSU_ROOT/Claude/templates/claude/START_PROMPT.md"
-  if [[ -f "$_tmpl_sp" ]]; then
-    mkdir -p "$project_dir/.claude"
-    cp "$_tmpl_sp" "$project_dir/.claude/START_PROMPT.md"
-  fi
+  # 最新テンプレート (START_PROMPT.md / CLAUDE.md) をプロジェクトへ配布
+  template_sync__apply "$project_dir"
 
   # START_PROMPT.md があれば claude に渡す (cat 展開を tmux コマンド内で実行)
   local claude_cmd
