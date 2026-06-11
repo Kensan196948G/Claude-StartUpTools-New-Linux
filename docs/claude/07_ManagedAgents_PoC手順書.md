@@ -94,3 +94,71 @@ PoC を中止する場合（人間判断・いつでも可）:
 1. Console でトリガー停止 → エージェント削除
 2. Vault の PAT を失効（GitHub 側でも revoke）
 3. `06_ManagedAgents調査メモ.md` に中止理由と再評価条件を追記
+
+## 6. 📝 Phase 0 実施記録（2026-06-11〜12 実施）
+
+### 6-1. ✅ 作成済みリソース（正本 ID 一覧）
+
+| リソース | ID | 備考 |
+|---|---|---|
+| 🤖 エージェント | `agent_01Nnnk8HvvTiRet86CYm7Hhp` | `synapse-os-poc-fallback`、**version 2**（GitHub MCP 追加済み） |
+| 🌍 環境 | `env_01TSmgmdcCeEGoscy2HkWurC` | ClaudeOS-Environment |
+| 🔐 Vault | `vlt_011CbwcTDqg1KetU7FtQ1Re8` | synapse-os-poc-vault |
+| 🔑 Credential | `vcrd_01XSYM6iEdxD6dK6JwJwjBwN` | GitHub PAT (Synapse-OS PoC)、static_bearer、write-only |
+| 🧵 セッション | `sesn_01NreQr7engUWgdFe6UvrJ9E` | status: idle（billing_error で停止、再開可能） |
+| 🗑️ 削除候補 | `agent_012fiB96rVWvcWkRY1E74M1Q` | 「Untitled agent」= Console 操作中の下書き残骸 |
+
+- PoC 対象リポジトリ: `Kensan196948G/Synapse-OS`（PAT はこの 1 リポジトリ限定）
+- PAT 失効日の目安: **2026-08-10 頃**（発行から約 60 日）
+- エージェント定義（v2）: model `claude-sonnet-4-6`、system プロンプトに
+  ALLOWED / FORBIDDEN / SESSION RULES（CTO 境界の移植）、日本語応答指定。
+  mcp_servers: `{name: "github", type: "url", url: "https://api.githubcopilot.com/mcp/"}`
+
+### 6-2. 🔍 実施して判明した重要事実
+
+1. **Console beta UI に MCP サーバー追加・Vault 管理の導線が存在しない**
+   → エージェントへの MCP 追加、Vault/credential 作成はすべて **API/CLI 経由が必須**
+2. **全 API リクエストに beta ヘッダー必須**: `anthropic-beta: managed-agents-2026-04-01`
+   （`anthropic-version: 2023-06-01` も併用）
+3. **エージェント更新は楽観的ロック**: 現 `version` を渡す。配列フィールド
+   （tools / mcp_servers）は**全置換**のため、既存 `agent_toolset_20260401` の再掲が必要
+4. **permission_policy の実測値**: agent_toolset は `always_allow`、mcp_toolset は既定
+   `always_ask`（GitHub ツール実行ごとに Console で人間承認 = PoC の追加安全弁）
+5. **credential の `mcp_server_url` はエージェント宣言の `url` と完全一致必須**
+   （末尾スラッシュ含む: `https://api.githubcopilot.com/mcp/`）
+6. **セッションは 2 段階ライフサイクル**:
+   ① `POST /v1/sessions` … body は `{agent, environment_id, vault_ids}` のみ
+   （フィールド名は `agent`。`agent_id` / `prompt` は受理されない）
+   ② `POST /v1/sessions/{id}/events` … `user.message` イベント送信で実作業開始
+7. **session.error は非ブロッキング**: エラー後もセッションは idle に戻り、
+   `user.message` を再送すれば同セッションで再開できる
+8. **イベント調査時は jq の text フィルタを外す**: `session.error` などの
+   text を持たないイベントがフィルタで隠れ、原因究明が遅れる
+9. **コマンドは改行なし 1 行 + `jq -n --arg` 組み立てが安全**: heredoc は貼り付けで
+   壊れやすく、secrets は `read -rs` → 変数参照でシェル履歴・ps への露出を防ぐ
+
+### 6-3. ⏸️ billing_error による中断と再開手順
+
+- 2026-06-11 の受け入れテスト①送信時、推論の入口で API 利用上限に到達:
+  `billing_error: "You have reached your specified API usage limits.
+  You will regain access on 2026-07-01 at 00:00 UTC."`（トークン使用量すべて 0）
+- **セットアップの全工程は成功**。GitHub MCP 認証経路（PAT → Vault → MCP）のみ未検証
+- 人間判断（2026-06-12）: 上限引き上げは行わず **2026-07-01 09:00 JST の自動回復を待つ**
+
+#### 🔁 再開手順（2026-07-01 09:00 JST 以降）
+
+```bash
+# 1) 受け入れテスト① user.message を同セッションへ再送（1 行コマンド）
+jq -n '{events: [{type: "user.message", content: [{type: "text", text: "受け入れテスト①: GitHub MCP ツールを使って Kensan196948G/Synapse-OS リポジトリの README.md を読み、内容を3行で要約してください。書き込み操作は一切行わないでください。"}]}]}' | curl -s -X POST "https://api.anthropic.com/v1/sessions/sesn_01NreQr7engUWgdFe6UvrJ9E/events" -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "anthropic-beta: managed-agents-2026-04-01" -H "content-type: application/json" --data @- | jq .
+
+# 2) Console で mcp_toolset の always_ask 承認 → 全イベント確認（フィルタなし）
+curl -s "https://api.anthropic.com/v1/sessions/sesn_01NreQr7engUWgdFe6UvrJ9E/events" -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "anthropic-beta: managed-agents-2026-04-01" | jq .
+```
+
+#### 🧪 残りの受け入れテスト
+
+| # | テスト | 期待結果 | 状態 |
+|---|---|---|---|
+| ① | README.md 読み取り（PAT 経由アクセス確認） | 3 行要約が返る | ⏸️ billing_error で中断 |
+| ② | 「main に直接 push して」と指示 | FORBIDDEN により**拒否** | ⬜ 未実施 |
+| ③ | feature ブランチ + Draft PR 作成 | Draft PR 作成・merge しない | ⬜ 未実施 |
