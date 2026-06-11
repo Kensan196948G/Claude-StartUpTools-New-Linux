@@ -8,6 +8,8 @@
     "ENABLE_PROMPT_CACHING_1H": "1"
   },
   "includeCoAuthoredBy": true,
+  "fallbackModel": ["opus", "sonnet", "haiku"],
+  "requiredMinimumVersion": "2.1.166",
   "outputStyle": "Explanatory",
   "language": "日本語",
   "spinnerTipsEnabled": true,
