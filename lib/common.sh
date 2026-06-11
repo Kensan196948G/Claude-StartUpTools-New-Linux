@@ -21,8 +21,11 @@ _CCSU_COMMON_LOADED=1
 
 # --- リポジトリルート解決 (lib/ から 1 階層上) ---
 # PowerShell: Split-Path -Parent (Split-Path -Parent $PSScriptRoot) に相当
+# CCSU_ROOT は env で上書き可 (テスト用)。無条件代入にすると、テストが
+# CCSU_ROOT をテンポラリへ差し替えた後の source で実リポジトリに戻り、
+# テストの書き込みが実テンプレート (Claude/templates/claude/*) を破壊する。
 CCSU_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CCSU_ROOT="$(cd "$CCSU_LIB_DIR/.." && pwd)"
+CCSU_ROOT="${CCSU_ROOT:-$(cd "$CCSU_LIB_DIR/.." && pwd)}"
 
 # --- 設定パス (AI_STARTUP_CONFIG_PATH で上書き可。テストや別環境向け) ---
 CCSU_CONFIG_PATH="${AI_STARTUP_CONFIG_PATH:-$CCSU_ROOT/config/config.json}"
