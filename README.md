@@ -138,6 +138,65 @@ bash bin/autonomy.sh start --all --yes
 | ⏰ | cron登録が残っている |
 | 🧰 | このランチャー自身 |
 
+## 🔔 監視・通知（Heartbeat Watchdog）
+
+Claude Code プロセスの **沈黙 3 類型**を自動検知して Webhook 通知する仕組みを内蔵しています。
+
+| 種別 | 原因 | 担当フック | 通知イベント |
+|---|---|---|---|
+| type1 | API エラー・ツール失敗 | `stop-failure-gate.js` | `api_failure` |
+| type2 | 入力待ち沈黙 | `notification-gate.js` | `input_waiting` |
+| **type3** | **SIGKILL / OOM / 再起動** | **`heartbeat-watchdog.js`** | **`api_failure`** |
+
+### type3: Heartbeat Watchdog のしくみ
+
+```
+SessionStart
+  └─ heartbeat-writer.js (SessionStart フック)
+       └─ detached spawn
+            └─ heartbeat-daemon.js (常駐デーモン)
+                  │ 60 秒ごとに heartbeat.json を更新
+                  ▼
+         heartbeat-watchdog.js (外部 cron: 5 分ごと)
+                  │ last_beat が閾値超過
+                  ▼
+         webhook-notifier.js → Teams / Slack / HTTPS
+```
+
+### 有効化手順
+
+**1. state.json に webhook を設定する**
+
+```json
+{
+  "webhook": {
+    "enabled": true,
+    "events": { "api_failure": true }
+  }
+}
+```
+
+**2. 環境変数を設定する**
+
+```bash
+export TEAMS_WEBHOOK_URL="https://xxxxx.webhook.office.com/webhookb2/..."
+# または
+export HTTPS_WEBHOOK_URL="https://your-endpoint.example.com/webhook"
+```
+
+**3. cron を登録する**
+
+```bash
+mkdir -p ~/.claudeos/logs
+# crontab -e で追加:
+*/5 * * * * cd /home/kensan/Projects/YOUR_PROJECT && \
+  TEAMS_WEBHOOK_URL="$TEAMS_WEBHOOK_URL" \
+  node .claude/claudeos/scripts/hooks/heartbeat-watchdog.js \
+  >> ~/.claudeos/logs/heartbeat-watchdog-YOUR_PROJECT.log 2>&1
+```
+
+> 詳細手順: [`docs/claude/08_heartbeat-watchdog-cron設定手順.md`](docs/claude/08_heartbeat-watchdog-cron設定手順.md)
+
 ## 🧠 CTO自律開発の境界
 
 ```mermaid
