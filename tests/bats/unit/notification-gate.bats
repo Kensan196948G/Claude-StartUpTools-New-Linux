@@ -34,7 +34,7 @@ teardown() { _bats_common_teardown; }
 }
 
 @test "空 JSON {} でも exit 0 かつ notification_type=unknown" {
-  run bash -c "cd '$TEST_TEMP' && printf '%s' '{}' | node '$HOOK'"
+  run bash -c "cd '$TEST_TEMP' && printf '%s' '{}' | node '$HOOK' 2>&1"
   [ "$status" -eq 0 ]
   [[ "$output" == *"notification_type=unknown"* ]]
 }
@@ -42,13 +42,13 @@ teardown() { _bats_common_teardown; }
 # ---------- notification_type 抽出: 公式フィールド ----------
 
 @test "公式 notification_type から idle_prompt を抽出" {
-  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"notification_type\":\"idle_prompt\"}' | node '$HOOK'"
+  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"notification_type\":\"idle_prompt\"}' | node '$HOOK' 2>&1"
   [ "$status" -eq 0 ]
   [[ "$output" == *"notification_type=idle_prompt"* ]]
 }
 
 @test "公式 notification_type から permission_prompt を抽出" {
-  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"notification_type\":\"permission_prompt\"}' | node '$HOOK'"
+  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"notification_type\":\"permission_prompt\"}' | node '$HOOK' 2>&1"
   [ "$status" -eq 0 ]
   [[ "$output" == *"notification_type=permission_prompt"* ]]
 }
@@ -56,13 +56,13 @@ teardown() { _bats_common_teardown; }
 # ---------- notification_type 抽出: フォールバック ----------
 
 @test "notificationType camelCase フォールバック" {
-  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"notificationType\":\"auth_success\"}' | node '$HOOK'"
+  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"notificationType\":\"auth_success\"}' | node '$HOOK' 2>&1"
   [ "$status" -eq 0 ]
   [[ "$output" == *"notification_type=auth_success"* ]]
 }
 
 @test "type フィールドにフォールバック" {
-  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"type\":\"elicitation_request\"}' | node '$HOOK'"
+  run bash -c "cd '$TEST_TEMP' && printf '%s' '{\"type\":\"elicitation_request\"}' | node '$HOOK' 2>&1"
   [ "$status" -eq 0 ]
   [[ "$output" == *"notification_type=elicitation_request"* ]]
 }

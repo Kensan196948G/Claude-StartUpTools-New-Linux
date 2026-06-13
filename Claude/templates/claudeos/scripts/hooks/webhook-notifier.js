@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// webhook-notifier.js (ClaudeOS v8.3)
+// webhook-notifier.js (ClaudeOS v9.0)
 // アウトバウンド Webhook 通知 — Teams / 汎用 HTTPS / Slack（将来）
 //
 // 呼び出し方:
@@ -121,7 +121,7 @@ function buildGenericPayload(event, data) {
   return {
     event,
     timestamp: new Date().toISOString(),
-    source:    "claudeos-v8",
+    source:    "claudeos-v9",
     data,
   };
 }

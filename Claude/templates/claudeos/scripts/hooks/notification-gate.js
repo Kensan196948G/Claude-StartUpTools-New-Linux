@@ -55,11 +55,14 @@ try {
   // 通知種別の抽出。公式仕様では種別文字列が `notification_type` フィールドに入る
   // （idle_prompt / permission_prompt など）。バージョン差・将来変更に備え、文字列形を
   // 最優先しつつ別名候補も順に探す。種別が取れなくても通知は必ず行う（既定 "unknown"）。
-  const notificationType =
+  // 長さ上限: webhook 側の facts 展開で過大表示を防ぐ。公式値は短い固定文字列だが将来変更に備える。
+  const MAX_TYPE = 100;
+  const notificationType = (
     asStr(input.notification_type) ||                         // 公式: 種別文字列
     asStr(input.notificationType) ||                          // camelCase フォールバック
     asStr(input.type) ||
-    "unknown";
+    "unknown"
+  ).slice(0, MAX_TYPE);
 
   // 通知本文（任意。あれば添える）。過大な本文は webhook 側の 200 字フィルタ任せにせず、
   // ここで上限を掛けて generic HTTPS への過大 payload を防ぐ（stop-failure-gate.js と共通）。
@@ -72,8 +75,13 @@ try {
   const message = rawMessage ? rawMessage.slice(0, MAX_DETAIL) : null;
 
   // セッション ID / transcript（あれば添える。沈黙したセッションの特定に役立つ）。
-  const sessionId      = asStr(input.session_id) || asStr(input.sessionId) || null;
-  const transcriptPath = asStr(input.transcript_path) || asStr(input.transcriptPath) || null;
+  // sessionId: 過大文字列対策で上限あり。transcriptPath: フルパスは内部情報漏洩になるため
+  // ファイル名部分のみ（path.basename）を通知に乗せる。
+  const MAX_SESSION = 128;
+  const rawSessionId   = asStr(input.session_id) || asStr(input.sessionId) || null;
+  const sessionId      = rawSessionId ? rawSessionId.slice(0, MAX_SESSION) : null;
+  const rawTranscript  = asStr(input.transcript_path) || asStr(input.transcriptPath) || null;
+  const transcriptPath = rawTranscript ? path.basename(rawTranscript) : null;
 
   const { spawn } = require("child_process");
   const notifier = path.join(__dirname, "webhook-notifier.js");
@@ -99,7 +107,11 @@ try {
     });
     // detached 子の起動失敗（同期 throw 以外）を拾う。沈黙停止対策フック自身が無音で
     // 死なないようにするための最小ハンドラ（stop-failure-gate.js と共通）。
+    // detached 子の起動失敗（同期 throw 以外）を拾う。沈黙停止対策フック自身が無音で
+    // 死なないようにするための最小ハンドラ（stop-failure-gate.js と共通）。
     child.on("error", (e) => console.error(`[Notification] spawn failed: ${e.message}`));
+    // child.unref() 後は process.exit(0) を経由して親は終了するため、
+    // この on('error') ハンドラが実際に呼ばれるのは unref() 前に spawn が同期失敗した場合のみ。
     child.unref(); // 親の終了をブロックしない
     // ここで保証できるのは「通知プロセスを起動した」ところまで。送信成功は detached +
     // stdio:ignore のため親から不可視なので、誤認を避けて "spawned" と記す。
