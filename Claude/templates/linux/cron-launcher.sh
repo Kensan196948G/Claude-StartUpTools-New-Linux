@@ -21,8 +21,8 @@ PROJECT="${1:-}"
 DURATION_MIN="${2:-300}"
 
 if [[ -z "$PROJECT" ]]; then
-  echo "[ERROR] project 引数がありません" >&2
-  echo "Usage: $0 <project> <duration-minutes>" >&2
+  echo "❌ [ERROR] project 引数がありません" >&2
+  echo "📌 Usage: $0 <project> <duration-minutes>" >&2
   exit 2
 fi
 
@@ -47,7 +47,7 @@ chmod 700 "$CLAUDEOS_HOME" "$SESSIONS_DIR" "$LOGS_DIR" 2>/dev/null || true
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$PATH"
 
 if [[ ! -d "$PROJECT_DIR" ]]; then
-  echo "[ERROR] プロジェクトディレクトリが存在しません: $PROJECT_DIR" >&2
+  echo "❌ [ERROR] プロジェクトディレクトリが存在しません: $PROJECT_DIR" >&2
   exit 3
 fi
 
@@ -64,7 +64,7 @@ LOCK_FILE="$LOCK_DIR/${SAFE_PROJECT}.lock"
 if command -v flock >/dev/null 2>&1; then
   exec {LOCK_FD}>"$LOCK_FILE" || true
   if [[ -n "${LOCK_FD:-}" ]] && ! flock -n "$LOCK_FD"; then
-    echo "[cron-launcher] $PROJECT は既に実行中 (lock held) — 二重起動を防止し skip" >&2
+    echo "⏭️  [cron-launcher] $PROJECT は既に実行中 (lock held) — 二重起動を防止し skip" >&2
     exit 0
   fi
 fi
@@ -124,7 +124,7 @@ finalize() {
     fi
   fi
 
-  echo "[cron-launcher] session finished status=$final_status exit=$exit_code at $now" >> "$LOG_FILE"
+  echo "🛑 [cron-launcher] session finished status=$final_status exit=$exit_code at $now" >> "$LOG_FILE"
 
   # tmux セッションを終了・一時ファイルを削除（keeper も確実に落とす）
   if command -v tmux >/dev/null 2>&1; then
@@ -138,7 +138,7 @@ finalize() {
   # 加えて python3 とスクリプトの存在も確認 (best-effort、失敗しても全体は成功扱い)。
   local email_enabled="${CLAUDEOS_EMAIL_ENABLED:-0}"
   if [[ "$email_enabled" != "1" ]]; then
-    echo "[cron-launcher] HTML mail report skip (CLAUDEOS_EMAIL_ENABLED!=1)" >> "$LOG_FILE"
+    echo "📧 [cron-launcher] HTML mail report skip (CLAUDEOS_EMAIL_ENABLED!=1)" >> "$LOG_FILE"
   elif command -v python3 >/dev/null 2>&1 && [[ -f "$REPORT_SCRIPT" ]]; then
     python3 "$REPORT_SCRIPT" \
       --session "$SESSION_ID" \
@@ -151,13 +151,13 @@ finalize() {
       --sessions-dir "$SESSIONS_DIR" \
       >> "$LOG_FILE" 2>&1 || true
   else
-    echo "[cron-launcher] report-and-mail.py をスキップ (script=$REPORT_SCRIPT, python3=$(command -v python3 || echo 'none'))" >> "$LOG_FILE"
+    echo "📧 [cron-launcher] report-and-mail.py をスキップ (script=$REPORT_SCRIPT, python3=$(command -v python3 || echo 'none'))" >> "$LOG_FILE"
   fi
 }
 trap finalize EXIT
 
 # nohup 経由の場合 stdout が同ファイルにリダイレクトされるため tee は使わない（重複ログ防止）
-echo "[cron-launcher] $(date -Iseconds) project=$PROJECT duration=${DURATION_MIN}m session=$SESSION_ID" >> "$LOG_FILE"
+echo "🚀 [cron-launcher] $(date -Iseconds) project=$PROJECT duration=${DURATION_MIN}m session=$SESSION_ID" >> "$LOG_FILE"
 
 cd "$PROJECT_DIR"
 
@@ -179,9 +179,9 @@ if [ ! -f "$CLAUDEOS_HOOKS_DIR/session-end.js" ]; then
   if [ -d "$_CANONICAL_HOOKS" ]; then
     mkdir -p "$CLAUDEOS_HOOKS_DIR"
     cp -r "$_CANONICAL_HOOKS"/. "$CLAUDEOS_HOOKS_DIR/"
-    echo "[cron-launcher] hooks auto-repaired from canonical source for $PROJECT" >> "$LOG_FILE"
+    echo "🔧 [cron-launcher] hooks auto-repaired from canonical source for $PROJECT" >> "$LOG_FILE"
   else
-    echo "[cron-launcher] WARN: hooks missing at $CLAUDEOS_HOOKS_DIR and canonical source not found" >> "$LOG_FILE"
+    echo "⚠️  [cron-launcher] WARN: hooks missing at $CLAUDEOS_HOOKS_DIR and canonical source not found" >> "$LOG_FILE"
   fi
 fi
 
@@ -247,16 +247,16 @@ except: print(120)
 " 2>/dev/null || echo "120")
     # 引数が保守上限を超える場合のみ短縮（引数が既に短い場合はそのまま）
     if [[ "$DURATION_MIN" -gt "$MAINT_MAX" ]]; then
-      echo "[cron-launcher] maintenance mode: DURATION_MIN capped $DURATION_MIN -> $MAINT_MAX min" >> "$LOG_FILE"
+      echo "⚙️  [cron-launcher] maintenance mode: DURATION_MIN capped $DURATION_MIN -> $MAINT_MAX min" >> "$LOG_FILE"
       DURATION_MIN="$MAINT_MAX"
       DURATION_SEC=$((DURATION_MIN * 60))
     fi
     # 保守フェーズを開始フェーズとして設定（Monitor から Triage へ移行させる）
     [[ "$RESUME_PHASE" == "Monitor" ]] && RESUME_PHASE="Maintenance"
-    echo "[cron-launcher] phase_mode=maintenance session_max=${MAINT_MAX}min" >> "$LOG_FILE"
+    echo "🔧 [cron-launcher] phase_mode=maintenance session_max=${MAINT_MAX}min" >> "$LOG_FILE"
   fi
 
-  echo "[cron-launcher] state restored: phase=$RESUME_PHASE phase_mode=$PHASE_MODE consecutive=$RESUME_CONSECUTIVE" >> "$LOG_FILE"
+  echo "📋 [cron-launcher] state restored: phase=$RESUME_PHASE phase_mode=$PHASE_MODE consecutive=$RESUME_CONSECUTIVE" >> "$LOG_FILE"
 
   # state.json の execution.phase と current_session_start_at を更新
   python3 - <<PYEOF >> "$LOG_FILE" 2>&1 || true
@@ -271,22 +271,32 @@ try:
     tmp = f + '.tmp.$$'
     with open(tmp, 'w') as fp: json.dump(d, fp, ensure_ascii=False, indent=2)
     os.replace(tmp, f)
-    print('[cron-launcher] state.json updated (session start recorded)')
+    print('✅ [cron-launcher] state.json updated (session start recorded)')
 except Exception as e:
-    print(f'[cron-launcher] state.json update failed: {e}')
+    print(f'❌ [cron-launcher] state.json update failed: {e}')
 PYEOF
 else
-  echo "[cron-launcher] state.json not found or python3 unavailable — using defaults" >> "$LOG_FILE"
+  echo "⚠️  [cron-launcher] state.json not found or python3 unavailable — using defaults" >> "$LOG_FILE"
 fi
 
 export CLAUDE_RESUME_PHASE="$RESUME_PHASE"
 export CLAUDE_RESUME_CONSECUTIVE="$RESUME_CONSECUTIVE"
 
-# Copy latest START_PROMPT template to project before launch (always overwrite)
-_TMPL_SP="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/Claude/templates/claude/START_PROMPT.md"
-if [[ -f "$_TMPL_SP" ]]; then
-  mkdir -p "$PROJECT_DIR/.claude"
-  cp "$_TMPL_SP" "$PROJECT_DIR/.claude/START_PROMPT.md"
+# 最新テンプレートをプロジェクトへ配布 (START_PROMPT.md + CLAUDE.md)
+_CCSU_TMPL_DIR="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/Claude/templates/claude"
+mkdir -p "$PROJECT_DIR/.claude"
+# START_PROMPT.md: 毎回上書き
+if [[ -f "$_CCSU_TMPL_DIR/START_PROMPT.md" ]]; then
+  cp "$_CCSU_TMPL_DIR/START_PROMPT.md" "$PROJECT_DIR/.claude/START_PROMPT.md"
+fi
+# CLAUDE.md: 存在しない場合のみ配布（プロジェクト固有設定を保護）
+if [[ -f "$_CCSU_TMPL_DIR/CLAUDE.md" ]]; then
+  _CCSU_DST_CM="$PROJECT_DIR/.claude/CLAUDE.md"
+  _CCSU_TMPL_SIZE=$(stat -c%s "$_CCSU_TMPL_DIR/CLAUDE.md" 2>/dev/null || echo 0)
+  if [[ ! -f "$_CCSU_DST_CM" ]] && [[ "$_CCSU_TMPL_SIZE" -ge 100 ]]; then
+    cp "$_CCSU_TMPL_DIR/CLAUDE.md" "$_CCSU_DST_CM"
+    echo "📄 [cron-launcher] CLAUDE.md 初回配布: $PROJECT" >> "$LOG_FILE"
+  fi
 fi
 
 # START_PROMPT.md が存在すれば引数として渡し、ClaudeCode を auto mode で起動
@@ -334,6 +344,13 @@ _TMUX_DONE="done-${SAFE_PROJECT}"
 if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-1}" == "1" ]]; then
   # Claude を tmux セッション内で起動（TTY あり → attach で UI 閲覧可能）
   # -e で env var を明示渡し（tmux サーバーのグローバル環境に依存しない）
+
+  # Guard: セッションが既に起動中なら kill せずスキップ（run-now の多重起動防止）
+  if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    echo "⏭️  [cron-launcher] WARN: session $TMUX_SESSION already running — launch skipped (attach: tmux attach -t $TMUX_SESSION)" | tee -a "$LOG_FILE" >&2
+    exit 0
+  fi
+
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
   # keeper session: claude が瞬時に終了してもサーバーを DURATION_SEC+120 秒保持する
@@ -362,12 +379,12 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-1}" == "1" ]]; then
   #   s/\x1b\[[0-9;?]*[a-zA-Z]//g : CSI シーケンス除去（カーソル移動・色コード）
   #   s/\x1b.//g : その他 ESC シーケンス除去
   if ! tmux pipe-pane -t "$TMUX_SESSION" -o "sed 's/.*\r//; s/\x1b\][^\x07]*\x07//g; s/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b.//g' >> '$LOG_FILE'" 2>>"$LOG_FILE"; then
-    echo "[cron-launcher][WARN] tmux pipe-pane failed for session=$TMUX_SESSION, log=$LOG_FILE (log stream unavailable)" | tee -a "$LOG_FILE" >&2
+    echo "⚠️  [cron-launcher][WARN] tmux pipe-pane failed for session=$TMUX_SESSION, log=$LOG_FILE (log stream unavailable)" | tee -a "$LOG_FILE" >&2
   fi
-  echo "[cron-launcher] tmux attach -t $TMUX_SESSION  (UI閲覧用)" >> "$LOG_FILE"
+  echo "🔗 [cron-launcher] tmux attach -t $TMUX_SESSION  (UI閲覧用)" >> "$LOG_FILE"
   # tmux セッション終了まで待機（タイムアウト付き: keeper消滅後の二重防護）
   if ! timeout $((DURATION_SEC + 60)) tmux wait-for "$_TMUX_DONE" 2>>"$LOG_FILE"; then
-    echo "[cron-launcher] tmux wait-for ended (timeout or race condition recovered)" >> "$LOG_FILE"
+    echo "⏱️  [cron-launcher] tmux wait-for ended (timeout or race condition recovered)" >> "$LOG_FILE"
   fi
   tmux kill-session -t "$_KEEPER_SESSION" 2>/dev/null || true
 else

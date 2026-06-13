@@ -43,11 +43,11 @@ else
   C_BG_YELLOW=''; C_BG_GREEN=''; C_BG_BLUE=''; C_BG_RED=''; C_BG_DKCYAN=''; C_BG_DKBLUE=''
 fi
 
-# --- ログ関数 (アイコン付き。CLAUDE.md §2.1 出力規約に準拠) ---
-log_info()  { printf '%s[INFO]%s %s\n' "$C_CYAN"   "$C_RESET" "$*"; }
-log_ok()    { printf '%s[ OK ]%s %s\n' "$C_GREEN"  "$C_RESET" "$*"; }
-log_warn()  { printf '%s[WARN]%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
-log_error() { printf '%s[ERR ]%s %s\n' "$C_RED"    "$C_RESET" "$*" >&2; }
+# --- ログ関数 (絵文字アイコン付き。CLAUDE.md §2.1 出力規約に準拠) ---
+log_info()  { printf '%sℹ️  [INFO]%s %s\n' "$C_CYAN"   "$C_RESET" "$*"; }
+log_ok()    { printf '%s✅ [ OK ]%s %s\n' "$C_GREEN"  "$C_RESET" "$*"; }
+log_warn()  { printf '%s⚠️  [WARN]%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+log_error() { printf '%s❌ [ERR ]%s %s\n' "$C_RED"    "$C_RESET" "$*" >&2; }
 
 # die <msg> — エラー出力して終了 (実行スクリプト用。lib 内では使わない)
 die() { log_error "$*"; exit 1; }
