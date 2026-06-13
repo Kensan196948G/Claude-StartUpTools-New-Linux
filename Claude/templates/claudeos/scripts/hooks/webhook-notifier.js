@@ -17,7 +17,7 @@
 //     "enabled": true,
 //     "events": { "stable_achieved": true, "session_end": true,
 //                 "ci_blocked": true, "dream_complete": true,
-//                 "input_waiting": true }
+//                 "input_waiting": true, "api_failure": true }
 //   }
 
 "use strict";
@@ -89,6 +89,7 @@ const EVENT_CONFIG = {
   ci_blocked:      { color: "D83B01", icon: "🚨", label: "CI Blocked" },
   dream_complete:  { color: "7719AA", icon: "💡", label: "Dreaming 完了" },
   input_waiting:   { color: "FFC000", icon: "🔔", label: "入力待ち通知" },
+  api_failure:     { color: "C00000", icon: "🛑", label: "API エラー停止" },
 };
 
 // ---------- フォーマッター ----------
@@ -188,7 +189,7 @@ async function sendSlack(url, event, data) {
 
 /**
  * イベントを全設定済みエンドポイントに送信する。
- * @param {string} event  'stable_achieved' | 'session_end' | 'ci_blocked' | 'dream_complete' | 'input_waiting'
+ * @param {string} event  'stable_achieved' | 'session_end' | 'ci_blocked' | 'dream_complete' | 'input_waiting' | 'api_failure'
  * @param {object} data   イベント固有の追加データ
  */
 async function notify(event, data = {}) {
