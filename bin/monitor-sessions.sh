@@ -39,9 +39,11 @@ source "$SCRIPT_DIR/../lib/cron-manager.sh"
 source "$SCRIPT_DIR/../lib/supervisor.sh"
 
 TMUX_BIN="${CCSU_TMUX_BIN:-tmux}"
+CLAUDE_BIN="${CCSU_CLAUDE_BIN:-claude}"
 MON_SESSION="${CCSU_MONITOR_SESSION:-claudeos-monitor}"
 MON_REFRESH="${CCSU_MONITOR_REFRESH:-1}"     # ダッシュボード更新間隔 (秒)
 MON_WARN_SEC="${CCSU_MONITOR_WARN_SEC:-300}" # 残りこの秒数以下で ⚠ 表示
+MON_AGENTS_TTL="${CCSU_MONITOR_AGENTS_TTL:-10}" # claude agents --json のキャッシュ秒数 (0=無効化)
 
 # ------------------------------------------------------------
 # 純粋ヘルパ (tmux 非依存・テスト対象)
@@ -160,6 +162,35 @@ mon__collect() {
     wn="$(mon__window_index_for "$safe")"; [[ -z "$wn" ]] && wn="$n"
     printf '%s|%s|%s|%s|%s\n' "$wn" "$proj" "$elapsed" "$rem" "$has"
   done < <(mon__project_sessions)
+}
+
+# ------------------------------------------------------------
+# 待機中エージェント (claude agents --json / waitingFor)
+# ------------------------------------------------------------
+
+# mon__agents_waiting — 入力待ちエージェントを「name|status|waitingFor」で列挙
+#   - claude CLI / jq が無ければ何も出さない (機能はオプショナル)
+#   - 毎フレーム CLI を叩かないよう MON_AGENTS_TTL 秒キャッシュ (0=機能無効)
+#   - JSON 形は将来変わり得るため .agents? // . で防御的にパースする
+_MON_AGENTS_CACHE=""
+_MON_AGENTS_TS=0
+mon__agents_waiting() {
+  (( MON_AGENTS_TTL > 0 )) || return 0
+  has_cmd "$CLAUDE_BIN" || return 0
+  has_cmd jq            || return 0
+  local now; now="$(date +%s)"
+  if (( now - _MON_AGENTS_TS >= MON_AGENTS_TTL )); then
+    _MON_AGENTS_TS="$now"
+    _MON_AGENTS_CACHE="$(
+      timeout 5 "$CLAUDE_BIN" agents --json 2>/dev/null \
+        | jq -r '(.agents? // .) | if type == "array" then .[] else empty end
+                 | select((.waitingFor? // "") != "")
+                 | "\(.name // .id // "?")|\(.status // "-")|\(.waitingFor)"' 2>/dev/null \
+        || true
+    )"
+  fi
+  [[ -n "$_MON_AGENTS_CACHE" ]] && printf '%s\n' "$_MON_AGENTS_CACHE"
+  return 0
 }
 
 # ------------------------------------------------------------
@@ -488,6 +519,21 @@ mon__render_once() {
     printf '   %s(実行中なし)%s' "$C_YELLOW" "$C_RESET"
     mon__eol; printf '\n'
   fi
+  # --- 入力待ちエージェント (claude agents --json の waitingFor) ---
+  #   待機中が 1 件以上ある時だけセクションを出す (通常時は画面を占有しない)
+  local aw_any=0 aname astat await
+  while IFS='|' read -r aname astat await; do
+    [[ -z "$aname" ]] && continue
+    if (( aw_any == 0 )); then
+      aw_any=1
+      mon__hr
+      printf '   %s● ⏳ 入力待ちエージェント%s' "$C_MAGENTA" "$C_RESET"
+      mon__eol; printf '\n'
+    fi
+    printf '   %s⏳%s %-22s %s%-10s%s %s' \
+      "$C_YELLOW" "$C_RESET" "$aname" "$C_MAGENTA" "$astat" "$C_RESET" "$await"
+    mon__eol; printf '\n'
+  done < <(mon__agents_waiting)
   mon__hr
   # --- 登録プロジェクト + supervisor ---
   # NOTE: CJK header compensation: "プロジェクト"=6chars×2display_cols=12display.

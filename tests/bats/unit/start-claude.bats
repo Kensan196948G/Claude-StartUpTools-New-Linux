@@ -68,3 +68,13 @@ teardown() { _bats_common_teardown; }
   run bash "$SCRIPT" --project MyProj --background --duration 5
   [[ "$output" == *"supervisor 起動"* ]]
 }
+
+@test "start-claude: --safe-mode は supervisor 非経由で tmux セッションを直接起動" {
+  run bash "$SCRIPT" --project MyProj --safe-mode --background --duration 5
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"safe-mode 診断起動"* ]]
+  # supervisor (autonomy.sh) を経由しない → state ファイルなし
+  [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
+  # tmux_run 直接呼び出しでセッションは作成される
+  [ -f "$TMUX_STATE/claudeos-MyProj" ]
+}

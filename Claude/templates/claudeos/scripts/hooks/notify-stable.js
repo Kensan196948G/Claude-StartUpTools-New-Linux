@@ -37,7 +37,9 @@ function send(channel, title, body) {
     );
     return true;
   } catch {
-    console.log(`[Notify:${channel}] ${title} — ${body}`);
+    // Stop hook (session-end.js) から同期 require されるため stdout には出さない
+    // (stdout は親 hook の JSON 出力専用)。
+    console.error(`[Notify:${channel}] ${title} — ${body}`);
     return false;
   }
 }
@@ -120,7 +122,7 @@ function spawnWebhook(event, data) {
 function run() {
   const state = readJson(STATE_FILE);
   if (!state) {
-    console.log("[NotifyStable] state.json not found — skip");
+    console.error("[NotifyStable] state.json not found — skip");
     return;
   }
 

@@ -10,6 +10,10 @@
 const fs = require("fs");
 const path = require("path");
 
+// Stop hook の stdout は「単一の valid JSON」である必要がある (hookSpecificOutput 出力)。
+// 進行ログはすべて stderr へ逃がし、stdout は末尾の JSON 1 行に限定する。
+const log = (...args) => console.error(...args);
+
 const STATE_FILE = path.join(process.cwd(), "state.json");
 
 function readJson(file) {
@@ -72,7 +76,7 @@ try {
             phase,
             required,
           });
-          console.log("[SessionEnd][WARN] Verify phase ended without required SubAgent invocation");
+          log("[SessionEnd][WARN] Verify phase ended without required SubAgent invocation");
         }
       }
     } catch (verifyErr) {
@@ -84,7 +88,7 @@ try {
       const qg = require("./quality-gate-check.js");
       const breaches = qg.evaluate(process.cwd(), state);
       if (qg.appendWarnings(state, breaches)) {
-        console.log(`[SessionEnd][WARN] Quality gates breached: ${breaches.map(b => b.gate).join(", ")}`);
+        log(`[SessionEnd][WARN] Quality gates breached: ${breaches.map(b => b.gate).join(", ")}`);
       }
     } catch (qgErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] quality-gate skipped: ${qgErr.message}`);
@@ -97,7 +101,7 @@ try {
         const script = path.join(process.cwd(), "scripts", "release", "generate-deploy-runbook.js");
         if (fs.existsSync(script)) {
           const r = spawnSync(process.execPath, [script], { cwd: process.cwd(), encoding: "utf8" });
-          if (r.status === 0) console.log("[SessionEnd] deploy runbook generated (reports/deploy-runbook.md)");
+          if (r.status === 0) log("[SessionEnd] deploy runbook generated (reports/deploy-runbook.md)");
         }
       }
     } catch (drErr) {
@@ -117,7 +121,7 @@ try {
           files: untested.slice(0, 30),
           truncated: untested.length > 30,
         });
-        console.log(`[SessionEnd][WARN] tdd_required: ${untested.length} untested file(s)`);
+        log(`[SessionEnd][WARN] tdd_required: ${untested.length} untested file(s)`);
       }
     } catch (tddErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] tdd-scan skipped: ${tddErr.message}`);
@@ -139,7 +143,7 @@ try {
         const entry = { at: new Date().toISOString(), summary: summary.slice(0, 200) };
         state.learning.success_patterns.unshift(entry);
         if (state.learning.success_patterns.length > 20) state.learning.success_patterns.length = 20;
-        console.log("[SessionEnd][Learning] success_pattern recorded");
+        log("[SessionEnd][Learning] success_pattern recorded");
       } else if (blockedCount > 0 || warnings.some(w => w.kind === "verify_subagent_missing")) {
         // 失敗パターン: blocked_issues / verify warning を記録
         const reasons = [
@@ -149,14 +153,14 @@ try {
         const entry = { at: new Date().toISOString(), reasons, summary: summary.slice(0, 200) };
         state.learning.failure_patterns.unshift(entry);
         if (state.learning.failure_patterns.length > 20) state.learning.failure_patterns.length = 20;
-        console.log(`[SessionEnd][Learning] failure_pattern recorded (reasons: ${reasons.join(", ")})`);
+        log(`[SessionEnd][Learning] failure_pattern recorded (reasons: ${reasons.join(", ")})`);
       }
     } catch (learnErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] learning-record skipped: ${learnErr.message}`);
     }
 
     writeJsonAtomic(STATE_FILE, state);
-    console.log("[SessionEnd] state.json updated (last_stop_at + learning recorded)");
+    log("[SessionEnd] state.json updated (last_stop_at + learning recorded)");
 
     // Webhook: session_end イベントを外部へ通知（detached spawn）
     try {
@@ -176,7 +180,7 @@ try {
       }
     } catch { /* fail-soft */ }
   } else {
-    console.log("[SessionEnd] state.json not found — skip");
+    log("[SessionEnd] state.json not found — skip");
   }
 } catch (err) {
   console.error(`[SessionEnd] state update failed: ${err.message}`);
@@ -199,7 +203,7 @@ try {
       rb.pruneBank(bank);
       rb.saveBank(dataDir, bank);
       const sonaUpdated = bank.entries.filter(e => e.id !== entry.id).length;
-      console.log(`[ReasoningBank] Saved: ${entry.id} conf=${entry.confidence.toFixed(2)} tags=[${entry.tags.join(",")}] | SONA updated ${sonaUpdated} existing entries`);
+      log(`[ReasoningBank] Saved: ${entry.id} conf=${entry.confidence.toFixed(2)} tags=[${entry.tags.join(",")}] | SONA updated ${sonaUpdated} existing entries`);
     } else {
       // 低信頼でも既存エントリの時間減衰だけは実行する
       const stateRBStab = (stateRB.stable || {});
@@ -208,7 +212,7 @@ try {
       rb.updateSONAWeights(bank, path.basename(process.cwd()), fallbackTags, !!stateRBStab.stable_achieved);
       rb.pruneBank(bank);
       rb.saveBank(dataDir, bank);
-      console.log("[ReasoningBank] Entry skipped (confidence < 0.30 or no summary) | SONA decay applied");
+      log("[ReasoningBank] Entry skipped (confidence < 0.30 or no summary) | SONA decay applied");
     }
   }
 } catch (rbErr) {
@@ -239,11 +243,45 @@ if (dreamingEnabled) {
         cwd: process.cwd(),
       });
       child.unref(); // 親プロセスの終了をブロックしない
-      console.log("[SessionEnd] Dreaming runner spawned (background)");
+      log("[SessionEnd] Dreaming runner spawned (background)");
     }
   } catch (spawnErr) {
     console.error(`[SessionEnd] Dreaming spawn failed: ${spawnErr.message}`);
   }
 }
+
+// Stop hook 出力 (2.1.163+): hookSpecificOutput.additionalContext で終了処理チェック結果を
+// Claude のコンテキストへ渡す。stdout はこの JSON 1 行のみ (進行ログは stderr 済み)。
+// 旧バージョンの Claude Code は未知フィールドを無視するため後方互換。
+try {
+  const notes = [];
+  const finalState = readJson(STATE_FILE);
+  if (finalState) {
+    for (const w of (finalState.warnings || []).slice(-5)) {
+      notes.push(`⚠️ warning(${w.kind}): ${String(w.message || "").slice(0, 120)}`);
+    }
+    const blockedCount = (finalState.blocked_issues || []).length;
+    if (blockedCount > 0) notes.push(`🚫 blocked_issues: ${blockedCount} 件`);
+  } else {
+    notes.push("ℹ️ state.json なし (終了処理は未記録)");
+  }
+  try {
+    const { execFileSync } = require("child_process");
+    const dirty = execFileSync("git", ["status", "--porcelain"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (dirty) {
+      notes.push(`📝 未コミット変更: ${dirty.split("\n").length} ファイル (5h 終了処理の commit/push を確認)`);
+    }
+  } catch { /* git なし / 非リポジトリは無視 */ }
+
+  const additionalContext = notes.length > 0
+    ? `[SessionEnd] 終了処理チェック:\n${notes.join("\n")}`
+    : "[SessionEnd] 終了処理チェック: ✅ 問題なし (warnings / blocked_issues / 未コミット変更なし)";
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: { hookEventName: "Stop", additionalContext },
+  }) + "\n");
+} catch { /* fail-soft: JSON 出力に失敗しても hook はブロックしない */ }
 
 process.exit(0);

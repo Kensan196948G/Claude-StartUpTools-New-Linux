@@ -8,6 +8,7 @@
 # 使い方 (menu.sh から):
 #   start-claude.sh --project P --foreground [--duration 300]   # L1: tmux attach
 #   start-claude.sh --project P --background [--duration 300]   # S1: detached
+#   start-claude.sh --project P --safe-mode  [--duration 300]   # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
 # ============================================================
 
@@ -26,13 +27,14 @@ source "$SCRIPT_DIR/../lib/tmux-runner.sh"
 source "$SCRIPT_DIR/../lib/notify.sh"
 
 main() {
-  local project="" mode="foreground" duration=300
+  local project="" mode="foreground" duration=300 safe_mode=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)    project="$2"; shift 2 ;;
       --foreground) mode="foreground"; shift ;;
       --background) mode="background"; shift ;;
       --duration)   duration="$2"; shift 2 ;;
+      --safe-mode)  safe_mode=1; shift ;;
       --local)      shift ;;   # 互換: ローカル一本化のため無視
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
@@ -54,6 +56,15 @@ main() {
   launcher__project_exists "$project" || { log_error "プロジェクトが存在しません: $(launcher__project_dir "$project")"; exit 1; }
 
   notify__play claude   # 起動通知音 (非ブロッキング・失敗無害)
+
+  # --safe-mode: 診断起動 (claude 2.1.169+ の --safe-mode で hooks/MCP 無効の素起動)。
+  # supervisor (autonomy.sh) を経由せず直接 tmux_run する — 自動再起動なし。
+  # 環境起因の起動不能・hook 暴走などの切り分けに使う。
+  if [[ "$safe_mode" == "1" ]]; then
+    log_info "🩺 safe-mode 診断起動: supervisor 非経由・自動再起動なし ($project)"
+    CCSU_CLAUDE_SAFE_MODE=1 tmux_run "$project" "$duration" "$mode"
+    return 0
+  fi
 
   local safe session
   safe="$(ccsu_safe_name "$project")"

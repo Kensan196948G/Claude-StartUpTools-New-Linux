@@ -6,6 +6,9 @@
 
 - 日本語で対応する。
 - SSH 接続、リモート配布、Windows/PowerShell 起動経路を追加しない。
+  - この禁止は「本ツールへの多経路起動コードの持ち込み防止」が意図。Anthropic Managed Agents
+    の利用（Console + CLI スキル経由で管理、本リポジトリにコード追加なし）は禁止対象外。
+    位置づけは「ローカル cron 主・Managed Agents 補完」(`docs/claude/06_ManagedAgents調査メモ.md`)。
 - `/home/kensan/Projects` 配下の Git リポジトリを登録プロジェクト候補として扱う。
 - 運用メニューは灰色表示を使わず、青、緑、黄、マゼンタ、赤、白を中心にする。
 - 変更後は `npm test` と `npm run lint` を通す。
@@ -23,6 +26,8 @@ CTO Claude に任せる範囲:
 
 - PR merge、main 直push、本番公開
 - Secrets、課金、外部サービス設定
+  - 一度きりのセットアップ決裁（例: Managed Agents の Console オンボーディング、
+    Vault への token 登録、Permission Policy 設定）。決裁後の日常運用は CTO 自律可
 - 破壊的削除、不可逆なデータ変更
 - Supervisor 全プロジェクト適用の実行
 
