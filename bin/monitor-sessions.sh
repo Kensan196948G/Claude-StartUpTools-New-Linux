@@ -182,7 +182,8 @@ mon__agents_waiting() {
   if (( now - _MON_AGENTS_TS >= MON_AGENTS_TTL )); then
     _MON_AGENTS_TS="$now"
     _MON_AGENTS_CACHE="$(
-      timeout 5 "$CLAUDE_BIN" agents --json 2>/dev/null \
+      setsid env TERM=dumb NO_COLOR=1 FORCE_COLOR=0 CI=true \
+        timeout 5 "$CLAUDE_BIN" agents --json </dev/null 2>/dev/null \
         | jq -r '(.agents? // .) | if type == "array" then .[] else empty end
                  | select((.waitingFor? // "") != "")
                  | "\(.name // .id // "?")|\(.status // "-")|\(.waitingFor)"' 2>/dev/null \
@@ -603,8 +604,19 @@ mon__dashboard() {
 # mon__open — claudeos-monitor を用意して attach (tmux 内なら switch-client)
 mon__open() {
   require_cmd "$TMUX_BIN" "tmux をインストールしてください (メニュー項7)"
+  local self="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+
+  # セッションが存在するが dashboard window が死んでいる場合は再作成
+  if mon__exists; then
+    local dw_check
+    dw_check="$("$TMUX_BIN" list-windows -t "$MON_SESSION" -F '#{window_name}' 2>/dev/null | grep -c '^monitor$' || true)"
+    if [[ "$dw_check" == "0" ]]; then
+      log_warn "dashboard window が消滅しています。セッションを再作成します..."
+      "$TMUX_BIN" kill-session -t "$MON_SESSION" 2>/dev/null || true
+    fi
+  fi
+
   if ! mon__exists; then
-    local self="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
     "$TMUX_BIN" new-session -d -s "$MON_SESSION" -n monitor -x 220 -y 50 \
       "bash '$self' dashboard" 2>/dev/null || { log_error "監視セッションを作成できませんでした"; return 1; }
     "$TMUX_BIN" set-option -w -t "$MON_SESSION:0" automatic-rename off 2>/dev/null || true
@@ -618,10 +630,27 @@ mon__open() {
   local dw
   dw="$("$TMUX_BIN" list-windows -t "$MON_SESSION" -F '#{window_index} #{window_name}' 2>/dev/null | awk '$2=="monitor"{print $1; exit}')"
   [[ -n "$dw" ]] && "$TMUX_BIN" select-window -t "$MON_SESSION:$dw" 2>/dev/null || true
+
+  # 非 TTY 環境 (パイプ・Claude Code Bash 等) では attach できないため案内のみ
+  if ! [[ -t 0 && -t 1 ]]; then
+    log_warn "対話端末が検出されませんでした。"
+    printf '  別のターミナルウィンドウで以下を実行してください:\n'
+    printf '    %stmux attach -t %s%s\n' "$C_GREEN" "$MON_SESSION" "$C_RESET"
+    return 0
+  fi
+
   if [[ -n "${TMUX:-}" ]]; then
-    "$TMUX_BIN" switch-client -t "$MON_SESSION"
+    "$TMUX_BIN" switch-client -t "$MON_SESSION" 2>/dev/null || {
+      log_error "switch-client 失敗。別ターミナルで実行してください: tmux attach -t $MON_SESSION"
+      read -rp "  Enter で戻る " _ || true
+      return 1
+    }
   else
-    "$TMUX_BIN" attach -t "$MON_SESSION"
+    "$TMUX_BIN" attach -t "$MON_SESSION" 2>/dev/null || {
+      log_error "tmux attach 失敗。別ターミナルで実行してください: tmux attach -t $MON_SESSION"
+      read -rp "  Enter で戻る " _ || true
+      return 1
+    }
   fi
 }
 

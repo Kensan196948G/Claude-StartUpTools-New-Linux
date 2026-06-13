@@ -66,6 +66,8 @@ esac
   export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config.json"
   printf '{ "projects": "%s/projects" }\n' "$TEST_TEMP" > "$AI_STARTUP_CONFIG_PATH"
   mkdir -p "$TEST_TEMP/projects/Alpha/.git" "$TEST_TEMP/projects/Beta/.git"
+  # agents waiting 機能をテスト中は無効化 (setsid スタブの副作用を防ぐ)
+  export CCSU_MONITOR_AGENTS_TTL=0
 }
 teardown() { _bats_common_teardown; }
 
