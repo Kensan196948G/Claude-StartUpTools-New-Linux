@@ -16,7 +16,8 @@
 //   "webhook": {
 //     "enabled": true,
 //     "events": { "stable_achieved": true, "session_end": true,
-//                 "ci_blocked": true, "dream_complete": true }
+//                 "ci_blocked": true, "dream_complete": true,
+//                 "input_waiting": true }
 //   }
 
 "use strict";
@@ -87,6 +88,7 @@ const EVENT_CONFIG = {
   session_end:     { color: "0078D4", icon: "🏁", label: "セッション終了" },
   ci_blocked:      { color: "D83B01", icon: "🚨", label: "CI Blocked" },
   dream_complete:  { color: "7719AA", icon: "💡", label: "Dreaming 完了" },
+  input_waiting:   { color: "FFC000", icon: "🔔", label: "入力待ち通知" },
 };
 
 // ---------- フォーマッター ----------
@@ -186,7 +188,7 @@ async function sendSlack(url, event, data) {
 
 /**
  * イベントを全設定済みエンドポイントに送信する。
- * @param {string} event  'stable_achieved' | 'session_end' | 'ci_blocked' | 'dream_complete'
+ * @param {string} event  'stable_achieved' | 'session_end' | 'ci_blocked' | 'dream_complete' | 'input_waiting'
  * @param {object} data   イベント固有の追加データ
  */
 async function notify(event, data = {}) {
