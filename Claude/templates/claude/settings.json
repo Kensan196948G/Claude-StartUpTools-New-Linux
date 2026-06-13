@@ -29,6 +29,7 @@
           {
             "type": "command",
             "command": "node .claude/claudeos/scripts/hooks/pre-commit-gate.js",
+            "if": "Bash(git *)",
             "continueOnBlock": true
           }
         ]
