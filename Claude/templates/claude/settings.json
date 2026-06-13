@@ -29,6 +29,7 @@
           {
             "type": "command",
             "command": "node .claude/claudeos/scripts/hooks/pre-commit-gate.js",
+            "if": "Bash(git *)",
             "continueOnBlock": true
           }
         ]
@@ -52,6 +53,26 @@
           {
             "type": "command",
             "command": "node .claude/claudeos/scripts/hooks/session-start.js"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/claudeos/scripts/hooks/notification-gate.js"
+          }
+        ]
+      },
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/claudeos/scripts/hooks/notification-gate.js"
           }
         ]
       }
