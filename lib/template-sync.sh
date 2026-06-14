@@ -4,8 +4,9 @@
 #
 # プロジェクト起動前に最新テンプレートを各プロジェクトへ配布する。
 # 配布対象:
-#   START_PROMPT.md : 毎回上書き (セッション開始プロンプト)
-#   CLAUDE.md       : 差分ありのみバックアップ→上書き (プロジェクト固有設定)
+#   START_PROMPT.md  : 毎回上書き (セッション開始プロンプト)
+#   CLAUDE.md        : 存在しない場合のみ配布 (プロジェクト固有設定を保護)
+#   .coderabbit.yaml : 差分ありのみバックアップ→上書き (リポジトリルートへ配布)
 #
 # テスト用 env 上書き:
 #   CCSU_TEMPLATE_SYNC_DATE : バックアップファイル名の日付部分 (既定: date +%Y%m%d-%H%M%S)
@@ -26,7 +27,7 @@ _tmpsync__date_stamp() {
   printf '%s' "${CCSU_TEMPLATE_SYNC_DATE:-$(date +%Y%m%d-%H%M%S)}"
 }
 
-# template_sync__apply <project_dir> — START_PROMPT.md と CLAUDE.md を配布
+# template_sync__apply <project_dir> — START_PROMPT.md / CLAUDE.md / .coderabbit.yaml を配布
 template_sync__apply() {
   local project_dir="$1"
   local tmpl_dir; tmpl_dir="$(_tmpsync__tmpl_dir)"
@@ -52,6 +53,20 @@ template_sync__apply() {
     if [[ ! -f "$dst_cm" ]]; then
       cp "$src_cm" "$dst_cm"
       log_info "📄 CLAUDE.md 初回配布: $dst_cm"
+    fi
+  fi
+
+  # .coderabbit.yaml: 差分ありのみバックアップ→上書き (リポジトリルートへ配布)
+  local src_cr="$tmpl_dir/.coderabbit.yaml"
+  if [[ -f "$src_cr" ]]; then
+    local dst_cr="$project_dir/.coderabbit.yaml"
+    if [[ -f "$dst_cr" ]] && ! diff -q "$src_cr" "$dst_cr" >/dev/null 2>&1; then
+      cp "$dst_cr" "${dst_cr}.bak-$(_tmpsync__date_stamp)"
+      log_info "📄 .coderabbit.yaml バックアップ作成: ${dst_cr}.bak-$(_tmpsync__date_stamp)"
+    fi
+    if [[ ! -f "$dst_cr" ]] || ! diff -q "$src_cr" "$dst_cr" >/dev/null 2>&1; then
+      cp "$src_cr" "$dst_cr"
+      log_info "📄 .coderabbit.yaml 配布済み: $project_dir/"
     fi
   fi
 }

@@ -131,3 +131,47 @@ teardown() { _bats_common_teardown; }
   [ "$status" -eq 0 ]
   [ -f "$proj/.claude/CLAUDE.md" ]
 }
+
+# ---- .coderabbit.yaml ------------------------------------------
+@test "template_sync__apply: .coderabbit.yaml を初回配布する" {
+  printf 'language: "ja-JP"\n' > "$CCSU_ROOT/Claude/templates/claude/.coderabbit.yaml"
+  local proj="$TEST_TEMP/proj11"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ -f "$proj/.coderabbit.yaml" ]
+  grep -q 'ja-JP' "$proj/.coderabbit.yaml"
+}
+
+@test "template_sync__apply: .coderabbit.yaml が同一内容なら上書きもバックアップもしない" {
+  printf 'language: "ja-JP"\n' > "$CCSU_ROOT/Claude/templates/claude/.coderabbit.yaml"
+  local proj="$TEST_TEMP/proj12"
+  mkdir -p "$proj"
+  printf 'language: "ja-JP"\n' > "$proj/.coderabbit.yaml"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  local bak_count; bak_count="$(find "$proj" -maxdepth 1 -name ".coderabbit.yaml.bak-*" | wc -l)"
+  [ "$bak_count" -eq 0 ]
+}
+
+@test "template_sync__apply: .coderabbit.yaml が差分ありならバックアップして上書き" {
+  printf 'language: "ja-JP"\n' > "$CCSU_ROOT/Claude/templates/claude/.coderabbit.yaml"
+  local proj="$TEST_TEMP/proj13"
+  mkdir -p "$proj"
+  printf 'language: "en-US"\n' > "$proj/.coderabbit.yaml"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # テンプレートの内容に更新されていること
+  grep -q 'ja-JP' "$proj/.coderabbit.yaml"
+  # バックアップが作られていること
+  local bak_count; bak_count="$(find "$proj" -maxdepth 1 -name ".coderabbit.yaml.bak-*" | wc -l)"
+  [ "$bak_count" -eq 1 ]
+}
+
+@test "template_sync__apply: .coderabbit.yaml テンプレートなしでも正常終了" {
+  local proj="$TEST_TEMP/proj14"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ ! -f "$proj/.coderabbit.yaml" ]
+}
