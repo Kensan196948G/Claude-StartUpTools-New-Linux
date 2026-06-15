@@ -106,6 +106,14 @@
     "logsDir": "/home/kensan/.claudeos/logs",
     "entryPrefix": "CLAUDEOS"
   },
+  "agentSdk": {
+    "_comment": "PR-E 新設。claude -p / Agent SDK headless の月次クレジット可視化・上限ガード設定 (2026-06-15 課金変更対応)。monthlyBudgetUsd=0 は無制限 (ガード無効)。warn/verifyOnly/stop は消費率(%)の段階閾値で CLAUDE.md §9 と同型。ledgerPath は credits__record の追記先 (~ 展開は credits.sh が CCSU_HOME 基準で解決)。",
+    "monthlyBudgetUsd": 0,
+    "warnPct": 70,
+    "verifyOnlyPct": 85,
+    "stopPct": 95,
+    "ledgerPath": "/home/kensan/.claudeos/credits/ledger.jsonl"
+  },
   "email": {
     "_comment": "v3.2.0 新設。Cron セッション終了時に HTML レポートメールを送信。SMTP 認証情報は Linux 環境変数で管理 (CLAUDEOS_SMTP_USER / CLAUDEOS_SMTP_PASS) — config.json には書かない。送信トリガーは Linux 側 CLAUDEOS_EMAIL_ENABLED=1 で明示的に有効化。詳細は docs/common/16_HTMLメールレポート設定.md を参照。",
     "enabled": false,

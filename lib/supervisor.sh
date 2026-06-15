@@ -32,6 +32,7 @@ _CCSU_SUPERVISOR_LOADED=1
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/json.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/credits.sh"
 
 SUP_DIR="${CCSU_SUP_DIR:-$CCSU_HOME/supervisor}"
 SUP_CRON_LAUNCHER="${CCSU_SUP_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
@@ -198,6 +199,8 @@ sup__persist() {
   "last_session_secs": ${SUP_LAST_SECS:-0},
   "last_reason": "${SUP_LAST_REASON:-}",
   "last_throttle_tier": "${SUP_THROTTLE_TIER:-normal}",
+  "last_session_cost_usd": ${SUP_LAST_SESSION_COST:-0},
+  "month_spent_usd": ${SUP_MONTH_SPENT:-0},
   "updated_at": "$(sup__now_iso)"
 }
 JSON
@@ -266,10 +269,18 @@ sup__loop() {
   deadline="$(json_get "$pstate" '.project.release_deadline' '')"
   daily_max_base="$daily_max"; session_min_base="$session_min"
 
+  # Agent SDK クレジット予算 (USD)。0=無制限 (ガード無効)。
+  # cron-launcher へ安定パス CLAUDEOS_SESSION_COST_FILE を渡し、当該セッションの
+  # total_cost_usd を鏡写しさせて回収 → ledger 追記 → 当月合計で credits__guard 判定する。
+  local credit_budget session_cost_file
+  credit_budget="$(json_get "$pstate" '.supervisor.credit_monthly_budget_usd' '0')"
+  session_cost_file="$SUP_DIR/${safe}.session-cost"
+
   # 作業変数 (SUP_* グローバル: sup__persist が書き出す)
   SUP_PID=$$; SUP_STATUS=running; SUP_STARTED_AT="$(sup__now_iso)"; SUP_ENDED_AT=""
   SUP_DAY="$(sup__today)"; SUP_RESTARTS=0; SUP_MINUTES=0; SUP_CONSEC_SHORT=0
   SUP_LAST_SECS=0; SUP_LAST_REASON=""; SUP_THROTTLE_TIER="normal"
+  SUP_LAST_SESSION_COST="0"; SUP_MONTH_SPENT="0"
   # 注: stop フラグのクリアは呼び出し側 (au__start) が起動前に行う。
   #     ここでクリアしないことで、起動前/実行中に立てたフラグを確実に拾える。
   sup__persist "$project"
@@ -309,8 +320,33 @@ sup__loop() {
     # throttle tier/bias を子セッションへ伝播 (cron-launcher / goal 注入が任意で参照)
     export CLAUDEOS_THROTTLE_TIER="$SUP_THROTTLE_TIER"
     export CLAUDEOS_THROTTLE_BIAS="$(sup__throttle_goal_bias "$SUP_THROTTLE_TIER")"
+    # クレジット回収用の安定パスを渡す (cron-launcher が SESSION_ID.cost をここへ鏡写し)。
+    # 前回値の混入を防ぐため起動前に必ず除去する。
+    rm -f "$session_cost_file"
+    export CLAUDEOS_SESSION_COST_FILE="$session_cost_file"
     bash "$SUP_CRON_LAUNCHER" "$project" "$session_min" || true
     sess_end="$(date +%s)"; sess_secs=$(( sess_end - sess_start )); (( sess_secs < 0 )) && sess_secs=0
+
+    # 6b) クレジット計上: セッションコストを ledger 追記し、当月合計で上限ガード判定。
+    #     budget=0 なら credits__guard が空を返し no-op (無制限)。stop で次周回前に break。
+    local _sess_cost _month _spent _credit_reason
+    _sess_cost=""
+    [[ -f "$session_cost_file" ]] && [[ -s "$session_cost_file" ]] && _sess_cost="$(cat "$session_cost_file")"
+    if [[ -n "$_sess_cost" ]]; then
+      credits__record "$_sess_cost" 0 0 "$project" || true
+      SUP_LAST_SESSION_COST="$_sess_cost"
+    fi
+    _month="$(sup__today)"; _month="${_month:0:7}"
+    _spent="$(credits__month_total "$_month")"
+    SUP_MONTH_SPENT="$_spent"
+    _credit_reason="$(credits__guard "$credit_budget" "$_spent")"
+    if [[ "$_credit_reason" == "credit-cap:stop" ]]; then
+      log_info "🤖 [supervisor] 💳🔴 credit-cap stop: $project spent=\$$_spent budget=\$$credit_budget"
+      SUP_LAST_REASON="$_credit_reason"; sup__persist "$project"
+      stop_reason="$_credit_reason"; break
+    elif [[ -n "$_credit_reason" ]]; then
+      log_info "🤖 [supervisor] 💳 credit guard: $project $_credit_reason spent=\$$_spent budget=\$$credit_budget"
+    fi
 
     # 7) カウンタ更新
     SUP_RESTARTS=$(( SUP_RESTARTS + 1 ))
@@ -332,6 +368,7 @@ sup__loop() {
     blocked:*)      SUP_STATUS="blocked" ;;
     crash-loop:*)   SUP_STATUS="crash-loop" ;;
     daily-cap:*)    SUP_STATUS="daily-cap" ;;
+    credit-cap:*)   SUP_STATUS="credit-cap" ;;
     *)              SUP_STATUS="stopped" ;;
   esac
   SUP_LAST_REASON="$stop_reason"; SUP_ENDED_AT="$(sup__now_iso)"

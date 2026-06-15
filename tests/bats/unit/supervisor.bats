@@ -15,6 +15,8 @@ setup() {
   export CCSU_SUP_COOLDOWN=0
   export CCSU_SUP_CRON_LAUNCHER="$TEST_TEMP/launcher.sh"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$CCSU_SUP_CRON_LAUNCHER"; chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  # クレジット台帳を隔離 (PR-E: 実 HOME の ledger を汚さない)
+  export CCSU_CREDITS_LEDGER="$TEST_TEMP/credits/ledger.jsonl"
   mkdir -p "$TEST_TEMP/projects/Demo"
   source "$REPO_ROOT/lib/supervisor.sh"
 }
@@ -200,6 +202,42 @@ EOF
   run sup__loop Demo
   [ "$(sup__get Demo last_throttle_tier '')" = "t30" ]   # t30 は session 据え置き (daily のみ縮退)
   [ "$(cat "$TEST_TEMP/sessmin")" = "300" ]
+}
+
+# ---- ループ統合: クレジット上限ガード配線 (PR-E) ----------
+# 観測戦略: cron-launcher stub が当該セッションの cost を $CLAUDEOS_SESSION_COST_FILE へ
+#   書き出す (= cron-launcher が SJT_COST_FILE を鏡写しする挙動の代替)。supervisor が
+#   それを ledger 追記 → 当月合計 → credits__guard で credit-cap 判定する経路を外側から検証。
+@test "sup__loop: 予算到達で credit-cap 停止 (restarts=0・ledger 追記)" {
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+echo 100 > "$CLAUDEOS_SESSION_COST_FILE"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  echo '{ "deploy": {"ready": false}, "supervisor": {"credit_monthly_budget_usd": 100, "max_restarts_per_day": 100, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo 5
+  [ "$(sup__get Demo status '')" = "credit-cap" ]
+  # 予算超過セッションは完了再起動として数えない (break が step-7 加算より前)
+  [ "$(sup__get Demo restarts_today 0)" = "0" ]
+  # ledger に当該セッションの cost が追記されている
+  [ -s "$CCSU_CREDITS_LEDGER" ]
+  [ "$(jq -r '.cost_usd' "$CCSU_CREDITS_LEDGER" | head -1)" = "100" ]
+  # 月次消費が state へ可視化されている
+  [ "$(sup__get Demo month_spent_usd 0)" = "100" ]
+}
+@test "sup__loop: 予算 0 (無制限) は credit-cap 評価せず通常停止" {
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+echo 100 > "$CLAUDEOS_SESSION_COST_FILE"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  echo '{ "deploy": {"ready": false}, "supervisor": {"credit_monthly_budget_usd": 0, "max_restarts_per_day": 1, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo 5
+  # budget=0 はガード無効 → daily-cap で停止 (credit-cap にならない)
+  [ "$(sup__get Demo status '')" = "daily-cap" ]
+  [ "$(sup__get Demo restarts_today 0)" = "1" ]
 }
 
 @test "sup__loop: 再起動ループ中に deploy.ready 反転で goal-reached (E2E)" {

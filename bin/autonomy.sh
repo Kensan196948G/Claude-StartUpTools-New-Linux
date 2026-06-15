@@ -262,8 +262,33 @@ au__render() {
     "$project" "$alive" "$status" "$restarts" "$minutes" "$reason"
 }
 
+# au__credit_summary — 当月 Agent SDK クレジット消費/残量を 1 行で (青/緑/黄/赤+絵文字)
+#   予算 config agentSdk.monthlyBudgetUsd を正本とし、消費は credits__month_total
+#   (ledger.jsonl 集計) を真実とする。budget=0 は無制限 (🔵)。
+#   色段階は CLAUDE.md §9 (70/85/95%) と同型: 🟢<70% / 🟡70-84% / 🔴≥85%。
+au__credit_summary() {
+  local budget spent month pct color icon
+  budget="$(config_get '.agentSdk.monthlyBudgetUsd' '0')"
+  month="$(date +%Y-%m)"
+  spent="$(credits__month_total "$month")"
+  if awk -v b="$budget" 'BEGIN{exit !(b+0<=0)}'; then
+    # 無制限: 消費のみ表示
+    printf '  %s🔵 Agent SDK クレジット [%s]: 消費=$%s / 予算=無制限%s\n' \
+      "$C_BLUE" "$month" "$spent" "$C_RESET"
+    return 0
+  fi
+  pct="$(awk -v b="$budget" -v s="$spent" 'BEGIN{printf "%.0f", (s+0)*100/(b+0)}')"
+  if   (( pct >= 85 )); then color="$C_RED";    icon="🔴"
+  elif (( pct >= 70 )); then color="$C_YELLOW"; icon="🟡"
+  else                       color="$C_GREEN";  icon="🟢"
+  fi
+  printf '  %s%s Agent SDK クレジット [%s]: 消費=$%s / 予算=$%s (%s%%)%s\n' \
+    "$color" "$icon" "$month" "$spent" "$budget" "$pct" "$C_RESET"
+}
+
 # au__status [project]
 au__status() {
+  au__credit_summary
   if [[ -n "${1:-}" ]]; then au__render "$1"; return 0; fi
   au__list
 }

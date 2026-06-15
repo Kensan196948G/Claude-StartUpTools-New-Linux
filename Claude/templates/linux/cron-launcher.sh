@@ -413,6 +413,16 @@ except Exception as e:
 PYEOF
   fi
 
+  # 捕捉した cost を supervisor が読める安定パスへミラー (PR-E credit guard)
+  #   cron-launcher は SESSION_ID を所有するが呼び出し元 supervisor は知らない。
+  #   supervisor が CLAUDEOS_SESSION_COST_FILE を env で渡し、ここで鏡写しすることで
+  #   SESSION_ID の知識を共有せずに当該セッションのコストを引き渡す (SJT_*_FILE と同型)。
+  if [[ -n "${CLAUDEOS_SESSION_COST_FILE:-}" ]] \
+       && [[ -f "$SJT_COST_FILE" ]] && [[ -s "$SJT_COST_FILE" ]]; then
+    cp -f "$SJT_COST_FILE" "$CLAUDEOS_SESSION_COST_FILE" 2>>"$LOG_FILE" || true
+    echo "💳 [cron-launcher] session cost ミラー: $(cat "$SJT_COST_FILE") → $CLAUDEOS_SESSION_COST_FILE" >> "$LOG_FILE"
+  fi
+
   # 既存の終了コード伝播 (L416付近) に合わせて exit ファイルへ書き出す
   echo "$CLAUDE_EXIT" > "$CLAUDE_EXIT_FILE"
 
