@@ -29,6 +29,8 @@ source "$SCRIPT_DIR/../lib/launcher-common.sh"
 source "$SCRIPT_DIR/../lib/cron-manager.sh"
 # shellcheck source=lib/supervisor.sh
 source "$SCRIPT_DIR/../lib/supervisor.sh"
+# shellcheck source=lib/queue.sh
+source "$SCRIPT_DIR/../lib/queue.sh"
 
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
@@ -123,8 +125,11 @@ au__start_all() {
     esac
   done
 
+  # 優先度キュー: 列挙を queue__order に通し security/blocked/残日数/starvation 順へ。
+  # skip 判定 (稼働中/cron 登録) はそのままで、起動順序のみ差し替える (責務分離)。
   local -a projects=() skips=()
-  local p
+  local p qbase
+  qbase="$(config_projects_dir)"
   while IFS= read -r p; do
     [[ -z "$p" ]] && continue
     if sup__is_running "$p"; then
@@ -136,7 +141,7 @@ au__start_all() {
       continue
     fi
     projects+=("$p")
-  done < <(au__project_list "$include_self")
+  done < <(au__project_list "$include_self" | queue__order "$qbase" "$(sup__today)" "$(date +%s)")
 
   printf '  %s🤖 Autonomy Supervisor 全適用 計画%s\n' "$C_CYAN" "$C_RESET"
   printf '  📊 対象: %d 件 / skip: %d 件\n' "${#projects[@]}" "${#skips[@]}"

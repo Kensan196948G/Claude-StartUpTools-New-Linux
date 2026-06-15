@@ -158,6 +158,50 @@ teardown() { _bats_common_teardown; }
   [ "$(sup__get Demo restarts_today 0)" = "0" ]
 }
 
+# ---- ループ統合: 残日数 throttling 配線 (PR-C) ----------
+# 観測戦略: cron-launcher stub に session_min ($2) を記録させ、ループ内で
+#   sup__throttle_apply による縮退が実効値へ反映されることを外側から検証する。
+#   duration 引数を渡さない (session_min_base=既定300) ことで縮退幅が観測可能。
+@test "sup__loop: t7 (締切3日) で session_min=180 へ縮退し last_throttle_tier 永続" {
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+echo "\$2" > "$TEST_TEMP/sessmin"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  export CCSU_SUP_TODAY=2026-06-15
+  echo '{ "deploy": {"ready": false}, "project": {"release_deadline":"2026-06-18"}, "supervisor": {"max_restarts_per_day": 1, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo
+  [ "$(sup__get Demo last_throttle_tier '')" = "t7" ]
+  [ "$(cat "$TEST_TEMP/sessmin")" = "180" ]
+}
+@test "sup__loop: deadline 無しは normal・session_min 据え置き(300)" {
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+echo "\$2" > "$TEST_TEMP/sessmin"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  export CCSU_SUP_TODAY=2026-06-15
+  echo '{ "deploy": {"ready": false}, "supervisor": {"max_restarts_per_day": 1, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo
+  [ "$(sup__get Demo last_throttle_tier '')" = "normal" ]
+  [ "$(cat "$TEST_TEMP/sessmin")" = "300" ]
+}
+@test "sup__loop: t30 (締切20日) で tier=t30 を永続・session_min=300 維持" {
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+echo "\$2" > "$TEST_TEMP/sessmin"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  export CCSU_SUP_TODAY=2026-06-15
+  echo '{ "deploy": {"ready": false}, "project": {"release_deadline":"2026-07-05"}, "supervisor": {"max_restarts_per_day": 1, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo
+  [ "$(sup__get Demo last_throttle_tier '')" = "t30" ]   # t30 は session 据え置き (daily のみ縮退)
+  [ "$(cat "$TEST_TEMP/sessmin")" = "300" ]
+}
+
 @test "sup__loop: 再起動ループ中に deploy.ready 反転で goal-reached (E2E)" {
   # cron-launcher stub: 2回目の呼び出しで project state.json の deploy.ready を true に
   cat > "$CCSU_SUP_CRON_LAUNCHER" <<EOF

@@ -84,6 +84,28 @@ EOF
   grep -q "__run Alpha" "$TEST_TEMP/setsid.log"
 }
 
+@test "start --all --dry-run: 優先度キューで security_critical を先頭へ並べ替え (PR-C)" {
+  # Alpha は名前順で Demo より先。security_critical を Demo に与え priority で逆転させる。
+  printf '{ "kpi": {"security_critical": 1} }\n' > "$TEST_TEMP/projects/Demo/state.json"
+  printf '{ "deploy": {"ready": false} }\n' > "$TEST_TEMP/projects/Alpha/state.json"
+  run bash "$SCRIPT" start --all --dry-run
+  [ "$status" -eq 0 ]
+  local d a
+  d="$(printf '%s\n' "$output" | grep -n 'Demo' | head -1 | cut -d: -f1)"
+  a="$(printf '%s\n' "$output" | grep -n 'Alpha' | head -1 | cut -d: -f1)"
+  # Demo (score 1000) が Alpha (score 0) より上の行に出る = 起動順が priority 化
+  [ "$d" -lt "$a" ]
+}
+
+@test "start --all --dry-run: 同点 (state 無し) は名前昇順で安定 (Alpha→Demo)" {
+  run bash "$SCRIPT" start --all --dry-run
+  [ "$status" -eq 0 ]
+  local d a
+  d="$(printf '%s\n' "$output" | grep -n 'Demo' | head -1 | cut -d: -f1)"
+  a="$(printf '%s\n' "$output" | grep -n 'Alpha' | head -1 | cut -d: -f1)"
+  [ "$a" -lt "$d" ]
+}
+
 @test "start --all: cron 登録ありは --force 無しで skip" {
   _seed_cron Demo
   run bash "$SCRIPT" start --all --dry-run

@@ -197,6 +197,7 @@ sup__persist() {
   "consecutive_short": ${SUP_CONSEC_SHORT:-0},
   "last_session_secs": ${SUP_LAST_SECS:-0},
   "last_reason": "${SUP_LAST_REASON:-}",
+  "last_throttle_tier": "${SUP_THROTTLE_TIER:-normal}",
   "updated_at": "$(sup__now_iso)"
 }
 JSON
@@ -259,10 +260,16 @@ sup__loop() {
   crash_th="$(sup__guard "$pstate" crash_loop_threshold "$SUP_DEF_CRASH_THRESHOLD")"
   crash_min="$(sup__guard "$pstate" crash_loop_min_seconds "$SUP_DEF_CRASH_MIN_SEC")"
 
+  # 残日数 throttling のベース値 (deadline 参照は利用のみ。締切超過でも自動 kill しない)
+  # 縮退は while ループ内で毎周回算定し、日次リセットで残日数が減れば自動で一段進む。
+  local deadline daily_max_base session_min_base
+  deadline="$(json_get "$pstate" '.project.release_deadline' '')"
+  daily_max_base="$daily_max"; session_min_base="$session_min"
+
   # 作業変数 (SUP_* グローバル: sup__persist が書き出す)
   SUP_PID=$$; SUP_STATUS=running; SUP_STARTED_AT="$(sup__now_iso)"; SUP_ENDED_AT=""
   SUP_DAY="$(sup__today)"; SUP_RESTARTS=0; SUP_MINUTES=0; SUP_CONSEC_SHORT=0
-  SUP_LAST_SECS=0; SUP_LAST_REASON=""
+  SUP_LAST_SECS=0; SUP_LAST_REASON=""; SUP_THROTTLE_TIER="normal"
   # 注: stop フラグのクリアは呼び出し側 (au__start) が起動前に行う。
   #     ここでクリアしないことで、起動前/実行中に立てたフラグを確実に拾える。
   sup__persist "$project"
@@ -276,6 +283,18 @@ sup__loop() {
     if [[ "$SUP_DAY" != "$(sup__today)" ]]; then
       SUP_DAY="$(sup__today)"; SUP_RESTARTS=0; SUP_MINUTES=0; SUP_CONSEC_SHORT=0
     fi
+    # 2b) 残日数 throttling: tier 算定 → daily_max/session_min 縮退 (増加なし・session≤300)
+    local _days _tier _dcap _scap
+    _days="$(sup__days_remaining "$deadline")"
+    _tier="$(sup__throttle_tier "$_days")"
+    read -r _dcap _scap < <(sup__throttle_apply "$_tier" "$daily_max_base" "$session_min_base")
+    daily_max="$_dcap"; session_min="$_scap"
+    if [[ "$_tier" != "$SUP_THROTTLE_TIER" ]]; then
+      SUP_THROTTLE_TIER="$_tier"
+      if [[ "$_tier" != "normal" ]]; then
+        log_info "🤖 [supervisor] ⏳ throttle: $project tier=$_tier days=${_days:-?} daily_max=${daily_max}m session=${session_min}m bias=$(sup__throttle_goal_bias "$_tier")"
+      fi
+    fi
     # 3) Goal/異常 (セッション前)
     stop_reason="$(sup__project_stop_reason "$pstate")"; [[ -n "$stop_reason" ]] && break
     # 4) 日次上限
@@ -287,6 +306,9 @@ sup__loop() {
     if [[ ! -f "$SUP_CRON_LAUNCHER" ]]; then stop_reason="stopped:launcher-missing"; break; fi
     SUP_STATUS=running; SUP_LAST_REASON="launching session"; sup__persist "$project"
     sess_start="$(date +%s)"
+    # throttle tier/bias を子セッションへ伝播 (cron-launcher / goal 注入が任意で参照)
+    export CLAUDEOS_THROTTLE_TIER="$SUP_THROTTLE_TIER"
+    export CLAUDEOS_THROTTLE_BIAS="$(sup__throttle_goal_bias "$SUP_THROTTLE_TIER")"
     bash "$SUP_CRON_LAUNCHER" "$project" "$session_min" || true
     sess_end="$(date +%s)"; sess_secs=$(( sess_end - sess_start )); (( sess_secs < 0 )) && sess_secs=0
 
