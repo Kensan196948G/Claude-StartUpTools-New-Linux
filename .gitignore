@@ -36,8 +36,12 @@ config/*.lock
 # ClaudeOS ランタイム状態（セッション固有・コミット不要）
 state.json
 
+# ローカル自動メモリ（ユーザー固有の長期知識・コミット不要）
+memory/
+
 # テンプレート編集用バックアップ（作業中の退避先・コミット不要）
 Claude/templates/claude/START_PROMPT-backup/
+Claude/templates/claude/BackUp/
 
 # Claude CLI ツール設定（API キーを含む可能性）
 Claude/settings.json
