@@ -126,8 +126,9 @@ _seed_state() {
   [ "$output" = "sess-headless-xyz" ]
 }
 
-@test "回帰: CLAUDEOS_HEADLESS=0 (既定) は headless パスを通らない" {
+@test "回帰: CLAUDEOS_HEADLESS=0 は明示 opt-out で headless パスを通らない" {
   _seed_state ""
+  # PR-G で既定は headless へ反転したため、=0 は「明示的に TUI へ退避」する opt-out 経路。
   # TUI 経路は tmux 等を使うが、claude も timeout も偽装済みなので致命傷にはならない。
   # ここでは「headless の stream-json argv が記録されない」ことだけ確認する。
   run env CLAUDEOS_HEADLESS=0 bash "$CRON_LAUNCHER" Demo 1
@@ -135,6 +136,19 @@ _seed_state() {
     run cat "$CLAUDE_ARGV"
     [[ "$output" != *"--output-format"* ]]
   fi
+}
+
+@test "PR-G: CLAUDEOS_HEADLESS 未設定の既定は headless パスを通る" {
+  _seed_state ""
+  # 既定反転 (${CLAUDEOS_HEADLESS:-1}) の表明: 未設定でも headless の stream-json argv が記録される。
+  run env -u CLAUDEOS_HEADLESS bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ -f "$CLAUDE_ARGV" ]
+  run cat "$CLAUDE_ARGV"
+  [[ "$output" == *"-p"* ]]
+  [[ "$output" == *"--output-format"* ]]
+  [[ "$output" == *"stream-json"* ]]
+  [[ "$output" != *"--dangerously-skip-permissions"* ]]
 }
 
 # =========================================================

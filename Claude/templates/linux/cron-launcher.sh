@@ -353,11 +353,13 @@ PROMPT_FILE="${CLAUDE_WRAPPER%.sh}.prompt"
 printf '%s' "$PROMPT_ARG" > "$PROMPT_FILE"
 
 # ============================================================
-# 起動経路の二段構え (プラン欠落4):
-#   CLAUDEOS_HEADLESS=1 → headless (claude -p / stream-json)。resume・cost 捕捉対応。
-#   既定 (=0)           → 従来の tmux 対話 TUI 非対話運用 (回帰なし)。
+# 起動経路の二段構え (プラン欠落4 / PR-G で既定反転):
+#   既定 (未設定=1)     → headless (claude -p / stream-json)。resume・cost 捕捉対応。
+#   CLAUDEOS_HEADLESS=0 → 従来の tmux 対話 TUI 非対話運用へ opt-out (課金枯渇・障害時の退避経路)。
+# PR-G で既定を headless へ反転 (config.cron.headlessDefault=true と整合)。TUI 経路コードは
+# フォールバック手段として残す (Agent SDK クレジット枯渇時は CLAUDEOS_HEADLESS=0 で即退避)。
 # ============================================================
-if [[ "${CLAUDEOS_HEADLESS:-0}" == "1" ]]; then
+if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   # ---- headless 経路: claude -p --output-format stream-json ----
   # 設計:
   #   - --permission-mode dontAsk でツール毎プロンプトを除去 (auto mode 相当)。
