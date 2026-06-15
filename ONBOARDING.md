@@ -1,12 +1,18 @@
-# ClaudeCode-StartUpTools-New Onboarding
+# Claude-StartUpTools-New-Linux Onboarding
 
 > このファイルは `/team-onboarding` により自動生成されます。
 > 手動編集は次回実行時に上書きされます。恒久的な記述は `CLAUDE.md` または `docs/` に配置してください。
 
-**生成日時**: 2026-04-18T09:25:00+09:00
-**ClaudeOS バージョン**: v8 (Weekly Optimized Loops + CodeRabbit 統合 + 3タブ監視) — **v3.2.23**
+**生成日時**: 2026-06-15（Agent/Command/Git 各セクションを実ソースから手動再生成 — Issue #13 対応）
+**ClaudeOS バージョン**: v9.0（プロジェクトテンプレート: `Claude/CLAUDE.md`）
 **Git ブランチ**: main（生成時点。実作業は feature branch で実施）
-**リポジトリ**: https://github.com/Kensan196948G/ClaudeCode-StartUpTools-New
+**リポジトリ**: https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux
+
+> ⚠️ **再生成範囲メモ（Issue #13）**: 本リビジョンでは実ソースから検証できる
+> **§5 Agent / §6 Command / §8 Git 活動** とヘッダーの事実誤認のみを手動更新しました。
+> **§1・§2・§4・§11 は `state.json` 由来**ですが、現在 `state.json` が未配置のため
+> 旧リポジトリ（v3.2.23 系）の陳腐化した値が残っています。これらの自動追従は
+> **Issue #100（Verify 連動 自動再生成フック）** で解消予定です。
 
 ---
 
@@ -49,37 +55,42 @@ Git ログから直近の修復系コミット（fix/hotfix 系）を参照:
 
 ## 5. 利用可能な Agent Teams
 
-`.claude/claudeos/agents/` 直下に **25 体** の特化サブエージェントが配置されています。
+`.claude/claudeos/agents/` 直下に **43 体** の特化サブエージェントが配置されています。
 
 | カテゴリ | Agent |
 |---|---|
-| 統括 | `orchestrator` |
-| 設計 | `architect` |
+| 統括・管理 | `orchestrator` / `cto` / `chief-of-staff` / `manager` / `planner` / `loop-operator` |
+| 設計 | `architect` / `api-designer` |
 | 実装（言語別 resolver） | `build-error-resolver` / `cpp-build-resolver` / `go-build-resolver` / `java-build-resolver` / `kotlin-build-resolver` / `rust-build-resolver` / `pytorch-build-resolver` |
-| レビュー（言語別） | `cpp-reviewer` / `go-reviewer` / `java-reviewer` / `kotlin-reviewer` / `python-reviewer` / `rust-reviewer` / `typescript-reviewer` / `database-reviewer` / `security-reviewer` |
+| レビュー（言語別・領域別） | `cpp-reviewer` / `go-reviewer` / `java-reviewer` / `kotlin-reviewer` / `python-reviewer` / `rust-reviewer` / `typescript-reviewer` / `database-reviewer` / `security-reviewer` / `code-reviewer` / `performance-reviewer` |
 | 開発（領域別） | `dev-api` / `dev-ui` |
-| 品質 | `qa` / `tester` / `e2e-runner` |
-| 運用 | `ops` |
+| 品質 | `qa` / `tester` / `e2e-runner` / `tdd-guide` |
+| 運用・SRE | `ops` / `ci-manager` / `release-manager` / `incident-triager` / `harness-optimizer` |
+| 監査・CMDB | `audit-agent` / `cmdb-agent` |
+| ドキュメント | `doc-updater` / `docs-lookup` |
+| 改善・評価 | `refactor-cleaner` / `outcome-grader` |
 
 > 各 Agent の詳細な description は、該当 Agent を呼び出した際にロードされるフロントマターから取得してください。
 > CLAUDE.md §6 に Agent Teams のロール対応表があります。
 
 ## 6. 利用可能なスラッシュコマンド
 
-`.claude/claudeos/commands/` 直下に **34 個** のコマンドが配置されています。
+`.claude/claudeos/commands/` 直下に **42 個** のコマンドが配置されています。
 
 | カテゴリ | Command |
 |---|---|
 | オンボーディング | `/team-onboarding` |
-| 計画・オーケストレーション | `/plan` / `/orchestrate` / `/multi-plan` / `/multi-workflow` / `/multi-execute` |
+| 計画・オーケストレーション | `/plan` / `/orchestrate` / `/multi-plan` / `/multi-workflow` / `/multi-execute` / `/extract-tasks` |
 | レビュー | `/code-review` / `/go-review` / `/python-review` |
 | ビルド・テスト | `/build-fix` / `/go-build` / `/go-test` / `/verify` / `/test-coverage` |
 | マルチスタック | `/multi-backend` / `/multi-frontend` |
 | TDD・E2E | `/tdd` / `/e2e` |
-| セッション管理 | `/checkpoint` / `/sessions` / `/prune` |
+| セッション管理 | `/checkpoint` / `/sessions` / `/session-info` / `/prune` |
+| 作業時間管理 | `/work-time-set` / `/work-time-reset` |
+| cron 管理 | `/cron-register` / `/cron-list` / `/cron-cancel` |
 | 学習・進化 | `/learn` / `/learn-eval` / `/evolve` / `/eval` |
 | Instinct（直感記録） | `/instinct-export` / `/instinct-import` / `/instinct-status` |
-| ドキュメント | `/update-docs` / `/update-codemaps` |
+| ドキュメント | `/update-docs` / `/update-codemaps` / `/changelog` |
 | 改善 | `/refactor-clean` |
 | プロジェクト管理 | `/pm2` / `/setup-pm` |
 | スキル作成 | `/skill-create` |
@@ -101,22 +112,22 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 ## 8. 直近の Git 活動
 
-直近 20 コミット:
+直近 12 コミット:
 
 | Hash | 概要 |
 |---|---|
-| 0c63d54 | docs: README バージョン v3.2.22 → v3.2.23 更新 (CI ドリフト修正) |
-| b4956c8 | chore: CHANGELOG + TASKS.md — v3.2.23 [DONE] 更新 (PR #175) |
-| 4b6e22f | fix(v3.2.23): cron-launcher.sh — timeout --foreground + pipe-pane 削除 (#175) |
-| e7a21a8 | chore(monitor): TASKS.md #37 [DONE] + README quote v3.2.22 更新 |
-| d7de38b | feat(v3.2.22): state.json.example スキーマ整合修正 + CI バリデーション追加 (#173) |
-| dde9eb3 | feat(v3.2.21): スキーマ拡張 + README 自動整合 CI ゲート (PR #171) |
-| b347550 | feat(v3.2.19): 3 タブ監視 品質向上 + 外部レビュー対応 (PR #170) |
-| 9d7bc83 | chore: TASKS.md — v3.2.18 [DONE] 更新 + v3.2.19 起票 (PR #169) |
-| 26e8b22 | feat(v3.2.18): 外部コードレビュー指摘 5 カテゴリ対応 (Quick-wins) (#169) |
-| 25ae708 | feat(v3.2.17): 3タブ監視構成 + tmux UI 統合 + linuxUser パラメータ化 (#168) |
-| e31a547 | chore: TASKS.md — v3.2.14 [DONE] 更新 (PR #167) |
-| 6819125 | docs(v3.2.14): PSProvideCommentHelp 警告 85 件解消 — 9 ファイル全関数に追加 (#167) |
+| fa82dec | feat(subagents): 言語別 reviewer/build-resolver 11体を正本テンプレートへ昇格 (#12) |
+| fd889cb | refactor: 廃止済み security サブエージェントスタブを削除 (#11) |
+| dfcff5a | feat: Claude Code docs 4件の適合適用と運用整備 (#10) |
+| e08ac94 | docs: Add heartbeat-watchdog cron setup guide and README watchdog section (Closes #8) (#9) |
+| 7ccdedf | Add heartbeat watchdog for silent type3 detection (SIGKILL/OOM/restart) (#7) |
+| 1901947 | Merge pull request #1 — changelog-features-managed-agents-poc |
+| 35e939a | Merge pull request #5 — notification-conditional-hooks |
+| 184a576 | Merge pull request #3 — stop-failure-hook |
+| 9eeadcc | Add Notification hook to detect input-waiting silence (沈黙type2) |
+| 84a0be4 | Make CCSU_ROOT env-overridable to stop test-induced template corruption |
+| d7a6e8e | Add Phase 0 実施記録 to Managed Agents PoC 手順書 |
+| b8a7652 | Apply Claude Code changelog features and prepare Managed Agents hybrid PoC |
 
 ## 9. 未解決の Codex 指摘
 
