@@ -27,14 +27,15 @@ Anthropic がホストするマネージド実行環境上で Claude エージ�
 | スケジュール起動 | マネージドトリガー | Linux cron（月〜土・プロジェクト別） |
 | セッション制限 | プラットフォーム管理 | `timeout ${dur_sec}s`（5h 厳守） |
 | 状態永続化 | マネージド | `state.json` + Memory + Stop hook |
-| 監視 | ダッシュボード提供 | `bin/monitor-sessions.sh`（waitingFor 統合済み） |
+| 監視 | ダッシュボード提供 | `libexec/watch-session.sh` + `claude agents --json`（waitingFor 直接参照） |
 | 通知 | プラットフォーム通知 | `notify-stable.js` + report-and-mail.py |
 | Secrets | Vault（暗号化封筒・隔離） | `~/.env-claudeos`（平文ファイル） |
 
 ## 3. 還元済みの設計パターン（ローカル実装へ反映完了）
 
-1. ✅ **waitingFor の可視化** — `claude agents --json` の `waitingFor` を
-   `bin/monitor-sessions.sh` の `mon__agents_waiting()` へ統合（2026-06-11）
+1. ⚠️ **waitingFor の可視化** — `claude agents --json` の `waitingFor` を
+   `bin/monitor-sessions.sh` の `mon__agents_waiting()` へ統合していたが、同ファイル撤去に伴い消失。
+   現在は `claude agents --json` を直接参照する（2026-06-15 撤去）
 2. ✅ **Stop 時のコンテキスト引き継ぎ** — `hookSpecificOutput.additionalContext`（2.1.163+）を
    `session-end.js` に実装
 3. ✅ **フォールバックモデル** — `fallbackModel` 配列（2.1.166+）を
@@ -61,12 +62,13 @@ Anthropic がホストするマネージド実行環境上で Claude エージ�
 | Phase | 実施者 | 内容 |
 |---|---|---|
 | Phase 0 | 👤 人間（一度きり） | テスト用プロジェクト 1 つで Console オンボーディング、Vault に最小権限 token 登録、Permission Policy に CTO 境界（PR merge / main 直 push / 破壊的削除の禁止）を設定。手順: `07_ManagedAgents_PoC手順書.md` |
-| Phase 1 | 🤖 CTO 自律 | ローカル cron はそのまま主系。マシン停止帯・セッション欠落時のフォールバックとして managed 側を並走。監視は `mon__agents_waiting()`（waitingFor 統合）を流用 |
+| Phase 1 | 🤖 CTO 自律 | ローカル cron はそのまま主系。マシン停止帯・セッション欠落時のフォールバックとして managed 側を並走。監視は `claude agents --json` の `waitingFor` を直接参照 |
 | Phase 2 | 👤 + 🤖 | 2〜4 週間の並走実績（欠落補填回数・コスト・誤動作）で本採用 / 縮小を判断 |
 
 ## 6. 関連実装（本リポジトリ内の対応物）
 
-- `bin/monitor-sessions.sh` — `mon__agents_waiting()`（waitingFor 監視）
+- `claude agents --json` の `waitingFor` — managed エージェントのブロック状態を直接参照
+  （統合表示を提供していた `bin/monitor-sessions.sh` / `mon__agents_waiting()` は 2026-06-15 撤去）
 - `Claude/templates/claudeos/scripts/hooks/session-end.js` — additionalContext 出力
 - `Claude/templates/claude/settings.json` — `fallbackModel` / `requiredMinimumVersion`
 - `bin/start-claude.sh` / `lib/tmux-runner.sh` — `--safe-mode` 診断起動

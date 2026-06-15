@@ -71,8 +71,8 @@
 
 Phase 0 完了後、CTO が以下を日常運用する:
 
-- 📊 監視: `bin/monitor-sessions.sh` の「⏳ 入力待ちエージェント」表示
-  （`claude agents --json` の waitingFor）で managed 側のブロック状態も確認
+- 📊 監視: `claude agents --json` の `waitingFor` を直接参照し、managed 側のブロック状態を確認
+  （統合表示を提供していた `bin/monitor-sessions.sh` は撤去済み）
 - 📝 記録: 各セッションで managed 側が補填した実績（回数・成果 PR・トークン消費）を
   PoC 対象プロジェクトの `state.json` / Issue に記録
 - 🚨 異常時: managed 側の誤動作・境界逸脱を検知したら即トリガー停止し Issue 化

@@ -74,3 +74,54 @@ teardown() { _bats_common_teardown; }
   run bash "$SCRIPT" --frobnicate
   [ "$status" -ne 0 ]
 }
+
+@test "confirm_yes_no: CCSU_ASSUME_YES=1 は対話なしで Yes" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    export CCSU_ASSUME_YES=1
+    confirm_yes_no "実行?" </dev/null && echo OK_YES
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OK_YES"* ]]
+}
+
+@test "confirm_yes_no: y / yes は真、空入力や n は偽" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    printf "y\n"   | confirm_yes_no "?" && echo Y_OK
+    printf "yes\n" | confirm_yes_no "?" && echo YES_OK
+    printf "n\n"   | confirm_yes_no "?" || echo N_NG
+    printf "\n"    | confirm_yes_no "?" || echo EMPTY_NG
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Y_OK"* ]]
+  [[ "$output" == *"YES_OK"* ]]
+  [[ "$output" == *"N_NG"* ]]
+  [[ "$output" == *"EMPTY_NG"* ]]
+}
+
+@test "launch_claude: No 選択で start-claude.sh を実行しない" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launcher__select_project() { printf "Alpha\n"; }
+    run_menu_script() { echo "RUN_MENU_SCRIPT_CALLED $*"; }
+    confirm_yes_no() { return 1; }   # No 相当
+    launch_claude foreground
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"キャンセル"* ]]
+  [[ "$output" != *"RUN_MENU_SCRIPT_CALLED"* ]]
+}
+
+@test "launch_claude: Yes 選択で start-claude.sh を mode 付きで実行" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launcher__select_project() { printf "Alpha\n"; }
+    run_menu_script() { echo "RUN_MENU_SCRIPT_CALLED $*"; }
+    confirm_yes_no() { return 0; }   # Yes 相当
+    launch_claude background
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RUN_MENU_SCRIPT_CALLED"* ]]
+  [[ "$output" == *"--project Alpha --background"* ]]
+}

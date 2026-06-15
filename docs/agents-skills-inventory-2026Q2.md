@@ -5,6 +5,10 @@
 **目的**: Issue #105 — 既存 Agent/Skill を A/B/C/D に分類し削除候補を明確化する
 **参照**: `.claude/claudeos/loops/frontier-test-loop.md` (月次ベンチマークで再検証)
 
+> 📌 **2026-06-15 補正**: 本インベントリでカテゴリ B（保持推奨）とした言語固有 reviewer/build-resolver 11 件は、
+> その後の正本テンプレート整理で `Claude/templates/claudeos/agents/_archived/` へ退避（配布対象外）された。
+> 最新の見直し結果と不整合の詳細は [`subagents-review-2026-06.md`](./subagents-review-2026-06.md) を参照。
+
 ---
 
 ## サマリー
@@ -219,3 +223,4 @@
 | 日付 | 変更内容 |
 |---|---|
 | 2026-04-15 | 初版作成 (Issue #105 対応) — Explore agent による自動分類 |
+| 2026-06-15 | 補正注記追加 — 言語agent11件のarchive実態を反映。詳細は subagents-review-2026-06.md へ分離 |

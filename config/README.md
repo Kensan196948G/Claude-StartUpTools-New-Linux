@@ -24,7 +24,7 @@ cp config/agent-teams-backlog-rules.json.template config/agent-teams-backlog-rul
 | `projects` / `projectsDir` | `/home/kensan/Projects` 配下の Git リポジトリを起動候補として列挙 |
 | `tools.claude` | Claude Code のコマンド、引数、環境変数 |
 | `cron` | Linux crontab と `cron-launcher.sh` の動作 |
-| `sessionTabs` | tmux / `monitor-sessions.sh` によるセッション情報表示 |
+| `sessionTabs` | tmux / `libexec/watch-session.sh` によるセッション情報表示 |
 | `statusline` | Linux 上の `~/.claude/settings.json` へ statusLine を適用 |
 | `notifications` | Linux の音声通知。既定は無効 |
 

@@ -30,7 +30,8 @@
         "promptSuggestionEnabled": true,
         "respectGitignore": true,
         "autoUpdatesChannel": "latest",
-        "includeCoAuthoredBy": true
+        "includeCoAuthoredBy": true,
+        "teammateMode": "auto"
       },
       "apiKeyEnvVar": "ANTHROPIC_API_KEY"
     },
@@ -122,7 +123,7 @@
     "enableEnvVar": "CLAUDEOS_EMAIL_ENABLED"
   },
   "sessionTabs": {
-    "_comment": "tmux/monitor-sessions.sh によるセッション情報表示。",
+    "_comment": "tmux/libexec/watch-session.sh によるセッション情報表示。",
     "enabled": true,
     "title": "Claude Session Info",
     "pollIntervalSeconds": 1,

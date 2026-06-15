@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## [Unreleased]
+
+### Removed
+
+- `bin/monitor-sessions.sh`（🎛️ コントロールセンター / `claudeos-monitor`）とそのテスト
+  `tests/bats/unit/monitor-sessions.bats` を完全削除。監視・起動・Supervisor・介入を
+  1 画面に統合する `MO` メニュー項目も撤去。
+  - 代替: セッション状態監視は `libexec/watch-session.sh`（メニュー項15）、
+    接続・介入は `tmux attach -t claudeos-<project>`、Supervisor 全適用は
+    `bin/autonomy.sh start --all`。
+  - 副作用: 同ファイルが内包していた `mon__agents_waiting()`（Managed Agents の
+    `waitingFor` 可視化）も併せて消失。waitingFor は `claude agents --json` を直接参照する。
+
 ## [4.0.0-linux] - 2026-06-07
 
 ### Added

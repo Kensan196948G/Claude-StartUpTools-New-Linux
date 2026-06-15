@@ -11,8 +11,8 @@
 #   - session.json の生成・更新（start/end/status）
 #   - ログを /home/kensan/.claudeos/logs/ へ
 #   - 終了時に HTML レポートメールを送信 (v3.2.0 追加)
-#   - tmux セッション claudeos-<safe> に監視タブ用メタデータを付与 (v3.3.8 追加)
-#     (安定ウィンドウ名 + @ccsu_project / @ccsu_duration_min → monitor-sessions.sh)
+#   - tmux セッション claudeos-<safe> に監視用メタデータを付与 (v3.3.8 追加)
+#     (安定ウィンドウ名 + @ccsu_project / @ccsu_duration_min)
 # ============================================================
 
 set -euo pipefail
@@ -366,8 +366,8 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-1}" == "1" ]]; then
     -e "_CLAUDEOS_TMUX_DONE=$_TMUX_DONE" \
     -e "_CLAUDEOS_PROMPT_FILE=$PROMPT_FILE" \
     "$CLAUDE_WRAPPER" 2>>"$LOG_FILE"
-  # ライブ監視タブ (monitor-sessions.sh / claudeos-monitor) 用メタデータ (best-effort)。
-  #   安定したウィンドウ名 (= SAFE_PROJECT) で link-window 照合を可能にし、
+  # セッション監視用メタデータ (best-effort)。
+  #   安定したウィンドウ名 (= SAFE_PROJECT) を付与し、
   #   @ccsu_project/@ccsu_duration_min から経過・残り時間を算出できるようにする。
   tmux set-option -w -t "$TMUX_SESSION:0" automatic-rename off 2>/dev/null || true
   tmux set-option -w -t "$TMUX_SESSION:0" @ccsu_project "$PROJECT" 2>/dev/null || true

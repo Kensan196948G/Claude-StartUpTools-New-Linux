@@ -29,7 +29,7 @@ CI では Ubuntu 上で `bats`、`jq`、`tmux`、`shellcheck` を入れて同じ
 | `bin/menu.sh` | Linux 運用メニューの描画 |
 | `bin/start-claude.sh` | ローカル Claude 起動と Supervisor 登録 |
 | `bin/autonomy.sh` | 個別/全プロジェクト Supervisor 適用 |
-| `bin/monitor-sessions.sh` | 監視メニュー、数字付き選択、全監督 |
+| `lib/tmux-runner.sh` | tmux セッション起動・命名規則・メタデータ付与 |
 | `lib/config-loader.sh` | `/home/kensan/Projects` 配下の候補検出 |
 | `lib/cron-manager.sh` | ローカル crontab 操作の生成・削除 |
 

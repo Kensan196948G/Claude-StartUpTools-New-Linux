@@ -210,7 +210,38 @@ workflow の構造は少数の再利用可能な「型」に集約できる。CT
 | バンドル | `/deep-research <問い>` | ✅ Monitor / Pattern C の技術調査に推奨 |
 | キーワード | プロンプトに `workflow` の語を含める | ✅ 明示起動。CTO 判断で使用 |
 | 保存コマンド | `.claude/workflows/<name>.js` → `/<name>` | ✅ 反復作業を codify |
-| ultracode | `/effort ultracode`（全タスク自動 workflow 化） | ❌ **既定化しない**（token 急増・暴走源） |
+| ultracode | `/effort ultracode`（全タスク自動 workflow 化） | ⚠️ **条件付き許可**（§ ultracode 運用ルール）。既定化はしない |
+
+### 🔮 ultracode 運用ルール（v9.0+ — 課金承知のうえで組み込み）
+
+`/effort ultracode` は **xhigh 推論 + 毎タスク自動 workflow 化** を行う最上位モード。
+token 消費が急増し**課金対象**（PAID プラン必須）のため、ユーザー承知のうえで
+**CTO 判断による条件付き起動を正式手段として許可**する。**ただし既定化（常時 ON）はしない。**
+
+**✅ ultracode を使ってよい場面（CTO 判断）:**
+
+| 場面 | 理由 |
+|---|---|
+| Verify フェーズの大規模監査 | Gate 検証スイープ・全 endpoint 監査など多観点を一括で深掘り |
+| Build フェーズの大規模並列実装 | 数十ファイルに跨る機能の同時生成＋独立検証 |
+| Pattern C の深い技術調査 | 反証込みのアーキテクチャ検討で xhigh 推論が効く |
+| 同一原因 2 回以上の難デバッグ | Tournament 型で複数仮説を反証しながら絞り込む |
+
+**❌ ultracode を使わない場面:**
+
+| 場面 | 代替 |
+|---|---|
+| 1 ファイル修正・Lint・docs 更新 | Sub-agent（第1階層）で十分 |
+| Stabilize / Release フェーズの変更 | 変更最小化が原則。通常 workflow / Agent Teams |
+| token ≥ 70% / セッション残り < 60 分 | 起動不可（下記ガードレール準拠） |
+| 常時 ON（`/effort ultracode` を既定化） | **禁止**（token 暴走源） |
+
+**🔁 通常 workflow との使い分け:**
+
+- 単発の大規模オーケストレーション → `workflow` キーワード or 保存コマンド（従来どおり）
+- **「このセッションのタスク群すべてを workflow 化したい」と CTO が判断した時のみ** → `/effort ultracode`
+- ultracode 中も下記「ガードレール」の token / 残時間 / フェーズ条件は同じく適用する
+- 使い終わったら `/effort` を通常レベルへ戻し、ON のまま放置しない
 
 ### 🛡️ ガードレール（CTO 行動ルール）
 
@@ -222,7 +253,9 @@ token をプラン上限に計上する。以下を厳守:
   - セッション残り < 60 分（終了で成果が破棄される）
   - token ≥ 70%
   - Stabilize / Release フェーズの大規模変更
-  - `/effort ultracode` の既定化
+  - `/effort ultracode` の既定化（常時 ON）
+- ⚠️ **ultracode（`/effort ultracode`）は課金承知のうえ CTO 判断で条件付き起動可**
+  （上記「ultracode 運用ルール」準拠。使用後は通常 effort へ戻す）
 - SessionStart hook が `workflows: 起動可 / 抑制` をフェーズ・残時間から自動提示する
 - 並列・総数の上限管理（16 / 1000）は runtime に委ねる
 

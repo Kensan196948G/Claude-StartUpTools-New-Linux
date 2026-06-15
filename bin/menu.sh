@@ -106,7 +106,6 @@ show_menu() {
   printf '  %s⏰ Linux Cron 管理%s\n' "$C_YELLOW" "$C_RESET"
   printf '   %s 14 %s  📅  Cron スケジュール 登録・編集・削除 / 選んで一括BG起動\n' "$C_BG_DKBLUE" "$C_RESET"
   printf '   %s 15 %s  📺  セッション状態監視 (一覧 / 接続・停止)\n' "$C_BG_DKBLUE" "$C_RESET"
-  printf '   %s MO %s  🎛️  コントロールセンター (監視+起動+supervisor+介入 / claudeos-monitor)\n' "$C_BG_DKBLUE" "$C_RESET"
   printf '\n'
 
   local hr; hr="  $(printf '─%.0s' {1..52})"
@@ -132,11 +131,33 @@ run_menu_script() {
   read -rp "  Enter で戻る " _ || true
 }
 
-# L1/S1: プロジェクト選択 → start-claude.sh
+# confirm_yes_no <prompt> — Yes/No 確認 (既定 N)。
+#   CCSU_ASSUME_YES=1 で対話なしに Yes (cron/非対話/bats 用)。
+#   y / yes (大文字小文字不問) のみ真。EOF や空入力は偽 (= キャンセル安全側)。
+confirm_yes_no() {
+  local prompt="$1" ans
+  if [[ "${CCSU_ASSUME_YES:-0}" == "1" ]]; then return 0; fi
+  read -rp "$prompt [y/N]: " ans || return 1
+  [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
+}
+
+# L1/S1: プロジェクト選択 → Yes/No 確認 → start-claude.sh
 launch_claude() {
-  local mode="$1" project
+  local mode="$1" project mode_label
   project="$(launcher__select_project)"
   [[ -n "$project" ]] || { log_warn "プロジェクト未選択"; sleep 1; return 0; }
+  case "$mode" in
+    foreground) mode_label="🖥️  フォアグラウンド即起動" ;;
+    background) mode_label="🌙 バックグラウンド自律起動 (5h)" ;;
+    *)          mode_label="$mode" ;;
+  esac
+  printf '\n  %s🚀 %s%s%s を %s%s%s で実行します。%s\n' \
+    "$C_CYAN" "$C_DKCYAN" "$project" "$C_RESET" "$C_GREEN" "$mode_label" "$C_RESET" "$C_RESET"
+  if ! confirm_yes_no "  ▶️  Claude を実行しますか？"; then
+    log_warn "キャンセルしました (Claude は起動しません)"
+    sleep 1
+    return 0
+  fi
   run_menu_script "$BIN/start-claude.sh" --project "$project" "--$mode"
 }
 
@@ -203,7 +224,6 @@ menu_loop() {
       DK) docker_submenu ;;
       14) run_menu_script "$BIN/cron-schedule.sh" ;;
       15) bash "$LIBEXEC/watch-session.sh" || true ;;   # 内部に 0=戻る の対話メニューを持つため直接実行
-      MO) bash "$BIN/monitor-sessions.sh" open || true ;;  # claudeos-monitor へ attach (Ctrl-b d / q で戻る)
       16) if [[ -f "$CCSU_ROOT/scripts/tools/agent-teams-status.js" ]]; then
             ( cd "$CCSU_ROOT" && node scripts/tools/agent-teams-status.js ) || true
           else log_warn "agent-teams-status.js が見つかりません"; fi
