@@ -191,6 +191,7 @@ RESUME_PHASE="Monitor"
 RESUME_CONSECUTIVE=0
 RESUME_SUMMARY=""
 RESUME_GOAL_TYPE="mvp-release"
+RESUME_CLAUDE_SESSION_ID=""
 
 if [[ -f "$STATE_FILE" ]] && command -v python3 >/dev/null 2>&1; then
   RESUME_PHASE=$(python3 -c "
@@ -223,6 +224,15 @@ try:
 except: print('mvp-release')
 " 2>/dev/null || echo "mvp-release")
   export CLAUDEOS_GOAL_TYPE="$RESUME_GOAL_TYPE"
+
+  # headless resume 用: 前回 claude -p セッションの session_id を取得 (無ければ空=新規会話)
+  RESUME_CLAUDE_SESSION_ID=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open('$STATE_FILE'))
+    print(d.get('execution',{}).get('last_claude_session_id','') or '')
+except: print('')
+" 2>/dev/null || echo "")
 
   # --- 保守モード分岐 ---
   # project.phase_mode が "maintenance" なら セッション時間・フェーズを保守用に切替
@@ -342,6 +352,72 @@ fi
 PROMPT_FILE="${CLAUDE_WRAPPER%.sh}.prompt"
 printf '%s' "$PROMPT_ARG" > "$PROMPT_FILE"
 
+# ============================================================
+# 起動経路の二段構え (プラン欠落4):
+#   CLAUDEOS_HEADLESS=1 → headless (claude -p / stream-json)。resume・cost 捕捉対応。
+#   既定 (=0)           → 従来の tmux 対話 TUI 非対話運用 (回帰なし)。
+# ============================================================
+if [[ "${CLAUDEOS_HEADLESS:-0}" == "1" ]]; then
+  # ---- headless 経路: claude -p --output-format stream-json ----
+  # 設計:
+  #   - --permission-mode dontAsk でツール毎プロンプトを除去 (auto mode 相当)。
+  #   - --dangerously-skip-permissions は付けない (headless では不要・多経路化回避)。
+  #   - --allowedTools は settings/auto-mode へ委譲 (本スクリプトに権限ロジックを持ち込まない)。
+  #   - 出力は stream-json-tail.sh へ pipe し、session_id (resume用) と cost (PR-E ledger用)
+  #     をファイル捕捉しつつ人間可読ログを LOG_FILE へ流す。
+  _CCSU_SJT="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/libexec/stream-json-tail.sh"
+  SJT_SESSION_ID_FILE="$SESSIONS_DIR/${SESSION_ID}.claude-session"
+  SJT_COST_FILE="$SESSIONS_DIR/${SESSION_ID}.cost"
+  export SJT_SESSION_ID_FILE SJT_COST_FILE
+
+  _HL_CMD=( timeout --foreground "${DURATION_SEC}s" claude -p "$PROMPT_ARG"
+            --output-format stream-json --permission-mode dontAsk )
+  # proactive output style があれば append (env 指定時のみ・既定は未使用)
+  if [[ -n "${CLAUDEOS_PROACTIVE_STYLE_FILE:-}" ]] && [[ -f "$CLAUDEOS_PROACTIVE_STYLE_FILE" ]]; then
+    _HL_CMD+=( --append-system-prompt-file "$CLAUDEOS_PROACTIVE_STYLE_FILE" )
+  fi
+  # resume: 前回 session_id があれば会話文脈を真に復元
+  if [[ -n "$RESUME_CLAUDE_SESSION_ID" ]]; then
+    _HL_CMD+=( --resume "$RESUME_CLAUDE_SESSION_ID" )
+    echo "♻️  [cron-launcher] headless resume: session=$RESUME_CLAUDE_SESSION_ID" >> "$LOG_FILE"
+  fi
+  echo "🤖 [cron-launcher] headless 起動 (claude -p stream-json) duration=${DURATION_SEC}s" >> "$LOG_FILE"
+
+  # pipefail 下で claude の終了コードを取りたいので PIPESTATUS を使用
+  CLAUDE_EXIT=0
+  if [[ -f "$_CCSU_SJT" ]]; then
+    "${_HL_CMD[@]}" 2>>"$LOG_FILE" | bash "$_CCSU_SJT" >> "$LOG_FILE" 2>&1 || true
+    CLAUDE_EXIT=${PIPESTATUS[0]}
+  else
+    echo "⚠️  [cron-launcher] stream-json-tail.sh 不在 — 整形なしで起動" >> "$LOG_FILE"
+    "${_HL_CMD[@]}" >> "$LOG_FILE" 2>&1 || CLAUDE_EXIT=$?
+  fi
+
+  # 捕捉した claude session_id を state.execution.last_claude_session_id へ保存 (次回 resume 用)
+  if [[ -f "$SJT_SESSION_ID_FILE" ]] && [[ -s "$SJT_SESSION_ID_FILE" ]] \
+       && [[ -f "$STATE_FILE" ]] && command -v python3 >/dev/null 2>&1; then
+    _CAPTURED_SID="$(cat "$SJT_SESSION_ID_FILE")"
+    python3 - "$STATE_FILE" "$_CAPTURED_SID" <<'PYEOF' >> "$LOG_FILE" 2>&1 || true
+import json, os, sys
+f, sid = sys.argv[1], sys.argv[2]
+try:
+    with open(f) as fp: d = json.load(fp)
+    d.setdefault('execution', {})
+    d['execution']['last_claude_session_id'] = sid
+    tmp = f + '.tmp.sid'
+    with open(tmp, 'w') as fp: json.dump(d, fp, ensure_ascii=False, indent=2)
+    os.replace(tmp, f)
+    print(f'💾 [cron-launcher] last_claude_session_id 保存: {sid}')
+except Exception as e:
+    print(f'❌ [cron-launcher] session_id 保存失敗: {e}')
+PYEOF
+  fi
+
+  # 既存の終了コード伝播 (L416付近) に合わせて exit ファイルへ書き出す
+  echo "$CLAUDE_EXIT" > "$CLAUDE_EXIT_FILE"
+
+# ---- 従来の tmux 対話 TUI 経路 (既定) ----
+else
 # wrapper script: -e フラグ経由で env var を渡す（tmux サーバーのグローバル環境に依存しない）
 # set -e を使わず claude_exit に明示的に格納する（非0終了でも wait-for -S を必ず実行するため）
 cat > "$CLAUDE_WRAPPER" <<'WRAPPER_EOF'
@@ -412,6 +488,7 @@ else
   # tmux 無効時は従来通り TTY なし実行
   timeout --foreground "${DURATION_SEC}s" claude --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
 fi
+fi  # CLAUDEOS_HEADLESS 分岐の終端
 
 # wrapper が書いた終了コードを読み取り、EXIT トラップへ伝播
 if [[ -f "$CLAUDE_EXIT_FILE" ]]; then
