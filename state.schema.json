@@ -368,7 +368,19 @@
         "session_minutes": { "type": "integer", "description": "1セッションの時間(分)。既定 300" },
         "cooldown_seconds": { "type": "integer", "description": "再起動間のクールダウン(秒)。既定 30" },
         "crash_loop_threshold": { "type": "integer", "description": "短命セッション連続で crash-loop 停止する回数。既定 3" },
-        "crash_loop_min_seconds": { "type": "integer", "description": "この秒数未満を短命セッションとみなす。既定 120" }
+        "crash_loop_min_seconds": { "type": "integer", "description": "この秒数未満を短命セッションとみなす。既定 120" },
+        "credit_monthly_budget_usd": { "type": "number", "minimum": 0, "description": "Agent SDK 当月クレジット予算(USD)。0=無制限。当月消費が 95% 到達で credit-cap 停止 (PR-E)。既定 0" }
+      }
+    },
+    "credits": {
+      "type": "object",
+      "description": "Agent SDK クレジット消費の鏡 (正本は ~/.claudeos/credits/ledger.jsonl)。可視化用の概算で実課金サイクルと厳密一致しない。",
+      "properties": {
+        "month": { "type": "string", "description": "対象月 (YYYY-MM)" },
+        "total_usd": { "type": "number", "minimum": 0, "description": "当月の total_cost_usd 合計" },
+        "tokens_in": { "type": "integer", "minimum": 0, "description": "当月の入力トークン概算" },
+        "tokens_out": { "type": "integer", "minimum": 0, "description": "当月の出力トークン概算" },
+        "updated_at": { "type": ["string", "null"], "description": "最終更新 (ISO8601)" }
       }
     }
   }

@@ -138,6 +138,26 @@ _seed_state() {
 }
 
 # =========================================================
+# 統合: クレジット cost ミラー (PR-E)
+# =========================================================
+@test "headless: CLAUDEOS_SESSION_COST_FILE へ cost (0.42) がミラーされる" {
+  _seed_state ""
+  local mirror="$TEST_TEMP/session-cost"
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_SESSION_COST_FILE="$mirror" bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ -f "$mirror" ]
+  [ "$(cat "$mirror")" = "0.42" ]
+}
+
+@test "headless: CLAUDEOS_SESSION_COST_FILE 未設定ならミラーしない (no-op)" {
+  _seed_state ""
+  # supervisor 経由でない直接起動を模倣: ミラー先未指定でも落ちず session_id 保存は機能する
+  run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_TEMP/session-cost" ]
+}
+
+# =========================================================
 # 単体: stream-json-tail.sh の純粋関数
 # =========================================================
 @test "sjt: jq が利用可能 (テスト前提)" {
