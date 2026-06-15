@@ -20,7 +20,7 @@ Claude Code の hook システムがこのフックを起動したとき、以�
 | 対象外 | 対象ツール以外（matcher でフィルタ済み、本フックは発火しない） |
 | 副作用 1 | `/team-onboarding` 起動による `ONBOARDING.md` 上書き |
 | 副作用 2 | `state.json.onboarding.last_refresh` への ISO 8601 タイムスタンプ書き込み |
-| 参照元 Issue | #100 |
+| 参照元 Issue | #17 |
 | 関連フック | `capture-result`（先に動作、無干渉） |
 | 関連コマンド | `.claude/claudeos/commands/team-onboarding.md` |
 | 関連ループ | `.claude/claudeos/loops/verify-loop.md`（STABLE 判定元） |
@@ -77,19 +77,29 @@ STABLE 閾値の既定値:
 
 - セッション中に既に 1 回発火済みならスキップ（`state.json` の変更なしで終了）
 
-### Step 4: `/team-onboarding` の起動
+### Step 4: ONBOARDING.md の再生成
+
+**第一手段（決定論・推奨）**: 揮発セクションを実ソースから決定論再生成する:
+
+```
+Bash("node scripts/refresh-onboarding.js")
+```
+
+このスクリプトは §1 Goal / §2 KPI / §3 失敗 / §4 成功 / §11 再開（state.json 由来、
+不在時は「未取得」定型へフォールバック）、§5/§6 件数（ディレクトリ実数）、§8 Git 活動
+（`git log`）のみを差し替える純粋関数で構成され、CI でも cron でも同一結果になる
+（`scripts/refresh-onboarding.test.js` が `node --test` で不変条件を保証）。
+
+**補完手段（人手 curated 部分の再構成が要る場合）**: カテゴリ表の分類見直し等が必要なときのみ:
 
 ```
 Skill("team-onboarding")
 ```
 
-Skill tool が不可な環境（Copilot CLI / Gemini CLI 等）では以下で代替:
+Skill tool が不可な環境（Copilot CLI / Gemini CLI 等）では `Bash("claude /team-onboarding")`
+で代替。決定論スクリプトが利用可能な環境では常にそちらを優先する。
 
-```
-Bash("claude /team-onboarding")  # CLI が利用可能な場合のみ
-```
-
-上記も不可なら、代替として **ONBOARDING.md を手動更新せず** ログにのみ記録して終了
+いずれも不可なら、代替として **ONBOARDING.md を手動更新せず** ログにのみ記録して終了
 （フック自体の失敗で session を止めない設計）。
 
 ### Step 5: state.json の書き戻し
@@ -166,7 +176,7 @@ state.json.onboarding.refresh_count = (既存値 || 0) + 1
 
 ## 受入れ基準との対応
 
-Issue #100 の受入れ基準との対応:
+Issue #17 の受入れ基準との対応:
 
 | 受入れ基準 | 本フックでの対応箇所 |
 |---|---|
@@ -180,8 +190,8 @@ Issue #100 の受入れ基準との対応:
 
 ## 参考
 
-- Issue #100（本フックの実装対象）
-- Issue #101/#102（`/team-onboarding` 動的生成方式 — 本フックが呼ぶコマンド）
-- `.claude/claudeos/commands/team-onboarding.md`（ONBOARDING.md 生成ロジック）
+- Issue #17（本フックの実装対象 — Verify 連動 自動再生成フック）
+- `scripts/refresh-onboarding.js`（決定論再生成器 — 本フックの実体／フォールバック）
+- `.claude/claudeos/commands/team-onboarding.md`（`/team-onboarding` 動的生成ロジック — 本フックが呼ぶコマンド）
 - `.claude/claudeos/hooks/usage-history-recorder.md`（同じ PostToolUse パターンの先行実装）
 - `CLAUDE.md` §5 運用ループ / §9 STABLE 判定
