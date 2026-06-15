@@ -181,7 +181,12 @@ function renderResumeSection(state) {
  */
 function renderGitLogSection(commits, activity) {
   if (!Array.isArray(commits) || commits.length === 0) {
-    return UNAVAILABLE('git history 取得不可 — Git リポジトリ未初期化');
+    // activity ラベルで文言を分岐: HEAD があるのに列挙が空（極稀な特殊状態）と
+    // リポジトリ未初期化を取り違えないよう、原因の主語を一致させる。
+    const reason = activity === 'active'
+      ? 'git log 取得不可 — HEAD は存在するがコミット列挙が空'
+      : 'git history 取得不可 — Git リポジトリ未初期化';
+    return UNAVAILABLE(reason);
   }
   return [
     `（直近 ${commits.length} 件 / ${activity} 判定）`,
@@ -229,7 +234,8 @@ function replaceSectionBody(md, sectionNum, newBody) {
  * @param {string} md 全文
  * @param {number} sectionNum セクション番号
  * @param {RegExp} re 置換対象（範囲内で一致を探す）
- * @param {string} replacement 置換文字列（$1 等の後方参照可）
+ * @param {string|function} replacement 置換文字列（$1 等の後方参照可）または置換関数。
+ *   置換値に動的データを差し込む場合は関数形式が安全（$ 連番の誤解釈を受けない）。
  * @returns {string} 見出しが無い or 不一致なら原文をそのまま返す
  */
 function replaceCountInSection(md, sectionNum, re, replacement) {
@@ -267,11 +273,13 @@ function refreshOnboarding(md, ctx) {
 
   // §5/§6: 件数行のみディレクトリ実数へ追従（人手 curated 表は保持）。
   // 全文 replace ではなく該当セクション範囲に限定し、他所の同形パターンを誤爆しない。
+  // 置換は関数形式で行う: agentCount/commandCount に将来 `$` を含む値が来ても
+  // String.replace の後方参照解釈を受けず、確実にリテラルとして差し込まれる。
   if (agentCount != null) {
-    out = replaceCountInSection(out, 5, /(直下に \*\*)(\d+) (体\*\*)/, `$1${agentCount} $3`);
+    out = replaceCountInSection(out, 5, /(直下に \*\*)(\d+) (体\*\*)/, (_m, p1, _n, p3) => `${p1}${agentCount} ${p3}`);
   }
   if (commandCount != null) {
-    out = replaceCountInSection(out, 6, /(直下に \*\*)(\d+) (個\*\*)/, `$1${commandCount} $3`);
+    out = replaceCountInSection(out, 6, /(直下に \*\*)(\d+) (個\*\*)/, (_m, p1, _n, p3) => `${p1}${commandCount} ${p3}`);
   }
 
   // §8: git log から表を再生成

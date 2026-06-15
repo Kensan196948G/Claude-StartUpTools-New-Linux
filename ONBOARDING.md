@@ -96,6 +96,7 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 | Hash | 概要 |
 |---|---|
+| c4c3e5a | fix(scripts): Codex 指摘を解消 — state 値の境界注入防止・件数置換のセクション局所化・git ハッシュ決定論化 |
 | fccbdb5 | fix(scripts): gitActivity を最小形へ簡約し JSDoc を実態に整合 (PR #19 Verify 指摘対応) |
 | 07140f3 | feat: ONBOARDING.md 決定論再生成器を実装し Verify 連動フックの実体化 (Closes #17) |
 | a9b5e82 | docs(onboarding): 存在しない Issue #100 参照を実在の #17 へ貼り替え (#18) |
@@ -107,7 +108,6 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 | e08ac94 | docs: Add heartbeat-watchdog cron setup guide and README watchdog section (Closes #8) (#9) |
 | 7ccdedf | Add heartbeat watchdog for silent type3 detection (SIGKILL/OOM/restart) (#7) |
 | 1901947 | Merge pull request #1 from Kensan196948G/feature/changelog-features-managed-agents-poc |
-| 1ba98c7 | Merge remote-tracking branch 'origin/main' into feature/changelog-features-managed-agents-poc |
 
 ## 9. 未解決の Codex 指摘
 

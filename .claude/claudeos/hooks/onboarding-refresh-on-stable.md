@@ -18,7 +18,7 @@ Claude Code の hook システムがこのフックを起動したとき、以�
 | フック種別 | PostToolUse |
 | 対象ツール | `Bash`（test / build / CI 判定系コマンドの完了後）|
 | 対象外 | 対象ツール以外（matcher でフィルタ済み、本フックは発火しない） |
-| 副作用 1 | `/team-onboarding` 起動による `ONBOARDING.md` 上書き |
+| 副作用 1 | `node scripts/refresh-onboarding.js`（第一手段）による `ONBOARDING.md` 揮発セクション再生成。curated 部分の再構成が要る場合のみ `/team-onboarding` で補完 |
 | 副作用 2 | `state.json.onboarding.last_refresh` への ISO 8601 タイムスタンプ書き込み |
 | 参照元 Issue | #17 |
 | 関連フック | `capture-result`（先に動作、無干渉） |

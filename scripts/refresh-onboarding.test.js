@@ -160,6 +160,14 @@ test('renderGitLogSection: コミット無しは「未取得」', () => {
   assert.match(renderGitLogSection(null, 'active'), /未取得/);
 });
 
+test('renderGitLogSection: 空コミット時は activity で文言を分岐する', () => {
+  // unknown = リポジトリ未初期化の主語、active = HEAD あり/列挙空の主語
+  assert.match(renderGitLogSection([], 'unknown'), /リポジトリ未初期化/);
+  assert.match(renderGitLogSection([], 'active'), /HEAD は存在するが/);
+  // 取り違えが起きていないこと（active なのに「未初期化」と言わない）
+  assert.doesNotMatch(renderGitLogSection([], 'active'), /未初期化/);
+});
+
 test('renderGitLogSection: パイプ文字をエスケープして表崩れを防ぐ', () => {
   const commits = [{ hash: 'abc1234', subject: 'feat: a | b' }];
   const body = renderGitLogSection(commits, 'active');
@@ -273,6 +281,16 @@ test('replaceCountInSection: 対象セクション外の同形パターンは誤
 test('replaceCountInSection: 見出しが無ければ原文を破壊しない', () => {
   const md = '## 5. Agents\n\n`dir` 直下に **43 体**';
   assert.equal(replaceCountInSection(md, 6, /(直下に \*\*)(\d+) (個\*\*)/, '$199 $3'), md);
+});
+
+test('replaceCountInSection: 関数形式の置換は $ を含む値も誤解釈しない', () => {
+  // CodeRabbit #2: 呼び出し側を関数形式にしたため、置換値に `$&` 等があっても
+  // 後方参照として解釈されず、リテラルとして差し込まれることを固定する。
+  const md = '## 5. Agents\n\n`dir` 直下に **43 体**';
+  const out = replaceCountInSection(
+    md, 5, /(直下に \*\*)(\d+) (体\*\*)/, (_m, p1, _n, p3) => `${p1}$& 体は$1 ${p3}`
+  );
+  assert.match(out, /\*\*\$& 体は\$1 体\*\*/); // $& も $1 もそのまま残る
 });
 
 // --- Codex High リグレッション：state 由来値の境界注入で陳腐化が残らないこと ---
