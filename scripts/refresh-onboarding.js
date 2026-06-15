@@ -153,7 +153,7 @@ function renderResumeSection(state) {
 /**
  * §8 直近 Git 活動の表本文を生成する。
  * @param {Array<{hash:string, subject:string}>} commits
- * @param {string} activity 'active' | 'recent' | 'dormant'
+ * @param {string} activity 活動ラベル（'active' = HEAD あり / 'unknown' = git 取得不可）
  * @returns {string}
  */
 function renderGitLogSection(commits, activity) {
@@ -284,17 +284,20 @@ function gitLog(n) {
 const GIT_LOG_COUNT = 12;
 
 /**
- * §8 用の活動判定ラベルを返す。
+ * §8 用の活動ラベルを返す。
  * 経過時間の厳密判定は Date 不可（リポジトリ規約）かつ state.execution の責務のため、
- * ここでは「直近コミットが存在するか」のみを事実として返す。
- * @returns {{activity: string, count: number}}
+ * ここでは「HEAD コミットが存在するか」のみを事実として返す。
+ *   - 'active'  : HEAD あり（コミット履歴が存在する通常リポジトリ）
+ *   - 'unknown' : git 取得不可（未初期化 / HEAD 無し）
+ * 取得件数は呼び出し側が定数 GIT_LOG_COUNT を直接渡す（本関数は件数を持たない）。
+ * @returns {string} 'active' | 'unknown'
  */
 function gitActivity() {
   try {
     const head = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-    return { activity: head ? 'active' : 'unknown', count: GIT_LOG_COUNT };
+    return head ? 'active' : 'unknown';
   } catch {
-    return { activity: 'unknown', count: GIT_LOG_COUNT };
+    return 'unknown';
   }
 }
 
@@ -308,8 +311,8 @@ if (existing == null) {
 const state = parseState(readIfExists(path.join(root, 'state.json')));
 const agentCount = countMd(path.join(root, '.claude', 'claudeos', 'agents'));
 const commandCount = countMd(path.join(root, '.claude', 'claudeos', 'commands'));
-const { activity, count } = gitActivity();
-const commits = gitLog(count);
+const activity = gitActivity();
+const commits = gitLog(GIT_LOG_COUNT);
 
 const updated = refreshOnboarding(existing, { state, agentCount, commandCount, commits, activity });
 

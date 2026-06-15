@@ -177,6 +177,14 @@ test('replaceSectionBody: 見出しが見つからなければ原文を破壊し
   assert.equal(replaceSectionBody(SAMPLE, 99, 'X'), SAMPLE);
 });
 
+test('replaceSectionBody: §1 指定が §11 を前方一致で誤爆しない', () => {
+  // `## 1.` と `## 11.` の前方一致衝突を防ぐ不変条件（見出し正規表現は `\. ` を要求）
+  const out = replaceSectionBody(SAMPLE, 1, 'NEW GOAL');
+  assert.match(out, /## 1\. Goal\n\nNEW GOAL/);
+  assert.match(out, /## 11\. Resume\n\nOLD RESUME/); // §11 は無傷
+  assert.doesNotMatch(out, /## 11\. Resume\n\nNEW GOAL/);
+});
+
 test('replaceSectionBody: --- 区切りを越えて隣接セクションを侵食しない', () => {
   const out = replaceSectionBody(SAMPLE, 2, 'NEW KPI');
   assert.match(out, /NEW KPI/);
