@@ -30,13 +30,13 @@ bash bin/autonomy.sh start --all --dry-run
 bash bin/autonomy.sh start --all --yes
 ```
 
-監視メニュー:
+セッション状態監視:
 
 ```bash
-bash bin/monitor-sessions.sh
+bash libexec/watch-session.sh
 ```
 
-`[a]` は全登録プロジェクトへの Supervisor 適用、`[n]` は数字付き個別選択です。
+Supervisor の全適用は `bash bin/autonomy.sh start --all --dry-run`（確認後 `--yes`）で行います。
 
 ## 人間の最終判断
 
@@ -67,7 +67,7 @@ bash bin/autonomy.sh start --all --dry-run
 | ファイル | 役割 |
 |---|---|
 | `bin/autonomy.sh` | Supervisor 個別/全適用 CLI |
-| `bin/monitor-sessions.sh` | 監視と操作メニュー |
+| `libexec/watch-session.sh` | セッション状態監視（一覧 / 接続・停止） |
 | `Claude/templates/claude/CLAUDE.md` | CTO Claude 方針テンプレート |
 | `Claude/templates/claude/START_PROMPT.md` | 自律開発開始プロンプト |
 | `Claude/templates/linux/cron-launcher.sh` | cron からのローカル起動 |

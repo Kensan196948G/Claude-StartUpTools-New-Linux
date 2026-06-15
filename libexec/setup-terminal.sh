@@ -170,9 +170,49 @@ apply_japanese_locale() {
   printf '  反映には再ログイン、または新しい tmux セッションの作り直しが必要です。\n'
 }
 
+# クリップボード連携ツールを検出して識別子を返す。
+# 優先: Wayland (wl-copy) > X11 (xclip) > X11 (xsel) > なし (OSC52 へフォールバック)
+detect_clipboard_tool() {
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]] && has_cmd wl-copy && has_cmd wl-paste; then
+    printf 'wayland\n'
+  elif has_cmd xclip; then
+    printf 'xclip\n'
+  elif has_cmd xsel; then
+    printf 'xsel\n'
+  else
+    printf 'osc52\n'
+  fi
+}
+
+# 検出したツールに応じた「コピー(copy-pipe)コマンド」を返す。
+clipboard_copy_command() {
+  case "$1" in
+    wayland) printf 'wl-copy' ;;
+    xclip)   printf 'xclip -selection clipboard -in' ;;
+    xsel)    printf 'xsel --clipboard --input' ;;
+    *)       printf '' ;;  # osc52: copy-pipe 不要 (set-clipboard on が OSC52 送出)
+  esac
+}
+
+# 検出したツールに応じた「ペースト(OS クリップボード→tmux)コマンド」を返す。
+clipboard_paste_command() {
+  case "$1" in
+    wayland) printf 'wl-paste -n' ;;
+    xclip)   printf 'xclip -selection clipboard -out' ;;
+    xsel)    printf 'xsel --clipboard --output' ;;
+    *)       printf '' ;;
+  esac
+}
+
 print_tmux_block() {
+  local tool copy_cmd paste_cmd
+  tool="$(detect_clipboard_tool)"
+  copy_cmd="$(clipboard_copy_command "$tool")"
+  paste_cmd="$(clipboard_paste_command "$tool")"
+
   cat <<EOF
 $TMUX_CONF_MARKER_BEGIN
+# --- 基本 ---
 set -g mouse on
 set -g history-limit 50000
 set -g escape-time 10
@@ -181,6 +221,47 @@ set -g status on
 set -g status-interval 5
 set -g default-terminal "screen-256color"
 set -as terminal-overrides ",xterm-256color:Tc"
+# OS クリップボード連携 (検出ツール: $tool)
+set -g set-clipboard on
+# vi 風 copy-mode + 折り返し行も追従するスクロール
+setw -g mode-keys vi
+# --- マウスホイールで上下スクロール ---
+# 全画面 TUI (claude 等) にはホイールをそのまま転送し、それ以外は copy-mode に入って履歴を遡る
+bind -n WheelUpPane if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" "send-keys -M" "copy-mode -e"
+bind -n WheelDownPane send-keys -M
+EOF
+
+  if [[ -n "$copy_cmd" ]]; then
+    cat <<EOF
+# --- コピー: ドラッグ選択で自動コピー / copy-mode 内で Ctrl+C ---
+bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-pipe-and-cancel "$copy_cmd"
+bind -T copy-mode-vi C-c              send -X copy-pipe-and-cancel "$copy_cmd"
+bind -T copy-mode-vi Enter            send -X copy-pipe-and-cancel "$copy_cmd"
+bind -T copy-mode-vi y                send -X copy-pipe-and-cancel "$copy_cmd"
+EOF
+  else
+    cat <<'EOF'
+# --- コピー: クリップボードツール未検出のため OSC52(set-clipboard) でコピー ---
+bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-pipe-and-cancel
+bind -T copy-mode-vi C-c              send -X copy-pipe-and-cancel
+bind -T copy-mode-vi Enter            send -X copy-pipe-and-cancel
+bind -T copy-mode-vi y                send -X copy-pipe-and-cancel
+EOF
+  fi
+
+  if [[ -n "$paste_cmd" ]]; then
+    cat <<EOF
+# --- ペースト: Ctrl+V で OS クリップボードをペイン(claude)へ送る ---
+bind -n C-v run "$paste_cmd | tmux load-buffer - && tmux paste-buffer -p"
+EOF
+  else
+    cat <<'EOF'
+# --- ペースト: tmux 内バッファを Ctrl+V でペースト (OS 取得ツール未検出) ---
+bind -n C-v paste-buffer -p
+EOF
+  fi
+
+  cat <<EOF
 bind r source-file ~/.tmux.conf \; display-message "tmux.conf reloaded"
 $TMUX_CONF_MARKER_END
 EOF
@@ -252,10 +333,6 @@ print_next_steps() {
   printf '    接続       : tmux attach -t claudeos-<project>\n'
   printf '    デタッチ   : Ctrl-b d (セッションは継続)\n'
   printf '    再読込     : tmux source-file ~/.tmux.conf\n'
-  printf '\n  %sライブ監視タブ (経過/残り・タブ切替):%s\n' "$C_CYAN" "$C_RESET"
-  printf '    開く       : メニュー MO  または  bash bin/monitor-sessions.sh open\n'
-  printf '    タブ切替   : Ctrl-b <n> で各プロジェクトを FG / Ctrl-b 0 で監視へ戻る\n'
-  printf '    監視終了   : ダッシュボードで q (各プロジェクトは BG で継続)\n'
   printf '\n'
 }
 

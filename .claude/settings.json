@@ -15,6 +15,7 @@
   "promptSuggestionEnabled": true,
   "autoUpdatesChannel": "latest",
   "prefersReducedMotion": false,
+  "teammateMode": "auto",
   "terminal": {
     "mode": "auto"
   },

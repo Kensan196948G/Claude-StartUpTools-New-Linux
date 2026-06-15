@@ -41,6 +41,32 @@ ClaudeOS v9.0 を `/goal` 駆動・動的判断モードで安全に運用する
 - backlog.md
 - TODO.md
 - docs/roadmap.md
+- **Claude Code changelog**（`https://code.claude.com/docs/en/changelog`）
+
+### 📜 changelog 定点観測（v9.0+ 運用化）
+
+Monitor フェーズで Claude Code 本体の changelog 差分を確認し、運用ツールへ影響する
+新機能・破壊的変更を取りこぼさない。**確認のみ**を行い、対応は Issue 化して次フェーズへ回す。
+
+| 手順 | 内容 |
+|---|---|
+| 1 | `state.monitor.changelog_checked_version`（前回確認時の最新版）を読む |
+| 2 | changelog の最新版と照合し、未確認バージョンの差分を抽出 |
+| 3 | 運用影響のある項目を分類（後述）し、必要なら Issue 化 |
+| 4 | `state.monitor.changelog_checked_version` を最新版へ更新 |
+
+**運用影響の分類（Issue 化判断の指針）:**
+
+| カテゴリ | 例 | 対応 |
+|---|---|---|
+| 🔧 設定キー追加/改称 | `teammateMode` / `worktree.baseRef` | settings.json・config テンプレへ反映 Issue |
+| 🌀 オーケストレーション | `workflow`→`ultracode` 改称・`/effort xhigh` | 本ファイル / `04-agent-teams.md` 更新 Issue |
+| ⌨️ tmux / 端末 | クリップボード・スクロール修正 | `libexec/setup-terminal.sh` 反映 Issue |
+| 🤖 Agent / SubAgent | nesting 段数・teammate 仕様変更 | テンプレ agents 定義の見直し Issue |
+| 🚨 破壊的変更 | 既定挙動の変更・廃止 | 即時 Issue 化（優先度 P1〜P2） |
+
+> 💡 changelog は頻繁に更新されるため**毎 Monitor で全文精読は不要**。
+> 前回確認版からの差分のみを見る（手順 1–2）。差分ゼロならスキップしてよい。
 
 出力:
 
@@ -51,6 +77,7 @@ Monitor Report:
 - active_prs:
 - ci_status:
 - blockers:
+- changelog_diff:    # 未確認版の有無 / 運用影響項目 / 起票した Issue
 - next_target:
 ```
 

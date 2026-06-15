@@ -100,6 +100,57 @@ teardown() { _bats_common_teardown; }
   grep -q 'export LANG=ja_JP.UTF-8' "$HOME/.profile"
 }
 
+@test "setup-terminal: clipboard_copy_command/paste_command が 4 ツールを正しく対応付ける" {
+  run bash -c '
+    source "'"$LX"'/setup-terminal.sh"
+    for t in wayland xclip xsel osc52; do
+      printf "%s|copy=%s|paste=%s\n" "$t" "$(clipboard_copy_command "$t")" "$(clipboard_paste_command "$t")"
+    done
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"wayland|copy=wl-copy|paste=wl-paste -n"* ]]
+  [[ "$output" == *"xclip|copy=xclip -selection clipboard -in|paste=xclip -selection clipboard -out"* ]]
+  [[ "$output" == *"xsel|copy=xsel --clipboard --input|paste=xsel --clipboard --output"* ]]
+  # osc52 は OS ツール不要 (set-clipboard on が OSC52 を送出するため copy/paste コマンドは空)
+  [[ "$output" == *"osc52|copy=|paste="* ]]
+}
+
+@test "setup-terminal: print_tmux_block がマウス/スクロール/コピー&ペースト(ツール検出)を出力" {
+  run bash -c '
+    source "'"$LX"'/setup-terminal.sh"
+    detect_clipboard_tool() { printf "xclip\n"; }
+    print_tmux_block
+  '
+  [ "$status" -eq 0 ]
+  # マウス操作とスクロールの基本
+  [[ "$output" == *"set -g mouse on"* ]]
+  [[ "$output" == *"setw -g mode-keys vi"* ]]
+  [[ "$output" == *"bind -n WheelUpPane"* ]]
+  [[ "$output" == *"bind -n WheelDownPane send-keys -M"* ]]
+  # OS クリップボード連携
+  [[ "$output" == *"set -g set-clipboard on"* ]]
+  # ドラッグ選択/copy-mode 内 Ctrl+C で検出ツールへ copy-pipe
+  [[ "$output" == *'bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-pipe-and-cancel "xclip -selection clipboard -in"'* ]]
+  [[ "$output" == *'bind -T copy-mode-vi C-c'*'copy-pipe-and-cancel "xclip -selection clipboard -in"'* ]]
+  # Ctrl+V で OS クリップボード → ペイン
+  [[ "$output" == *'bind -n C-v run "xclip -selection clipboard -out | tmux load-buffer - && tmux paste-buffer -p"'* ]]
+}
+
+@test "setup-terminal: print_tmux_block はツール未検出時 OSC52 フォールバックを出力" {
+  run bash -c '
+    source "'"$LX"'/setup-terminal.sh"
+    detect_clipboard_tool() { printf "osc52\n"; }
+    print_tmux_block
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"set -g set-clipboard on"* ]]
+  # copy-pipe-and-cancel は引数なし (OSC52 送出に委ねる)
+  [[ "$output" == *"bind -T copy-mode-vi C-c              send -X copy-pipe-and-cancel"* ]]
+  [[ "$output" != *'copy-pipe-and-cancel "'* ]]
+  # ペーストは tmux 内バッファ
+  [[ "$output" == *"bind -n C-v paste-buffer -p"* ]]
+}
+
 @test "diag-mcp-health: exit 0" {
   run bash "$LX/diag-mcp-health.sh"
   [ "$status" -eq 0 ]

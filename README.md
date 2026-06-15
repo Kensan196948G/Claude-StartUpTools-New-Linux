@@ -7,7 +7,7 @@ SSH 接続や Windows/PowerShell 経路は持たず、`tmux`、Supervisor、cron
 🎛️ Menu       🧠 CTO Claude       🔁 Supervisor       🧪 CI
    │              │                    │                │
    ├─ L1/S1 ─────▶│ 1セッション起動     │                │
-   ├─ MO ─────────┼───────────────────▶│ 監視/再開管理   │
+   ├─ 14/15 ──────┼───────────────────▶│ cron/監視/再開  │
    └─ Tests ──────┴────────────────────┴───────────────▶│
 ```
 
@@ -17,7 +17,7 @@ SSH 接続や Windows/PowerShell 経路は持たず、`tmux`、Supervisor、cron
 |---|---|---|
 | 🐧 | Linux専用 | ローカルの `claude` / `tmux` / `cron` / `systemd` を使用 |
 | 📂 | Project候補検出 | `/home/kensan/Projects` 配下の `.git` 付きディレクトリを候補化 |
-| 🎛️ | コントロールセンター | セッション監視、介入、起動、停止、登録削除を1画面で操作 |
+| 📺 | セッション状態監視 | 実行中 `claudeos-*` セッションの稼働・経過・残り時間を一覧表示 |
 | 🔁 | Supervisor | Goal到達・Blocked・上限到達まで自律再開 |
 | 🔢 | 数字付き選択 | 個別プロジェクトを番号で選んで管理 |
 | 🌐 | 全適用 | 全登録候補へ Supervisor 適用。実行前に人間確認 |
@@ -31,9 +31,9 @@ SSH 接続や Windows/PowerShell 経路は持たず、`tmux`、Supervisor、cron
 flowchart LR
   User[🧍 人間<br/>最終判断] --> Menu[🎛️ start.sh / menu.sh]
   Menu --> Start[🚀 start-claude.sh]
-  Menu --> Monitor[🎛️ monitor-sessions.sh]
+  Menu --> Watch[📺 libexec/watch-session.sh]
   Menu --> Cron[⏰ cron-schedule.sh]
-  Monitor --> Autonomy[🔁 autonomy.sh]
+  Menu --> Autonomy[🔁 autonomy.sh]
   Autonomy --> Supervisor[🧩 supervisor.sh]
   Supervisor --> Launcher[🌙 cron-launcher.sh]
   Launcher --> Tmux[🖥️ tmux session]
@@ -68,53 +68,40 @@ cp config/config.json.template config/config.json
 |---|---|---|
 | `L1` | 🖥️ | Claude をフォアグラウンド起動 |
 | `S1` | 🌙 | Claude をバックグラウンド自律起動 |
-| `MO` | 🎛️ | コントロールセンターを開く |
-| `15` | 📺 | セッション監視を開く |
+| `15` | 📺 | セッション状態監視を開く |
 | `14` | ⏰ | cron登録・編集・削除 |
 
-## 🎛️ コントロールセンター
+## 📺 セッション状態監視
+
+実行中の `claudeos-*` セッションを一覧し、経過・残り時間を確認します（メニュー項15）。
 
 ```bash
-bash bin/monitor-sessions.sh open
+bash libexec/watch-session.sh
 ```
 
-```text
-🎛️ ClaudeOS コントロールセンター
-────────────────────────────────────────────────────────
-🟢 実行中セッション      #  プロジェクト     経過    残り
-🟢 登録 / supervisor     #  プロジェクト     tmux   supervisor
-────────────────────────────────────────────────────────
-[1-9]介入  [n]新規追加  [a]全監督  [l]起動  [s]監督開始
-[x]監督停止 [d]登録削除 [q]終了
+セッションへ直接接続して中身を確認・介入する場合は `tmux` を使います。
+
+```bash
+tmux ls | grep claudeos-           # 実行中セッション一覧
+tmux attach -t claudeos-<project>  # 接続（Ctrl-b d でデタッチ=BG継続）
 ```
 
-| キー | アイコン | 操作 | 検証方針 |
-|---|---|---|---|
-| `1`-`9` | 🎯 | 実行中セッションへ介入 | tmux window選択を検証 |
-| `n` | 🆕 | 全プロジェクトから個別追加 | 候補列挙・状態バッジを検証 |
-| `a` | 🌐 | Supervisor全適用 | dry-run後に人間確認Yで実行する経路を検証 |
-| `l` | ▶️ | 1回だけBG起動 | cron launcher呼び出しと起動確認を検証 |
-| `s` | 🔁 | Supervisor開始 | cron削除確認とSupervisor起動を検証 |
-| `x` | 🛑 | Supervisor停止 | stop flag生成を検証 |
-| `d` | 🗑️ | 登録削除 | cron/state/tmux削除を検証 |
-| `q` | 🚪 | 終了 | dashboard loop終了 |
+起動・停止・Supervisor 適用・登録削除といった操作は、それぞれ運用メニューの専用項目（起動 `L1`/`S1`、cron `14`、Supervisor は `bin/autonomy.sh`）から行います。
 
 ## 🔁 Supervisor全適用
 
 ```mermaid
 sequenceDiagram
   participant H as 🧍 Human
-  participant M as 🎛️ monitor-sessions.sh
   participant A as 🔁 autonomy.sh
   participant P as 📂 Projects
   participant S as 🧩 Supervisor
 
-  H->>M: [a] 全監督
-  M->>A: start --all --dry-run
+  H->>A: start --all --dry-run
   A->>P: .git付き候補を列挙
   A-->>H: 対象とskip理由を表示
-  H->>M: Y / N 最終判断
-  M->>A: start --all --yes
+  H->>A: Y / N 最終判断
+  H->>A: start --all --yes
   A->>S: 各プロジェクトをSupervisor管理へ
 ```
 
@@ -229,12 +216,12 @@ bash bin/autonomy.sh start --all --dry-run
 | 🧪 | `npm test` | Bats + Node test |
 | 🧹 | `npm run lint` | shellcheck |
 | 🌐 | `start --all --dry-run` | 全適用対象とskip理由 |
-| 🎛️ | `monitor-sessions.bats` | 操作キー、色、表示残骸防止 |
+| 🖥️ | `tmux-runner.bats` | セッション起動・命名規則・メタデータ付与 |
 | 🔐 | Security Scan | gitleaks |
 
 ## 🎨 表示ポリシー
 
-運用メニューとコントロールセンターは、灰色表示を使いません。
+運用メニューとセッション状態監視は、灰色表示を使いません。
 
 | 用途 | 色 |
 |---|---|

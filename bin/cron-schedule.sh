@@ -79,7 +79,7 @@ cs__remove() {
 
 # --- BG 起動: cron-launcher.sh を端末から切り離して非ブロッキング起動 ---
 #   setsid (無ければ nohup) で起動。claude UI は tmux セッション claudeos-<safe> に入り、
-#   ライブ監視タブ (monitor-sessions.sh) / 項15 / tmux attach で後から閲覧できる。
+#   項15 (セッション状態監視) / tmux attach で後から閲覧できる。
 cs__launch_bg() {
   local project="$1" duration="${2:-$DEFAULT_DURATION}" safe logp runner
   [[ -n "$project" ]] || { log_error "BG 起動: project が空です"; return 1; }
@@ -321,8 +321,6 @@ cs__menu() {
          fi
          read -rp "  Enter で戻る " _ ;;
       7) cs__launch || true
-         local op; read -rp "  ライブ監視タブを開きますか? [Y/n]: " op
-         [[ "${op,,}" != "n" && "${op,,}" != "no" ]] && bash "$SCRIPT_DIR/monitor-sessions.sh" open || true
          read -rp "  Enter で戻る " _ ;;
       0) return 0 ;;
       *) log_warn "無効な入力"; sleep 1 ;;

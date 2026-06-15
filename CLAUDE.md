@@ -36,7 +36,7 @@ CTO Claude に任せる範囲:
 ```bash
 ./start.sh
 bash bin/start-claude.sh
-bash bin/monitor-sessions.sh
+bash libexec/watch-session.sh
 bash bin/autonomy.sh start --all --dry-run
 npm test
 npm run lint
