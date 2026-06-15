@@ -60,18 +60,38 @@ au__project_list() {
   done < <(config_project_list)
 }
 
-# au__start <project> [--duration N] [--force]
+# au__start <project> [--duration N] [--force] [--roles cto,qa] [--stagger N] [--dry-run]
+#   --roles を伴う場合は責務分離し、setsid supervisor ループではなく
+#   並列ロール launcher (launch-parallel-cron.sh) へ委譲する。
 au__start() {
   local project="" duration="" force=0
+  local roles="" stagger="" dry_run=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --duration) duration="$2"; shift 2 ;;
       --force)    force=1; shift ;;
+      --roles)    roles="$2"; shift 2 ;;
+      --stagger)  stagger="$2"; shift 2 ;;
+      --dry-run)  dry_run=1; shift ;;
       --*)        log_error "start: 不明な引数: $1"; return 1 ;;
       *)          project="$1"; shift ;;
     esac
   done
   [[ -n "$project" ]] || { log_error "start: <project> は必須"; return 1; }
+
+  # --roles 指定時: 並列ロール launcher へ委譲 (supervisor 常駐ループは起動しない)
+  if [[ -n "$roles" ]]; then
+    local lp="${AU_LAUNCH_PARALLEL:-$SCRIPT_DIR/../scripts/tools/launch-parallel-cron.sh}"
+    [[ -f "$lp" ]] || { log_error "launch-parallel-cron.sh が見つかりません: $lp"; return 1; }
+    local -a lp_args=("$project" --roles "$roles")
+    [[ -n "$stagger" ]]  && lp_args+=(--stagger "$stagger")
+    [[ -n "$duration" ]] && lp_args+=(--duration "$duration")
+    (( dry_run )) && lp_args+=(--dry-run)
+    log_info "🤖 並列ロール起動へ委譲: $project (roles=$roles)"
+    bash "$lp" "${lp_args[@]}"
+    return $?
+  fi
+
   launcher__project_exists "$project" || { log_error "プロジェクトが存在しません: $(launcher__project_dir "$project")"; return 1; }
   [[ -f "$SUP_CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $SUP_CRON_LAUNCHER"; return 1; }
 
