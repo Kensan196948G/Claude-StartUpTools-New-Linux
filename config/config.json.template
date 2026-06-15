@@ -10,9 +10,16 @@
       "enabled": true,
       "displayName": "Claude Code (Anthropic)",
       "command": "claude",
-      "args": [
-        "--dangerously-skip-permissions"
-      ],
+      "_args_comment": "PR-G で --dangerously-skip-permissions を撤去。権限は settings/auto-mode と headless の --permission-mode dontAsk へ委譲し、起動引数に権限ロジックを持ち込まない (多経路化回避)。",
+      "args": [],
+      "headless": {
+        "_comment": "PR-G 新設。claude -p ヘッドレス既定運用の正本設定。cron.headlessDefault=true と整合。enabled=false で従来 TUI へ戻す (CLAUDEOS_HEADLESS=0 相当)。",
+        "enabled": true,
+        "outputFormat": "stream-json",
+        "permissionMode": "dontAsk",
+        "appendSystemPromptFile": "",
+        "resume": true
+      },
       "installCommand": "npm install -g @anthropic-ai/claude-code",
       "checkCommand": "claude --version",
       "env": {
@@ -104,7 +111,9 @@
     "launcherPath": "/home/kensan/.claudeos/cron-launcher.sh",
     "sessionsDir": "/home/kensan/.claudeos/sessions",
     "logsDir": "/home/kensan/.claudeos/logs",
-    "entryPrefix": "CLAUDEOS"
+    "entryPrefix": "CLAUDEOS",
+    "_headlessDefault_comment": "PR-G で既定反転。true = cron 起動は claude -p ヘッドレス既定 (CLAUDEOS_HEADLESS 未設定=1 と整合)。false で従来 tmux TUI 既定へ戻す (CLAUDEOS_HEADLESS=0 相当の退避経路)。",
+    "headlessDefault": true
   },
   "agentSdk": {
     "_comment": "PR-E 新設。claude -p / Agent SDK headless の月次クレジット可視化・上限ガード設定 (2026-06-15 課金変更対応)。monthlyBudgetUsd=0 は無制限 (ガード無効)。warn/verifyOnly/stop は消費率(%)の段階閾値で CLAUDE.md §9 と同型。ledgerPath は credits__record の追記先 (~ 展開は credits.sh が CCSU_HOME 基準で解決)。",

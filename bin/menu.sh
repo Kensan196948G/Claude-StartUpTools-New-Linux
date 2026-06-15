@@ -55,7 +55,7 @@ show_menu() {
   printf '  %s╔════════════════════════════════════════════════════╗%s\n' "$C_CYAN" "$C_RESET"
   printf '  %s║  🤖 ClaudeCode スタートアップツール v4.0.0-linux ║%s\n' "$C_CYAN" "$C_RESET"
   printf '  %s╚════════════════════════════════════════════════════╝%s\n' "$C_CYAN" "$C_RESET"
-  printf '  %s📋 フェーズ: %s%s%s%s\n' "$C_GRAY" "$C_RESET" "$phase_color" "$phase_label$deploy_badge" "$C_RESET"
+  printf '  %s📋 フェーズ: %s%s%s%s\n' "$C_WHITE" "$C_RESET" "$phase_color" "$phase_label$deploy_badge" "$C_RESET"
   printf '  %s📂 %s%s%s\n' "$C_GREEN" "$C_DKGREEN" "$local_dir" "$C_RESET"
   printf '\n'
 
@@ -111,9 +111,9 @@ show_menu() {
   printf '\n'
 
   local hr; hr="  $(printf '─%.0s' {1..52})"
-  printf '%s%s%s\n' "$C_GRAY" "$hr" "$C_RESET"
+  printf '%s%s%s\n' "$C_WHITE" "$hr" "$C_RESET"
   printf '    0  ❌  終了\n'
-  printf '%s%s%s\n\n' "$C_GRAY" "$hr" "$C_RESET"
+  printf '%s%s%s\n\n' "$C_WHITE" "$hr" "$C_RESET"
 }
 
 # run_menu_script <file> [args...] — 実行し非0なら logs/menu-error-*.log 生成 (Invoke-MenuScript 相当)

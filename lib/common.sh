@@ -34,14 +34,18 @@ CCSU_CONFIG_PATH="${AI_STARTUP_CONFIG_PATH:-$CCSU_ROOT/config/config.json}"
 CCSU_HOME="${CLAUDEOS_HOME:-$HOME/.claudeos}"
 
 # --- ANSI カラー (TTY のみ。CLAUDEOS_PLAIN_OUTPUT=1 で無効化=絵文字描画不可端末向け) ---
+# 運用メニュー配色規約 (CLAUDE.md): 灰色 (\e[90m bright-black / \e[2m dim) は使わず、
+# 青・緑・黄・マゼンタ・赤・白を中心にする。C_WHITE=\e[37m が正本名。
+# C_GRAY は旧名の後方互換エイリアスで実体は白 (\e[37m) — 新規コードは C_WHITE を使うこと。
 if [[ -t 1 && "${CLAUDEOS_PLAIN_OUTPUT:-0}" != "1" ]]; then
   C_RESET=$'\e[0m';   C_CYAN=$'\e[36m';    C_GREEN=$'\e[32m';   C_YELLOW=$'\e[33m'
-  C_RED=$'\e[31m';    C_MAGENTA=$'\e[35m'; C_BLUE=$'\e[34m';    C_GRAY=$'\e[37m'
+  C_RED=$'\e[31m';    C_MAGENTA=$'\e[35m'; C_BLUE=$'\e[34m';    C_WHITE=$'\e[37m'
+  C_GRAY="$C_WHITE"   # 後方互換: 旧 C_GRAY 参照を白へ集約 (灰色は不使用)
   C_DKCYAN=$'\e[2;36m'; C_DKBLUE=$'\e[2;34m'; C_DKGREEN=$'\e[2;32m'; C_DKMAGENTA=$'\e[2;35m'; C_DKYELLOW=$'\e[2;33m'
   C_BG_YELLOW=$'\e[30;43m'; C_BG_GREEN=$'\e[30;42m'; C_BG_BLUE=$'\e[30;44m'; C_BG_RED=$'\e[30;41m'; C_BG_DKCYAN=$'\e[30;46m'; C_BG_DKBLUE=$'\e[97;44m'
 else
   C_RESET='';   C_CYAN='';    C_GREEN='';   C_YELLOW=''
-  C_RED='';     C_MAGENTA=''; C_BLUE='';    C_GRAY=''
+  C_RED='';     C_MAGENTA=''; C_BLUE='';    C_WHITE='';   C_GRAY=''
   C_DKCYAN='';  C_DKBLUE='';  C_DKGREEN=''; C_DKMAGENTA=''; C_DKYELLOW=''
   C_BG_YELLOW=''; C_BG_GREEN=''; C_BG_BLUE=''; C_BG_RED=''; C_BG_DKCYAN=''; C_BG_DKBLUE=''
 fi
