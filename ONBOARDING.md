@@ -59,7 +59,7 @@ Git ログから直近の修復系コミット（fix/hotfix 系）を参照:
 | レビュー（言語別） | `cpp-reviewer` / `go-reviewer` / `java-reviewer` / `kotlin-reviewer` / `python-reviewer` / `rust-reviewer` / `typescript-reviewer` / `database-reviewer` / `security-reviewer` |
 | 開発（領域別） | `dev-api` / `dev-ui` |
 | 品質 | `qa` / `tester` / `e2e-runner` |
-| 運用 | `ops` / `security` |
+| 運用 | `ops` |
 
 > 各 Agent の詳細な description は、該当 Agent を呼び出した際にロードされるフロントマターから取得してください。
 > CLAUDE.md §6 に Agent Teams のロール対応表があります。
