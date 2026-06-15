@@ -12,7 +12,7 @@
 > **§5 Agent / §6 Command / §8 Git 活動** とヘッダーの事実誤認のみを手動更新しました。
 > **§1・§2・§4・§11 は `state.json` 由来**ですが、現在 `state.json` が未配置のため
 > 旧リポジトリ（v3.2.23 系）の陳腐化した値が残っています。これらの自動追従は
-> **Issue #100（Verify 連動 自動再生成フック）** で解消予定です。
+> **Issue #17（Verify 連動 自動再生成フック）** で解消予定です。
 
 ---
 
@@ -178,6 +178,6 @@ main ブランチで STABLE 継続中。open Issue なし。Monitor フェーズ
 
 ## 付録: Verify 連動自動更新
 
-STABLE 達成時に本ファイルを自動再生成するフックは **Issue #100** として起票済みです。
+STABLE 達成時に本ファイルを自動再生成するフックは **Issue #17** として起票済みです。
 実装完了後、`.claude/claudeos/hooks/hooks.json` の PostToolUse にフックが登録され、
 Verify ループで STABLE が成立するたびに本ファイルが最新化されます。
