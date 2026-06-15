@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  sanitizeCell,
   parseState,
   renderGoalSection,
   renderKpiSection,
@@ -22,8 +23,32 @@ const {
   renderResumeSection,
   renderGitLogSection,
   replaceSectionBody,
+  replaceCountInSection,
   refreshOnboarding,
 } = require('./refresh-onboarding.js');
+
+// --- sanitizeCell（Codex High 対策：行頭メタ文字によるセクション境界誤検出を根絶） ---
+
+test('sanitizeCell: null/undefined は空文字', () => {
+  assert.equal(sanitizeCell(null), '');
+  assert.equal(sanitizeCell(undefined), '');
+});
+
+test('sanitizeCell: 改行を空白へ畳み、行頭 `## ` のセクション境界注入を無害化', () => {
+  const out = sanitizeCell('正常\n## 偽の見出し');
+  assert.doesNotMatch(out, /\n/); // 改行が消える＝行頭メタ文字が成立しない
+  assert.match(out, /正常 ## 偽の見出し/);
+});
+
+test('sanitizeCell: `---` 区切りも改行畳み込みで行頭成立を防ぐ', () => {
+  const out = sanitizeCell('値\n---');
+  assert.doesNotMatch(out, /\n/);
+  assert.match(out, /値 ---/);
+});
+
+test('sanitizeCell: パイプはエスケープし表崩れを防ぐ', () => {
+  assert.equal(sanitizeCell('a | b'), 'a \\| b');
+});
 
 // --- parseState ---
 
@@ -42,6 +67,8 @@ test('parseState: 配列やプリミティブではなくオブジェクトの�
   // JSON としては valid だがオブジェクトでない値
   assert.equal(parseState('42'), null);
   assert.equal(parseState('"str"'), null);
+  assert.equal(parseState('[]'), null); // 配列も state とみなさない
+  assert.equal(parseState('[{"goal":1}]'), null);
 });
 
 // --- renderGoalSection ---
@@ -227,4 +254,53 @@ test('refreshOnboarding: agentCount=null のとき件数行を書き換えない
     state: null, agentCount: null, commandCount: null, commits: [], activity: 'unknown',
   });
   assert.match(out, /\*\*43 体\*\*/); // null は「不明＝触らない」
+});
+
+// --- replaceCountInSection（Codex Medium 対策：件数置換のセクションスコープ化） ---
+
+test('replaceCountInSection: 対象セクション外の同形パターンは誤爆しない', () => {
+  // §5 と §7 の双方に `直下に **N 体**` がある状況で §5 だけ書き換える
+  const md = [
+    '## 5. Agents', '', '`dir` 直下に **43 体** の…', '',
+    '## 7. Note', '', '別文脈で 直下に **99 体** と書かれた行',
+  ].join('\n');
+  const out = replaceCountInSection(md, 5, /(直下に \*\*)(\d+) (体\*\*)/, `$150 $3`);
+  assert.match(out, /\*\*50 体\*\*/);      // §5 は追従
+  assert.match(out, /\*\*99 体\*\*/);      // §7 は無傷（誤爆しない）
+  assert.doesNotMatch(out, /\*\*43 体\*\*/);
+});
+
+test('replaceCountInSection: 見出しが無ければ原文を破壊しない', () => {
+  const md = '## 5. Agents\n\n`dir` 直下に **43 体**';
+  assert.equal(replaceCountInSection(md, 6, /(直下に \*\*)(\d+) (個\*\*)/, '$199 $3'), md);
+});
+
+// --- Codex High リグレッション：state 由来値の境界注入で陳腐化が残らないこと ---
+
+test('refreshOnboarding: state 値に偽見出しを注入しても stale 排除が破れない', () => {
+  const md = [
+    '## 1. Goal', '', '旧 Goal 値', '',
+    '## 2. KPI', '', '旧 KPI 値',
+  ].join('\n');
+
+  // 攻撃的 state：description に改行付き `## 2. KPI` を仕込み、境界を偽装しようとする
+  const malicious = {
+    goal: { title: 'T', description: 'X\n## 2. KPI\n\n偽装本文' },
+    execution: { phase: 'Monitor' },
+    automation: {},
+  };
+  const injected = refreshOnboarding(md, {
+    state: malicious, agentCount: null, commandCount: null, commits: [], activity: 'unknown',
+  });
+  // 注入された改行が畳まれ、§2 KPI 見出しは本物が 1 つだけ残る
+  assert.equal((injected.match(/^## 2\. KPI$/gm) || []).length, 1);
+
+  // 続く state 不在フォールバックで §1/§2 とも「未取得」へ確実に落ちる（陳腐化が残らない）
+  const cleaned = refreshOnboarding(injected, {
+    state: null, agentCount: null, commandCount: null, commits: [], activity: 'unknown',
+  });
+  assert.doesNotMatch(cleaned, /偽装本文/);
+  assert.doesNotMatch(cleaned, /旧 Goal 値/);
+  assert.doesNotMatch(cleaned, /旧 KPI 値/);
+  assert.equal((cleaned.match(/未取得/g) || []).length >= 2, true);
 });

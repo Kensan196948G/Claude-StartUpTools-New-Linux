@@ -34,6 +34,28 @@ const root = path.resolve(__dirname, '..');
 const UNAVAILABLE = (reason) => `*未取得 — ${reason}*`;
 
 /**
+ * state.json 由来の任意文字列を Markdown へ安全に埋め込む形へ正規化する。
+ *
+ * replaceSectionBody は本文中の行頭 `## ` / `---` を「次セクション境界」と解釈するため、
+ * 値に改行付き `## ...` や `---` が混入すると、次回 state 不在フォールバック時に
+ * 置換がそこで止まり陳腐化行が残る（決定論・stale 排除要件の破れ）。
+ * テーブルセル内の生改行も表崩れを招く。よって埋め込み前に:
+ *   - 改行（CR/LF）を空白へ畳む → 行頭メタ文字によるセクション境界誤検出を根絶
+ *   - `|` をエスケープ → テーブル崩れ防止
+ *   - 連続空白を 1 個へ正規化し前後を trim
+ * @param {*} value 任意値（null/undefined は空文字）
+ * @returns {string} 単一行・セル安全な文字列
+ */
+function sanitizeCell(value) {
+  if (value == null) return '';
+  return String(value)
+    .replace(/\r?\n/g, ' ')
+    .replace(/\|/g, '\\|')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * state.json テキストを安全に parse する。
  * @param {string|null} text ファイル全文。null/空なら null。
  * @returns {object|null} parse 成功時オブジェクト、失敗・不在時 null
@@ -42,7 +64,8 @@ function parseState(text) {
   if (!text || !text.trim()) return null;
   try {
     const obj = JSON.parse(text);
-    return obj && typeof obj === 'object' ? obj : null;
+    // 配列・プリミティブは state とみなさない（オブジェクトのみ受理）。
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
   } catch {
     return null;
   }
@@ -76,7 +99,7 @@ function renderGoalSection(state) {
     '',
     '| 項目 | 現在値 |',
     '|---|---|',
-    ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+    ...rows.map(([k, v]) => `| ${k} | ${sanitizeCell(v)} |`),
   ].join('\n');
 }
 
@@ -93,7 +116,7 @@ function renderKpiSection(state) {
   return [
     '| KPI | 目標値 | 現在値 |',
     '|---|---|---|',
-    `| success_rate_target | ${kpi.success_rate_target} | ${kpi.success_rate_current != null ? kpi.success_rate_current : '未計測'} |`,
+    `| success_rate_target | ${sanitizeCell(kpi.success_rate_target)} | ${kpi.success_rate_current != null ? sanitizeCell(kpi.success_rate_current) : '未計測'} |`,
   ].join('\n');
 }
 
@@ -109,7 +132,7 @@ function renderFailureSection(state) {
   if (!Array.isArray(patterns) || patterns.length === 0) {
     return UNAVAILABLE('state.json.learning.failure_patterns 未記録。セッション進行で自動蓄積される');
   }
-  return patterns.slice(0, 5).map((p, i) => `${i + 1}. ${typeof p === 'string' ? p : JSON.stringify(p)}`).join('\n');
+  return patterns.slice(0, 5).map((p, i) => `${i + 1}. ${sanitizeCell(typeof p === 'string' ? p : JSON.stringify(p))}`).join('\n');
 }
 
 /**
@@ -122,7 +145,7 @@ function renderSuccessSection(state) {
   if (!Array.isArray(patterns) || patterns.length === 0) {
     return UNAVAILABLE('state.json.learning.success_patterns 未記録');
   }
-  return patterns.slice(0, 5).map((p, i) => `${i + 1}. ${typeof p === 'string' ? p : JSON.stringify(p)}`).join('\n');
+  return patterns.slice(0, 5).map((p, i) => `${i + 1}. ${sanitizeCell(typeof p === 'string' ? p : JSON.stringify(p))}`).join('\n');
 }
 
 /**
@@ -146,7 +169,7 @@ function renderResumeSection(state) {
     '',
     '| 項目 | 値 |',
     '|---|---|',
-    ...rows.map(([k, v]) => `| ${k} | ${v} |`),
+    ...rows.map(([k, v]) => `| ${k} | ${sanitizeCell(v)} |`),
   ].join('\n');
 }
 
@@ -165,7 +188,7 @@ function renderGitLogSection(commits, activity) {
     '',
     '| Hash | 概要 |',
     '|---|---|',
-    ...commits.map(c => `| ${c.hash} | ${c.subject.replace(/\|/g, '\\|')} |`),
+    ...commits.map(c => `| ${sanitizeCell(c.hash)} | ${sanitizeCell(c.subject)} |`),
   ].join('\n');
 }
 
@@ -199,6 +222,33 @@ function replaceSectionBody(md, sectionNum, newBody) {
 }
 
 /**
+ * `## {sectionNum}.` 見出し配下の範囲に限定して正規表現置換を行う。
+ * replaceSectionBody と同じ境界スキャン（次の `## ` 見出し / `---` / EOF）で
+ * 対象セクションのみを切り出し、その範囲内の最初の一致だけを置換する。
+ * 全文 replace と異なり、他セクションに同形パターンが現れても誤爆しない。
+ * @param {string} md 全文
+ * @param {number} sectionNum セクション番号
+ * @param {RegExp} re 置換対象（範囲内で一致を探す）
+ * @param {string} replacement 置換文字列（$1 等の後方参照可）
+ * @returns {string} 見出しが無い or 不一致なら原文をそのまま返す
+ */
+function replaceCountInSection(md, sectionNum, re, replacement) {
+  const lines = md.split('\n');
+  const headRe = new RegExp(`^## ${sectionNum}\\. `);
+  const headIdx = lines.findIndex(l => headRe.test(l));
+  if (headIdx === -1) return md;
+  let endIdx = lines.length;
+  for (let i = headIdx + 1; i < lines.length; i++) {
+    if (/^## /.test(lines[i]) || /^---\s*$/.test(lines[i])) { endIdx = i; break; }
+  }
+  const before = lines.slice(0, headIdx + 1);
+  const section = lines.slice(headIdx + 1, endIdx);
+  const after = lines.slice(endIdx);
+  const patched = section.join('\n').replace(re, replacement);
+  return [...before, patched, ...after].join('\n');
+}
+
+/**
  * ONBOARDING.md 全文を入力に、揮発セクションを再生成した全文を返す（純粋関数）。
  * @param {string} md 既存 ONBOARDING.md
  * @param {object} ctx { state, agentCount, commandCount, commits, activity }
@@ -215,12 +265,13 @@ function refreshOnboarding(md, ctx) {
   out = replaceSectionBody(out, 4, renderSuccessSection(state));
   out = replaceSectionBody(out, 11, renderResumeSection(state));
 
-  // §5/§6: 件数行のみディレクトリ実数へ追従（人手 curated 表は保持）
+  // §5/§6: 件数行のみディレクトリ実数へ追従（人手 curated 表は保持）。
+  // 全文 replace ではなく該当セクション範囲に限定し、他所の同形パターンを誤爆しない。
   if (agentCount != null) {
-    out = out.replace(/(直下に \*\*)(\d+) (体\*\*)/, `$1${agentCount} $3`);
+    out = replaceCountInSection(out, 5, /(直下に \*\*)(\d+) (体\*\*)/, `$1${agentCount} $3`);
   }
   if (commandCount != null) {
-    out = out.replace(/(直下に \*\*)(\d+) (個\*\*)/, `$1${commandCount} $3`);
+    out = replaceCountInSection(out, 6, /(直下に \*\*)(\d+) (個\*\*)/, `$1${commandCount} $3`);
   }
 
   // §8: git log から表を再生成
@@ -230,6 +281,7 @@ function refreshOnboarding(md, ctx) {
 }
 
 module.exports = {
+  sanitizeCell,
   parseState,
   renderGoalSection,
   renderKpiSection,
@@ -238,6 +290,7 @@ module.exports = {
   renderResumeSection,
   renderGitLogSection,
   replaceSectionBody,
+  replaceCountInSection,
   refreshOnboarding,
 };
 
@@ -265,15 +318,19 @@ function countMd(dir) {
 
 function gitLog(n) {
   try {
-    const raw = execFileSync('git', ['log', `--oneline`, `-${n}`, '--no-color'], {
-      cwd: root, encoding: 'utf8',
-    }).trim();
+    // 短縮ハッシュ長をリポジトリ規模に依存させず固定（--abbrev=7）、
+    // subject 内の空白に影響されないようタブ（%x09）区切りで取得する。
+    const raw = execFileSync(
+      'git',
+      ['log', `-${n}`, '--no-color', '--abbrev=7', '--format=%h%x09%s'],
+      { cwd: root, encoding: 'utf8' }
+    ).trim();
     if (!raw) return [];
     return raw.split('\n').map(line => {
-      const sp = line.indexOf(' ');
-      return sp === -1
+      const tab = line.indexOf('\t');
+      return tab === -1
         ? { hash: line, subject: '' }
-        : { hash: line.slice(0, sp), subject: line.slice(sp + 1) };
+        : { hash: line.slice(0, tab), subject: line.slice(tab + 1) };
     });
   } catch {
     return [];

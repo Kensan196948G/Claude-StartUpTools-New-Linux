@@ -96,6 +96,8 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 | Hash | 概要 |
 |---|---|
+| fccbdb5 | fix(scripts): gitActivity を最小形へ簡約し JSDoc を実態に整合 (PR #19 Verify 指摘対応) |
+| 07140f3 | feat: ONBOARDING.md 決定論再生成器を実装し Verify 連動フックの実体化 (Closes #17) |
 | a9b5e82 | docs(onboarding): 存在しない Issue #100 参照を実在の #17 へ貼り替え (#18) |
 | 3c8de06 | fix(scripts): CHANGELOG 正規表現を v無し/後置詞付き版に対応 (Closes #14) (#16) |
 | 7479b34 | docs(onboarding): 実ソースから Agent/Command/Git 各セクションを再生成 (Closes #13) (#15) |
@@ -106,8 +108,6 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 | 7ccdedf | Add heartbeat watchdog for silent type3 detection (SIGKILL/OOM/restart) (#7) |
 | 1901947 | Merge pull request #1 from Kensan196948G/feature/changelog-features-managed-agents-poc |
 | 1ba98c7 | Merge remote-tracking branch 'origin/main' into feature/changelog-features-managed-agents-poc |
-| 35e939a | Merge pull request #5 from Kensan196948G/feature/notification-conditional-hooks |
-| 0dbab84 | merge: Resolve conflict — keep both input_waiting and api_failure events |
 
 ## 9. 未解決の Codex 指摘
 
