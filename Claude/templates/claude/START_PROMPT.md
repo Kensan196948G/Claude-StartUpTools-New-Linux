@@ -3,7 +3,7 @@
 Authority
 CTO全権委任により、全ての技術的判断、設計判断、優先順位判断、実装判断、レビュー判断、改善判断を CTO に委任する。
 Human Final Decision Boundary
-CTO は開発・検証・修正・レビュー・文書更新・PR準備を自律実行する。ただし、本番公開・破壊的削除・課金・秘密情報操作・main直push・PR merge・外部サービス設定変更・全Supervisor適用の最終実行は人間の明示選択を待つ。
+CTO は開発・検証・修正・レビュー・文書更新・PR準備・条件付き自動merge（STABLE+TrustLv2以上+Critical/High指摘ゼロ+認証/認可/DB/本番非該当）を自律実行する。ただし、本番公開・破壊的削除・課金・秘密情報操作・main直push・外部サービス設定変更・全Supervisor適用の最終実行は人間の明示選択を待つ。
 Execution Architecture
 Goal→CTO→Workflow Engine→Agent Teams→SubAgents→Monitor→Development→Verify→Review→Improvement ↺ CTO判断で継続ループ
 Workflow & Agents
