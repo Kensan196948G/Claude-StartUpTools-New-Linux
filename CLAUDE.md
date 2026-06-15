@@ -10,6 +10,12 @@
     の利用（Console + CLI スキル経由で管理、本リポジトリにコード追加なし）は禁止対象外。
     位置づけは「ローカル cron 主・Managed Agents 補完」(`docs/claude/06_ManagedAgents調査メモ.md`)。
 - `/home/kensan/Projects` 配下の Git リポジトリを登録プロジェクト候補として扱う。
+  - 新規フォルダ作成にも対応: メニュー実起動時 (`bin/menu.sh` の `menu` 経路) に
+    `project_autoinit_scan` が `.git` 未保有フォルダを検知し、自動で `git init` +
+    `CLAUDE.md` テンプレ配置 + 初期 commit を行う。`.git` が付くことで
+    `config_project_list`（L1 メニュー / cron / autonomy / docker の全 4 経路）へ
+    自然に登録される。冪等・非破壊・ローカル限定（GitHub repo 作成等の外部操作はしない）。
+    無効化は config の `.autoInitProjects=false`。`--render`（テスト用描画）経路では実行しない。
 - 運用メニューは灰色表示を使わず、青、緑、黄、マゼンタ、赤、白を中心にする。
 - 変更後は `npm test` と `npm run lint` を通す。
 

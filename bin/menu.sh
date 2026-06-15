@@ -24,6 +24,8 @@ source "$SCRIPT_DIR/../lib/json.sh"
 source "$SCRIPT_DIR/../lib/config-loader.sh"
 # shellcheck source=lib/launcher-common.sh
 source "$SCRIPT_DIR/../lib/launcher-common.sh"
+# shellcheck source=lib/project-autoinit.sh
+source "$SCRIPT_DIR/../lib/project-autoinit.sh"
 
 CCSU_STATE_FILE="${CCSU_STATE_FILE:-$CCSU_ROOT/state.json}"
 BIN="$SCRIPT_DIR"
@@ -240,8 +242,8 @@ menu_loop() {
 
 main() {
   case "${1:-menu}" in
-    --render) show_menu ;;          # 1回描画して終了 (突合/bats用)
-    menu|"")  menu_loop ;;
+    --render) show_menu ;;          # 1回描画して終了 (突合/bats用、副作用なし)
+    menu|"")  project_autoinit_scan; menu_loop ;;   # 実起動時のみ新規フォルダを自動登録
     *) log_error "不明な引数: $1"; exit 1 ;;
   esac
 }

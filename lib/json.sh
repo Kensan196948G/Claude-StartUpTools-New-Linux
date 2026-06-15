@@ -20,16 +20,20 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # ------------------------------------------------------------
 # json_get <file> <jq-filter> [default]
-#   スカラ値を取得。file 不在 / null / empty なら default を返す。
+#   スカラ値を取得。file 不在 / null / 欠落 / 空文字なら default を返す。
+#   注意: jq の `//` は false も「空」扱いするため使わない。`.x // empty` だと
+#         値が false/0 のとき default に化け、真偽値 config が壊れる。
+#         よって null 文字列を明示判定し、false/0 は実値として保持する。
 #   例: json_get config/config.json '.projects' '/home/kensan/Projects'
+#   例: json_get config/config.json '.autoInitProjects' 'true'  # false を正しく返す
 #   例: json_get state.json '.maintenance.phase_mode' 'development'
 # ------------------------------------------------------------
 json_get() {
   local file="$1" filter="$2" default="${3:-}"
   [[ -f "$file" ]] || { printf '%s' "$default"; return 0; }
   local v
-  v="$(jq -r "${filter} // empty" "$file" 2>/dev/null || true)"
-  if [[ -n "$v" ]]; then printf '%s' "$v"; else printf '%s' "$default"; fi
+  v="$(jq -r "${filter}" "$file" 2>/dev/null || true)"
+  if [[ -z "$v" || "$v" == "null" ]]; then printf '%s' "$default"; else printf '%s' "$v"; fi
 }
 
 # ------------------------------------------------------------
