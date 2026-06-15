@@ -3,55 +3,35 @@
 > このファイルは `/team-onboarding` により自動生成されます。
 > 手動編集は次回実行時に上書きされます。恒久的な記述は `CLAUDE.md` または `docs/` に配置してください。
 
-**生成日時**: 2026-06-15（Agent/Command/Git 各セクションを実ソースから手動再生成 — Issue #13 対応）
+**生成日時**: 2026-06-15（`scripts/refresh-onboarding.js` により決定論再生成 — Issue #17 対応）
 **ClaudeOS バージョン**: v9.0（プロジェクトテンプレート: `Claude/CLAUDE.md`）
 **Git ブランチ**: main（生成時点。実作業は feature branch で実施）
 **リポジトリ**: https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux
 
-> ⚠️ **再生成範囲メモ（Issue #13）**: 本リビジョンでは実ソースから検証できる
-> **§5 Agent / §6 Command / §8 Git 活動** とヘッダーの事実誤認のみを手動更新しました。
-> **§1・§2・§4・§11 は `state.json` 由来**ですが、現在 `state.json` が未配置のため
-> 旧リポジトリ（v3.2.23 系）の陳腐化した値が残っています。これらの自動追従は
-> **Issue #17（Verify 連動 自動再生成フック）** で解消予定です。
+> ♻️ **再生成方式（Issue #17）**: 揮発セクションは `scripts/refresh-onboarding.js` が
+> 実ソースから決定論的に再生成します（`/team-onboarding` の実体補完）。
+> **§1 Goal / §2 KPI / §3 失敗 / §4 成功 / §11 再開**は `state.json` 由来 — 不在時は
+> 陳腐化値を残さず **「未取得」定型**へ落ちます（現在 `state.json` は未配置）。
+> **§5 Agent / §6 Command 件数**はディレクトリ実数、**§8 Git 活動**は `git log` から追従。
+> STABLE 達成時の自動実行は `.claude/claudeos/hooks/hooks.json` PostToolUse に登録済み。
 
 ---
 
 ## 1. このプロジェクトの Goal
 
-`state.json` から取得した現在値:
-
-| 項目 | 現在値 |
-|---|---|
-| Goal Title | ClaudeOS v8 自律開発最適化 |
-| Goal Description | ClaudeOS v8 による完全無人運用の確立と Claude Code 中心の開発体験向上 |
-| 運用モード | Auto Mode + Agent Teams |
-| 最大作業時間 | 300 分（5 時間） |
-| 現在フェーズ | Monitor |
+*未取得 — state.json 未配置のため Goal 未設定。セッション開始時に /goal で設定される*
 
 ## 2. 現在の KPI 状態
 
-| KPI | 目標値 | 現在値 |
-|---|---|---|
-| success_rate_target | 0.9 | 0.9（state.json より） |
+*未取得 — state.json 未配置のため KPI 未計測*
 
 ## 3. よくハマるポイント（実履歴からの抽出）
 
-`state.json.learning.failure_patterns` は現セッションでは未記録（セッション進行で自動蓄積）。
-
-Git ログから直近の修復系コミット（fix/hotfix 系）を参照:
-
-| 傾向 | 詳細 |
-|---|---|
-| tmux + timeout SIGTTOU 停止 | GNU `timeout` が `setpgid(0,0)` で Claude を新 PGID へ移動 → `tcsetattr()` で SIGTTOU 受信し `Tl` 停止。`timeout --foreground` で解消 (v3.2.23) |
-| tmux pipe-pane による TUI 破壊 | `pipe-pane` が PTY を横断し DA クエリ応答を破壊 → TUI 初期化失敗。pipe-pane 削除で解消 (v3.2.23) |
-| CodeRabbit Critical 指摘 | injection 系 / SSH コマンド構築 — v3.2.19 で解消 |
-| README バージョンドリフト | CHANGELOG 更新時に README quote/テーブルを同一 commit で更新しないと CI 失敗 |
-| PSScriptAnalyzer 警告蓄積 | v3.2.6〜v3.2.14 で段階的に全カテゴリ解消済み |
+*未取得 — state.json.learning.failure_patterns 未記録。セッション進行で自動蓄積される*
 
 ## 4. 過去の成功パターン
 
-`state.json.learning.success_patterns` は現セッションでは未記録。
-直近 STABLE 達成実績: consecutive_success=10 継続中（v3.2.23 時点）。
+*未取得 — state.json.learning.success_patterns 未記録*
 
 ## 5. 利用可能な Agent Teams
 
@@ -112,22 +92,22 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 ## 8. 直近の Git 活動
 
-直近 12 コミット:
+（直近 12 件 / active 判定）
 
 | Hash | 概要 |
 |---|---|
+| c4c3e5a | fix(scripts): Codex 指摘を解消 — state 値の境界注入防止・件数置換のセクション局所化・git ハッシュ決定論化 |
+| fccbdb5 | fix(scripts): gitActivity を最小形へ簡約し JSDoc を実態に整合 (PR #19 Verify 指摘対応) |
+| 07140f3 | feat: ONBOARDING.md 決定論再生成器を実装し Verify 連動フックの実体化 (Closes #17) |
+| a9b5e82 | docs(onboarding): 存在しない Issue #100 参照を実在の #17 へ貼り替え (#18) |
+| 3c8de06 | fix(scripts): CHANGELOG 正規表現を v無し/後置詞付き版に対応 (Closes #14) (#16) |
+| 7479b34 | docs(onboarding): 実ソースから Agent/Command/Git 各セクションを再生成 (Closes #13) (#15) |
 | fa82dec | feat(subagents): 言語別 reviewer/build-resolver 11体を正本テンプレートへ昇格 (#12) |
 | fd889cb | refactor: 廃止済み security サブエージェントスタブを削除 (#11) |
 | dfcff5a | feat: Claude Code docs 4件の適合適用と運用整備 (#10) |
 | e08ac94 | docs: Add heartbeat-watchdog cron setup guide and README watchdog section (Closes #8) (#9) |
 | 7ccdedf | Add heartbeat watchdog for silent type3 detection (SIGKILL/OOM/restart) (#7) |
-| 1901947 | Merge pull request #1 — changelog-features-managed-agents-poc |
-| 35e939a | Merge pull request #5 — notification-conditional-hooks |
-| 184a576 | Merge pull request #3 — stop-failure-hook |
-| 9eeadcc | Add Notification hook to detect input-waiting silence (沈黙type2) |
-| 84a0be4 | Make CCSU_ROOT env-overridable to stop test-induced template corruption |
-| d7a6e8e | Add Phase 0 実施記録 to Managed Agents PoC 手順書 |
-| b8a7652 | Apply Claude Code changelog features and prepare Managed Agents hybrid PoC |
+| 1901947 | Merge pull request #1 from Kensan196948G/feature/changelog-features-managed-agents-poc |
 
 ## 9. 未解決の Codex 指摘
 
@@ -153,15 +133,7 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 ## 11. 再開ポイント（前回セッション未完了時）
 
-`state.json.execution` より:
-
-| 項目 | 値 |
-|---|---|
-| 前回停止 | 2026-04-18T00:18:47Z |
-| 前回要約 | v3.2.23 (PR #175) squash merge 完了 (4b6e22f)。cron-launcher.sh SIGTTOU 停止バグ修正。STABLE N=10 継続。 |
-| 現在フェーズ | Improvement |
-
-main ブランチで STABLE 継続中。open Issue なし。Monitor フェーズから再開し、GitHub Projects / Issues / CI の状態を確認して次のアクションを決定してください。
+*未取得 — state.json 未配置 or 進行中セッションなし。Monitor フェーズから新規開始する*
 
 ---
 
@@ -170,14 +142,16 @@ main ブランチで STABLE 継続中。open Issue なし。Monitor フェーズ
 - **コマンド定義**: `.claude/claudeos/commands/team-onboarding.md`
 - **データソース**:
   - `./CLAUDE.md`（運用規約）
-  - `./state.json`（存在 — goal/kpi/execution/frontier 等記録済み）
+  - `./state.json`（不在時は §1〜§4・§11 を「未取得」定型へ。`.gitignore` 対象のため通常不在）
   - `./README.md`
   - `.claude/claudeos/agents/**/*.md`（Agent 定義）
   - `.claude/claudeos/commands/*.md`（Command 定義）
-  - `git log --oneline -20`（直近コミット）
+  - `git log --oneline`（直近コミット）
+- **決定論再生成器**: `scripts/refresh-onboarding.js`（純粋関数 + `node --test`）
 
 ## 付録: Verify 連動自動更新
 
-STABLE 達成時に本ファイルを自動再生成するフックは **Issue #17** として起票済みです。
-実装完了後、`.claude/claudeos/hooks/hooks.json` の PostToolUse にフックが登録され、
-Verify ループで STABLE が成立するたびに本ファイルが最新化されます。
+STABLE 達成時に本ファイルを自動再生成するフックは **Issue #17** で実装済みです。
+`.claude/claudeos/hooks/hooks.json` の PostToolUse に `onboarding-refresh-on-stable` が登録され、
+Verify ループで STABLE が成立するたびに `scripts/refresh-onboarding.js` 相当の再生成が走り、
+本ファイルの揮発セクションが最新化されます（state.json 不在時は「未取得」へフォールバック）。
