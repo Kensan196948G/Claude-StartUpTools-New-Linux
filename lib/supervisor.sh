@@ -98,6 +98,69 @@ sup__crash_reason() {
   if (( th > 0 && cs >= th )); then printf 'crash-loop:short_sessions=%s' "$cs"; fi
 }
 
+# ------------------------------------------------------------
+# 残日数 throttling (release_deadline → daily_max/session_min 縮退)
+#   いずれも引数 in / 結果 out の純粋関数。deadline 不在/不正は throttle なし。
+#   設計原則:
+#     - 締切超過 (overdue) でも「自動 kill しない」。停止は既存 goal/blocked/cap に委譲。
+#     - 縮退は単調 (t30≥t14≥t7) かつ「増加させない」(min で原値を上限に取る)。
+#     - session_min は全 tier で必ず ≤300 (5h 厳守をループ設定に依らず構造担保)。
+# ------------------------------------------------------------
+
+# sup__days_remaining <deadline:YYYY-MM-DD> [today:YYYY-MM-DD]
+#   締切までの残日数 (整数, 過ぎていれば負)。deadline 空/null/不正形式なら無出力。
+sup__days_remaining() {
+  local deadline="$1" today="${2:-$(sup__today)}" de td
+  [[ -z "$deadline" || "$deadline" == "null" ]] && return 0
+  [[ "$deadline" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 0
+  de="$(date -d "$deadline" +%s 2>/dev/null)" || return 0
+  td="$(date -d "$today" +%s 2>/dev/null)" || return 0
+  printf '%s' $(( (de - td) / 86400 ))
+}
+
+# sup__throttle_tier <days_remaining>
+#   残31以上=normal / 残30..15=t30 / 残14..8=t14 / 残7..0=t7 / 負=overdue。
+#   空/非数 (deadline 未設定) は normal にフォールバック。
+sup__throttle_tier() {
+  local days="$1"
+  [[ "$days" =~ ^-?[0-9]+$ ]] || { printf 'normal'; return 0; }
+  if   (( days < 0 ));   then printf 'overdue'
+  elif (( days <= 7 ));  then printf 't7'
+  elif (( days <= 14 )); then printf 't14'
+  elif (( days <= 30 )); then printf 't30'
+  else                        printf 'normal'
+  fi
+}
+
+# sup__throttle_apply <tier> <daily_max_min> <session_min>
+#   tier に応じた "daily_max session_min" を出力 (両者とも縮退のみ・増加なし)。
+sup__throttle_apply() {
+  local tier="$1" daily="${2:-0}" sess="${3:-0}" dcap scap
+  [[ "$daily" =~ ^[0-9]+$ ]] || daily=0
+  [[ "$sess"  =~ ^[0-9]+$ ]] || sess=0
+  case "$tier" in
+    t30)        dcap=480; scap=300 ;;
+    t14)        dcap=360; scap=240 ;;
+    t7|overdue) dcap=180; scap=180 ;;
+    *)          dcap="$daily"; scap=300 ;;   # normal: daily_max は据え置き
+  esac
+  (( daily > 0 && daily < dcap )) && dcap="$daily"   # 原値より増やさない
+  (( sess  > 0 && sess  < scap )) && scap="$sess"
+  (( scap > 300 )) && scap=300                        # 5h 厳守 (session_min≤300)
+  printf '%s %s' "$dcap" "$scap"
+}
+
+# sup__throttle_goal_bias <tier>
+#   tier 別の /goal 方針バイアス (空=通常)。CLAUDE.md の残日数縮退規定に対応。
+sup__throttle_goal_bias() {
+  case "$1" in
+    t30)        printf 'improvement-reduce:verify-priority' ;;   # 残30: Improvement 縮退・Verify 優先
+    t14)        printf 'feature-freeze:bugfix-only' ;;            # 残14: 新機能禁止・バグ修正のみ
+    t7|overdue) printf 'release-prep-only' ;;                    # 残7: リリース準備のみ
+    *)          : ;;
+  esac
+}
+
 # sup__project_stop_reason <project_state_json> — 到達/異常を集約 (空=継続)
 sup__project_stop_reason() {
   local pstate="$1" ready mode sec blocked reason

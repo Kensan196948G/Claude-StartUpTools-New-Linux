@@ -34,6 +34,48 @@ teardown() { _bats_common_teardown; }
 @test "sup__crash_reason: 閾値到達" { run sup__crash_reason 3 3; [[ "$output" == crash-loop* ]]; }
 @test "sup__crash_reason: 閾値未満は空" { run sup__crash_reason 1 3; [ -z "$output" ]; [ "$status" -eq 0 ]; }
 
+# ---- 残日数 throttling ------------------------------------
+@test "sup__days_remaining: 締切まで 30 日" { run sup__days_remaining 2026-07-15 2026-06-15; [ "$output" = "30" ]; }
+@test "sup__days_remaining: 当日は 0" { run sup__days_remaining 2026-06-15 2026-06-15; [ "$output" = "0" ]; }
+@test "sup__days_remaining: 超過は負" { run sup__days_remaining 2026-06-14 2026-06-15; [ "$output" = "-1" ]; }
+@test "sup__days_remaining: deadline 空は無出力" { run sup__days_remaining "" 2026-06-15; [ -z "$output" ]; [ "$status" -eq 0 ]; }
+@test "sup__days_remaining: deadline null は無出力" { run sup__days_remaining null 2026-06-15; [ -z "$output" ]; }
+@test "sup__days_remaining: 不正形式は無出力" { run sup__days_remaining 2026/06/15 2026-06-15; [ -z "$output" ]; }
+
+@test "sup__throttle_tier: 31 → normal" { run sup__throttle_tier 31; [ "$output" = "normal" ]; }
+@test "sup__throttle_tier: 30 → t30" { run sup__throttle_tier 30; [ "$output" = "t30" ]; }
+@test "sup__throttle_tier: 15 → t30" { run sup__throttle_tier 15; [ "$output" = "t30" ]; }
+@test "sup__throttle_tier: 14 → t14" { run sup__throttle_tier 14; [ "$output" = "t14" ]; }
+@test "sup__throttle_tier: 8 → t14" { run sup__throttle_tier 8; [ "$output" = "t14" ]; }
+@test "sup__throttle_tier: 7 → t7" { run sup__throttle_tier 7; [ "$output" = "t7" ]; }
+@test "sup__throttle_tier: 0 → t7" { run sup__throttle_tier 0; [ "$output" = "t7" ]; }
+@test "sup__throttle_tier: -1 → overdue" { run sup__throttle_tier -1; [ "$output" = "overdue" ]; }
+@test "sup__throttle_tier: 空(deadline 無) → normal" { run sup__throttle_tier ""; [ "$output" = "normal" ]; }
+
+@test "sup__throttle_apply: normal は daily 据え置き・session≤300" {
+  run sup__throttle_apply normal 600 300; [ "$output" = "600 300" ]
+}
+@test "sup__throttle_apply: normal でも session>300 は 300 に丸め" {
+  run sup__throttle_apply normal 600 600; [ "$output" = "600 300" ]
+}
+@test "sup__throttle_apply: t30 縮退" { run sup__throttle_apply t30 600 300; [ "$output" = "480 300" ]; }
+@test "sup__throttle_apply: t14 縮退" { run sup__throttle_apply t14 600 300; [ "$output" = "360 240" ]; }
+@test "sup__throttle_apply: t7 縮退" { run sup__throttle_apply t7 600 300; [ "$output" = "180 180" ]; }
+@test "sup__throttle_apply: overdue は t7 と同等" { run sup__throttle_apply overdue 600 300; [ "$output" = "180 180" ]; }
+@test "sup__throttle_apply: 原値より小さい daily は増やさない" {
+  run sup__throttle_apply t30 120 60; [ "$output" = "120 60" ]
+}
+@test "sup__throttle_apply: 縮退は単調 (t30≥t14≥t7 の daily)" {
+  d30="$(sup__throttle_apply t30 600 300)"; d14="$(sup__throttle_apply t14 600 300)"; d7="$(sup__throttle_apply t7 600 300)"
+  [ "${d30%% *}" -ge "${d14%% *}" ]; [ "${d14%% *}" -ge "${d7%% *}" ]
+}
+
+@test "sup__throttle_goal_bias: normal は空" { run sup__throttle_goal_bias normal; [ -z "$output" ]; }
+@test "sup__throttle_goal_bias: t30 → verify 優先" { run sup__throttle_goal_bias t30; [ "$output" = "improvement-reduce:verify-priority" ]; }
+@test "sup__throttle_goal_bias: t14 → bugfix のみ" { run sup__throttle_goal_bias t14; [ "$output" = "feature-freeze:bugfix-only" ]; }
+@test "sup__throttle_goal_bias: t7 → リリース準備" { run sup__throttle_goal_bias t7; [ "$output" = "release-prep-only" ]; }
+@test "sup__throttle_goal_bias: overdue → リリース準備" { run sup__throttle_goal_bias overdue; [ "$output" = "release-prep-only" ]; }
+
 # ---- project state.json 読取判定 ---------------------------
 @test "sup__project_stop_reason: deploy.ready=true → goal-reached" {
   echo '{ "deploy": {"ready": true} }' > "$TEST_TEMP/p.json"
