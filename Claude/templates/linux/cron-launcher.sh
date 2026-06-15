@@ -317,6 +317,27 @@ if [[ -f "$STATE_FILE" ]]; then
   PROMPT_ARG="${RESUME_HEADER}${PROMPT_ARG}"
 fi
 
+# --- /goal 本文の自動注入 (PR-B / プラン欠落2) ---
+# goals/<goal_type>.md から `/goal "..."` ブロックを抽出し、プロンプト最先頭へ前置する。
+# /goal は ClaudeCode が起動直後に解釈するループ指令のため、RESUME_HEADER / START_PROMPT
+# より前に置く。抽出失敗（テンプレ不在等）は PROMPT_ARG を変えず START_PROMPT のみ運用へ降格。
+_CCSU_GOAL_EXTRACT="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/libexec/goal-extract.sh"
+if [[ -f "$_CCSU_GOAL_EXTRACT" ]]; then
+  # shellcheck source=/dev/null
+  source "$_CCSU_GOAL_EXTRACT"
+  if _GOAL_DIRECTIVE="$(goal_extract__build "$RESUME_GOAL_TYPE" "$CLAUDEOS_GOALS_DIR")" \
+       && [[ -n "$_GOAL_DIRECTIVE" ]]; then
+    PROMPT_ARG="${_GOAL_DIRECTIVE}
+
+${PROMPT_ARG}"
+    echo "🎯 [cron-launcher] /goal 注入: goal_type=${RESUME_GOAL_TYPE} dir=${CLAUDEOS_GOALS_DIR}" >> "$LOG_FILE"
+  else
+    echo "ℹ️  [cron-launcher] /goal 抽出なし — START_PROMPT のみで起動 (goal_type=${RESUME_GOAL_TYPE})" >> "$LOG_FILE"
+  fi
+else
+  echo "ℹ️  [cron-launcher] goal-extract.sh 不在 — /goal 注入 skip" >> "$LOG_FILE"
+fi
+
 # PROMPT_ARG をサイドカーファイルへ書き出す（tmux env var 継承バグ / 長大引数問題を回避）
 PROMPT_FILE="${CLAUDE_WRAPPER%.sh}.prompt"
 printf '%s' "$PROMPT_ARG" > "$PROMPT_FILE"
