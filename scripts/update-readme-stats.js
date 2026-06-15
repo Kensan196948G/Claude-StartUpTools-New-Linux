@@ -12,14 +12,37 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 
+/**
+ * CHANGELOG.md 先頭から「最新リリース版」の見出しを抽出する。
+ *
+ * Keep a Changelog 形式の見出し `## [x.y.z] - date` を想定し、
+ * 次を許容する:
+ *   - `v` プレフィックスの有無（`## [v1.2.3]` / `## [1.2.3]` 両対応）
+ *   - semver 後置詞（`-linux` / `-rc.1` / `+build.5` など）
+ *   - `[Unreleased]` 見出しはバージョン番号を持たないため自動スキップ
+ *
+ * @param {string} changelog CHANGELOG.md 全文
+ * @returns {string|null} 例 "4.0.0-linux"（`v` は除去）。見つからなければ null
+ */
+function parseLatestVersion(changelog) {
+  const m = changelog.match(/^## \[?v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\]?/m);
+  return m ? m[1] : null;
+}
+
+module.exports = { parseLatestVersion };
+
+// 直接実行されたときのみ README 書き換えを行う（require 時は副作用なし）
+if (require.main !== module) {
+  return;
+}
+
 // --- Read sources ---
 const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-const changelogMatch = changelog.match(/^## \[?(v[\d.]+)\]?/m);
-if (!changelogMatch) {
+const latestVersion = parseLatestVersion(changelog);
+if (!latestVersion) {
   console.error('CHANGELOG.md: latest version line not found');
   process.exit(1);
 }
-const latestVersion = changelogMatch[1];
 
 const agentsDir = path.join(root, '.claude', 'claudeos', 'agents');
 const agentCount = fs.readdirSync(agentsDir).filter(f => f.endsWith('.md')).length;
