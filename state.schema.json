@@ -59,6 +59,8 @@
         "auto_stop_threshold": { "type": "integer", "minimum": 1 },
         "graceful_shutdown": { "type": "boolean" },
         "last_session_summary": { "type": "string" },
+        "last_claude_session_id": { "type": ["string", "null"], "description": "Most recent `claude -p` stream-json session_id, used to --resume the next headless session (CLAUDEOS_HEADLESS=1)." },
+        "last_throttle_tier": { "type": ["string", "null"], "enum": ["normal", "t30", "t14", "t7", "overdue", null], "description": "Deadline-derived throttle tier applied last session (release_deadline countdown). Visualization only." },
         "last_stop_at": { "type": ["string", "null"], "format": "date-time" },
         "current_session_start_at": { "type": ["string", "null"], "format": "date-time" },
         "current_session_prs": {
