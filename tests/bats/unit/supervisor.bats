@@ -240,6 +240,35 @@ EOF
   [ "$(sup__get Demo restarts_today 0)" = "1" ]
 }
 
+# プラン検証項目5 忠実版: 「ledger に閾値超を事前投入」した状態で、当月既存累積に
+#   小さなセッション消費が積み増さって 95% を踏み越え credit-cap:stop する経路を検証。
+#   単発 100% ではなく「前月までの累積 + 小セッション = 閾値超」という現実的枯渇形。
+@test "sup__loop: 既存累積 ledger + 小セッションで 95% 超え credit-cap 停止 (月境界隔離)" {
+  export CCSU_SUP_TODAY=2026-06-16
+  # 事前投入: 当月(2026-06)に既存累積 90、別月(2026-05)に 500 (集計対象外であるべき)
+  mkdir -p "$(dirname "$CCSU_CREDITS_LEDGER")"
+  cat > "$CCSU_CREDITS_LEDGER" <<'JSONL'
+{"ts":"2026-05-20T10:00:00+00:00","project":"Demo","cost_usd":500,"tokens_in":0,"tokens_out":0}
+{"ts":"2026-06-05T10:00:00+00:00","project":"Demo","cost_usd":90,"tokens_in":0,"tokens_out":0}
+JSONL
+  # 当該セッションは僅か 8 (単体では 8% で無害) → 既存 90 と合算 98% で初めて閾値超
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+echo 8 > "$CLAUDEOS_SESSION_COST_FILE"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  echo '{ "deploy": {"ready": false}, "supervisor": {"credit_monthly_budget_usd": 100, "max_restarts_per_day": 100, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo 5
+  [ "$(sup__get Demo status '')" = "credit-cap" ]
+  [ "$(sup__get Demo restarts_today 0)" = "0" ]
+  # 当月のみ集計 (90 + 8 = 98)。別月 500 は混入しない
+  [ "$(sup__get Demo month_spent_usd 0)" = "98" ]
+  # セッション消費 8 が ledger 末尾へ追記されている (既存 2 行 + 1 = 3 行)
+  [ "$(wc -l < "$CCSU_CREDITS_LEDGER")" -eq 3 ]
+  [ "$(jq -rs '.[-1].cost_usd' "$CCSU_CREDITS_LEDGER")" = "8" ]
+}
+
 @test "sup__loop: 再起動ループ中に deploy.ready 反転で goal-reached (E2E)" {
   # cron-launcher stub: 2回目の呼び出しで project state.json の deploy.ready を true に
   cat > "$CCSU_SUP_CRON_LAUNCHER" <<EOF

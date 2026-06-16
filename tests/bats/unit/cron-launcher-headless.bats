@@ -156,6 +156,24 @@ _seed_state() {
   fi
 }
 
+# プラン検証項目6 忠実版: 「TUI 経路が PR-D 以降も従来どおり動く」ことの積極表明。
+#   tmux 有無で挙動が分岐し host 依存になるのを避けるため CLAUDEOS_TMUX=0 を強制し、
+#   tmux 無効フォールバック (従来の TTY なし claude 直起動) を決定論的に観測する。
+#   レガシー経路の指標 --dangerously-skip-permissions が付き、headless の stream-json は
+#   付かないことを表明する (段階移行の安全性: 退避経路が生きている)。
+@test "回帰: CLAUDEOS_HEADLESS=0 + tmux 無効は従来の skip-permissions 直起動へ退避する" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=0 CLAUDEOS_TMUX=0 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  # 従来 TUI 経路でも claude は確かに起動される (積極表明)
+  [ -f "$CLAUDE_ARGV" ]
+  run cat "$CLAUDE_ARGV"
+  # レガシー経路の指標: skip-permissions が付き、headless の stream-json は付かない
+  [[ "$output" == *"--dangerously-skip-permissions"* ]]
+  [[ "$output" != *"--output-format"* ]]
+  [[ "$output" != *"stream-json"* ]]
+}
+
 @test "PR-G: CLAUDEOS_HEADLESS 未設定の既定は headless パスを通る" {
   _seed_state ""
   # 既定反転 (${CLAUDEOS_HEADLESS:-1}) の表明: 未設定でも headless の stream-json argv が記録される。
