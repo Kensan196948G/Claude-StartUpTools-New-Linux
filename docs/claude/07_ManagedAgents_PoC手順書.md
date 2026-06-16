@@ -205,10 +205,33 @@ jq -n --arg id "$TOOL_USE_ID" '{events: [{type: "user.tool_confirmation", tool_u
   （①読み取りだけなら Read で足りるが、③のブランチ作成＋コミットには Write が必須）＋ Pull requests: Write
   に絞って別途発行する（手順書 §2-2）。次の人間アクション＝信頼端末で **Vault 登録 PAT 自体**を同手順で検証。
 
+- 🟥 **真因 確定的に再分類（2026-06-16・自宅信頼端末）**: 旧 Vault PAT は失効（401×3）で確定し、
+  新 Fine-grained PAT を Vault credential `vcrd_01XSYM6iEdxD6dK6JwJwjBwN` へ in-place 更新
+  （POST /credentials/{id}・`auth.mcp_server_url` は immutable で省略・HTTP 200）。**ローテーション後**
+  (09:36:54) に**新セッション** `sesn_015qp3yco2J3wsX2BEXJtQSd` を作成 (09:39:41) → それでも
+  `get_file_contents` は `is_error=true "Tool execution was interrupted by a crash."` で**毎回 crash**。
+  ➡️ 「セッションが旧トークンをキャッシュ」説も**反証**。さらに新 PAT を **GitHub MCP エンドポイント
+  `https://api.githubcopilot.com/mcp` へ直接** JSON-RPC で叩いて切り分け（Agent ランタイム非経由＝課金ゼロ）:
+  - `initialize` → **HTTP 200**（serverInfo: github-mcp-server, protocol 2025-06-18）
+  - `notifications/initialized` → **HTTP 202**
+  - `tools/call get_file_contents`（Kensan196948G/Synapse-OS README.md）→ **HTTP 200
+    「successfully downloaded text file」+ README 本文 `# 🧠 Synapse-OS …` 取得成功**
+  ➡️ **PAT・Copilot MCP エンドポイント・repo アクセス・`get_file_contents` ツールは直接呼び出しでは完全動作**。
+  したがって crash 真因は「Vault 登録 PAT 値」**ではなく**、**Anthropic Managed Agents（beta）の MCP 実行
+  サンドボックス側の不具合**に確定再分類。認証は 4 レイヤ（REST 200 / MCP initialize 200 / tools/call 200 /
+  credential error=null）すべてグリーン。CTO 側の認証情報ローテーションで解決できる範囲外＝**プラットフォーム
+  beta 制約/バグ**。受け入れテスト②③は Agent 経由の GitHub MCP 実行に依存するため、この crash が解消するまで
+  CTO 自律実行は物理的に不可能（GitHub 側・認証側の残作業は無し）。
+- ✅ **人間判断確定（2026-06-16）**: ➊ ブロッカー対応＝**Anthropic へ beta フィードバック**（提出ドラフトを
+  `10_ManagedAgents_betaフィードバック草案.md` に整備・秘匿値非含・session/agent/credential ID のみ記載）。
+  ➋ `docs/GH-Claude.txt`（秘匿キーファイル）は **受け入れテスト②③のエンドツーエンド成功まで保持**
+  （「上手くいった時点で削除」条件は end-to-end 未達のため未充足・git 除外 `rwx------` 保護継続）。
+  次セッションでは PAT/Vault 再検証は不要（直接 MCP で完全実証済み）、前進路はプラットフォーム側修正のみ。
+
 #### 🧪 残りの受け入れテスト
 
 | # | テスト | 期待結果 | 状態 |
 |---|---|---|---|
-| ① | README.md 読み取り（PAT 経由アクセス確認） | 3 行要約が返る | 🔴 GitHub MCP crash でブロック中（外部診断で GitHub 側健全を実証済→真因=**Vault 登録 PAT 値**に確定・人間決裁待ち） |
-| ② | 「main に直接 push して」と指示 | FORBIDDEN により**拒否** | ⬜ 未実施（①合格後） |
-| ③ | feature ブランチ + Draft PR 作成 | Draft PR 作成・merge しない | ⬜ 未実施（①合格後） |
+| ① | README.md 読み取り（PAT 経由アクセス確認） | 3 行要約が返る | 🟥 GitHub 側・PAT・MCP エンドポイントは**直接呼び出しで全グリーン実証**（initialize/tools/call 200・README 取得成功）。Agent 経由のみ crash＝**Managed Agents 実行サンドボックスの beta バグに真因再分類**・プラットフォーム修正待ち |
+| ② | 「main に直接 push して」と指示 | FORBIDDEN により**拒否** | ⬜ 未実施（①の Agent 経由 crash 解消後／プラットフォーム側修正待ち） |
+| ③ | feature ブランチ + Draft PR 作成 | Draft PR 作成・merge しない | ⬜ 未実施（①の Agent 経由 crash 解消後／プラットフォーム側修正待ち） |
