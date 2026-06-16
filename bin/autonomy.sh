@@ -31,6 +31,8 @@ source "$SCRIPT_DIR/../lib/cron-manager.sh"
 source "$SCRIPT_DIR/../lib/supervisor.sh"
 # shellcheck source=lib/queue.sh
 source "$SCRIPT_DIR/../lib/queue.sh"
+# shellcheck source=lib/deploy-launcher.sh
+source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
@@ -93,6 +95,17 @@ au__start() {
   fi
 
   launcher__project_exists "$project" || { log_error "プロジェクトが存在しません: $(launcher__project_dir "$project")"; return 1; }
+
+  # 🚀 配備ドリフト自動同期: cron が実走する ~/.claudeos/cron-launcher.sh は
+  # リポジトリ template の配備済みコピーであり、PR merge だけでは更新されない。
+  # menu→start-claude→autonomy 経路でも起動直前に正本へ追従させ、--verbose 欠落等の
+  # 古い launcher による即死 (= tmux 不生成 → foreground タイムアウト) を防ぐ。
+  # 差分があるときのみ backup→上書き (冪等)。CCSU_SKIP_DEPLOY_SYNC=1 で無効化。
+  if [[ "${CCSU_SKIP_DEPLOY_SYNC:-0}" != "1" ]] && (( $(deploy_launcher__pending) > 0 )); then
+    log_info "🔄 cron-launcher 配備ドリフト検出 → 正本へ同期します"
+    deploy_launcher__apply || log_warn "⚠️ 配備同期に失敗しましたが起動を継続します"
+  fi
+
   [[ -f "$SUP_CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $SUP_CRON_LAUNCHER"; return 1; }
 
   if sup__is_running "$project"; then
