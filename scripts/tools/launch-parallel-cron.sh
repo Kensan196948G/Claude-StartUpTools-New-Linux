@@ -15,11 +15,12 @@
 #   - roles 正本 Claude/templates/claudeos/roles/*.md を runtime へ冪等・非破壊配布
 #     (cron-launcher の hooks auto-repair と同型の canonical コピーを関数化)。
 #   - 各ロールを `claude -p "$(cat role)" --output-format stream-json
-#     --permission-mode dontAsk` で並走させ、出力は stream-json-tail.sh 共用 (PR-D)。
+#     --permission-mode bypassPermissions` で並走させ、出力は stream-json-tail.sh 共用 (PR-D)。
 #   - 純粋関数 + source ガードで bats から実 claude 非起動のまま検証可能。
 #
 # 安全: SSH/リモート配布なし・ローカル限定。二重起動は PID ロックで防止。
-#       --dangerously-skip-permissions は付与しない (headless では dontAsk で十分)。
+#       --dangerously-skip-permissions フラグ形式は付与しない (bypassPermissions で代替)。
+#       dontAsk は settings.json allow リスト外の tool を自動拒否するため headless 不可。
 # ============================================================
 
 set -euo pipefail
@@ -120,7 +121,7 @@ lp__resolve_role_file() {
 # lp__launch_role <project> <role> <role_file> <log_file> <duration_sec>
 #   1 ロールを headless 起動 (背景)。argv は PR-D cron-launcher と同型:
 #     timeout --foreground <sec>s claude -p "$(cat role)"
-#       --output-format stream-json --permission-mode dontAsk
+#       --output-format stream-json --permission-mode bypassPermissions
 #   出力は stream-json-tail.sh 経由で可読ログ + session_id/cost 捕捉 (共用)。
 #   起動した背景プロセスの PID を stdout へ。
 # ------------------------------------------------------------
@@ -143,14 +144,14 @@ lp__launch_role() {
       cd "$proj_dir" || exit 1
       export SJT_SESSION_ID_FILE="$sid_file" SJT_COST_FILE="$cost_file"
       timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
-        --output-format stream-json --verbose --permission-mode dontAsk 2>&1 \
+        --output-format stream-json --verbose --permission-mode bypassPermissions 2>&1 \
         | bash "$LP_SJT"
     ) > "$log" 2>&1 &
   else
     (
       cd "$proj_dir" || exit 1
       timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
-        --output-format stream-json --verbose --permission-mode dontAsk
+        --output-format stream-json --verbose --permission-mode bypassPermissions
     ) > "$log" 2>&1 &
   fi
   printf '%s\n' "$!"
@@ -222,7 +223,7 @@ lp__main() {
     while IFS= read -r _tok; do [[ -n "$_tok" ]] && _auth_disp+="$_tok "; done < <(lp__auth_prefix)
     local idx
     for idx in "${!roles[@]}"; do
-      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose --permission-mode dontAsk &\n' \
+      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose --permission-mode bypassPermissions &\n' \
         "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "$((duration_min * 60))" "$_auth_disp" "${files[$idx]}"
     done
     printf '  %s⏳ ロール間隔: %ss (--stagger)%s\n' "$C_YELLOW" "$stagger" "$C_RESET"

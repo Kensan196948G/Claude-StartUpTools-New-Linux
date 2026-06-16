@@ -5,8 +5,9 @@
 # 検証観点 (プラン欠落5 c):
 #   [単体] lp__role_to_file / lp__parse_roles / lp__distribute_roles の純粋関数
 #   [統合] 偽 claude/timeout で課金なし実走:
-#     - CTO/QA 双方が `-p` + `--output-format stream-json` + `--permission-mode dontAsk` で起動
-#     - --dangerously-skip-permissions は付かない (headless では不要)
+#     - CTO/QA 双方が `-p` + `--output-format stream-json` + `--permission-mode bypassPermissions` で起動
+#       (dontAsk は settings.json allow 外の tool を自動拒否するため headless 不可。2026-06-16 実証)
+#     - --dangerously-skip-permissions フラグ形式は付かない (bypassPermissions で代替)
 #     - stagger=0 で起動順序 (cto → qa) が保たれる
 #     - role 不在 (--roles に未知ロール) で明示エラー + 非ゼロ終了
 #   [dry-run] 実起動なしで計画のみ出力
@@ -111,7 +112,7 @@ _all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
 # =========================================================
 # 統合: 並列起動 argv 検証
 # =========================================================
-@test "並列: CTO/QA 双方が -p / stream-json / dontAsk で起動し skip-permissions は付かない" {
+@test "並列: CTO/QA 双方が -p / stream-json / bypassPermissions で起動し skip-permissions は付かない" {
   run bash "$LP" Demo --roles cto,qa --stagger 0 --duration 1
   [ "$status" -eq 0 ]
   # 2 ロール分の argv ファイルが生成される
@@ -123,7 +124,8 @@ _all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
   [[ "$output" == *"--output-format"* ]]
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
-  [[ "$output" == *"dontAsk"* ]]
+  [[ "$output" == *"bypassPermissions"* ]]
+  [[ "$output" != *"dontAsk"* ]]
   # --print + stream-json は --verbose 必須 (claude CLI 契約・ライブスモーク回帰)
   [[ "$output" == *"--verbose"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]
