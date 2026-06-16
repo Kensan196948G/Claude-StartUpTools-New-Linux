@@ -24,9 +24,20 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/config-loader.sh"
 # shellcheck source=lib/cron-manager.sh
 source "$SCRIPT_DIR/../lib/cron-manager.sh"
+# shellcheck source=lib/deploy-launcher.sh
+source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
 CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
 DEFAULT_DURATION=300
+
+# --- 自動配備: launcher 起動の直前にテンプレ → ~/.claudeos を同期 (恒久ドリフト対策) ---
+#   cron が実走するのは配備済み実行体のため、PR merge 後の runtime ズレをここで吸収する。
+#   CLAUDEOS_AUTO_DEPLOY=0 で無効化 (bats はこれで実 ~/.claudeos を汚さない)。
+#   差分が無ければ no-op、戻り値は常に 0 (配備失敗で起動自体は止めない)。
+_cs__auto_deploy() {
+  [[ "${CLAUDEOS_AUTO_DEPLOY:-1}" == "1" ]] || return 0
+  deploy_launcher__apply || true
+}
 
 # --- プロジェクト一覧 (config_project_list: dir かつ Git リポジトリのみ) ---
 cs__project_list() { config_project_list; }
@@ -83,6 +94,7 @@ cs__remove() {
 cs__launch_bg() {
   local project="$1" duration="${2:-$DEFAULT_DURATION}" safe logp runner
   [[ -n "$project" ]] || { log_error "BG 起動: project が空です"; return 1; }
+  _cs__auto_deploy
   [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
   safe="$(ccsu_safe_name "$project")"
   mkdir -p "$CRON_LOGS_DIR"
@@ -181,6 +193,7 @@ cs__run_now() {
   [[ -n "$project" ]] || { log_error "run-now: --project は必須"; return 1; }
   [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
   if (( fg )); then
+    _cs__auto_deploy
     log_info "今すぐ実行 (フォアグラウンド): $project (duration=${duration}m)"
     bash "$CRON_LAUNCHER" "$project" "$duration"
   else

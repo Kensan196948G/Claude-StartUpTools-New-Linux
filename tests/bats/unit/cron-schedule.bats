@@ -25,6 +25,7 @@ JSON
   export CCSU_CRON_LAUNCHER="$TEST_TEMP/cron-launcher.sh"
   export CCSU_CRON_LOGS_DIR="$TEST_TEMP/logs"
   export CCSU_SUP_DIR="$TEST_TEMP/sup"   # supervised 判定が実 ~/.claudeos を見ないように
+  export CLAUDEOS_AUTO_DEPLOY=0          # 自動配備を無効化 (実 ~/.claudeos を汚さない)
   SCRIPT="$REPO_ROOT/bin/cron-schedule.sh"
 }
 teardown() { _bats_common_teardown; }
