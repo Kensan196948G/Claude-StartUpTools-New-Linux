@@ -146,18 +146,47 @@ main() {
   fi
 
   if [[ "$mode" == "foreground" ]]; then
-    # tmux セッションが起動するまで最大30秒待機
-    local i
-    for ((i = 0; i < 60; i++)); do
-      "$TMUX_BIN" has-session -t "$session" 2>/dev/null && break
-      sleep 0.5
-    done
-    if "$TMUX_BIN" has-session -t "$session" 2>/dev/null; then
-      log_info "🔗 セッションへ接続: $session"
-      "$TMUX_BIN" attach-session -t "$session"
+    if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
+      # headless 既定: cron-launcher は `claude -p` を回すだけで対話 tmux セッション
+      # (claudeos-<safe>) を生成しない。よって tmux を待つのは構造的に空振りする。
+      # 代わりに supervisor が setsid 経由で書き出す per-project ログを追尾し、
+      # foreground らしい「進捗が見える」体験を提供する (Ctrl-C で tail 終了・
+      # supervisor は独立プロセスのため停止しない)。
+      local _suplog="${_sup_state%.json}.log"
+      log_info "🚀 headless モードで起動中: $project"
+      log_info "  💡 対話 tmux セッションは生成されません (headless: claude -p)"
+      log_info "  📡 supervisor は独立プロセスで継続します (Ctrl-C で追尾終了・supervisor は停止しません)"
+      log_info "  📊 状態: bash bin/autonomy.sh status $project"
+      log_info "  🛑 停止: bash bin/autonomy.sh stop $project    (--now で即停止)"
+      # ログが書き出されるまで軽く待機 (最大 ~5 秒)
+      local _t
+      for ((_t = 0; _t < 25; _t++)); do
+        [[ -f "$_suplog" ]] && break
+        sleep 0.2
+      done
+      if [[ -f "$_suplog" ]]; then
+        log_info "  📜 ログ追尾: $_suplog"
+        printf "\n"
+        tail -n 20 -f "$_suplog"
+      else
+        log_warn "  ⏳ ログ未生成: $_suplog"
+        log_info "  🔍 確認: bash bin/autonomy.sh status $project"
+      fi
     else
-      log_warn "⏱️  tmux セッション起動待ちタイムアウト: $session"
-      log_info "  🔍 確認: tmux ls  /  bash bin/autonomy.sh status $project"
+      # TUI 経路 (CLAUDEOS_HEADLESS=0): 従来どおり tmux セッションへ attach。
+      # tmux セッションが起動するまで最大30秒待機。
+      local i
+      for ((i = 0; i < 60; i++)); do
+        "$TMUX_BIN" has-session -t "$session" 2>/dev/null && break
+        sleep 0.5
+      done
+      if "$TMUX_BIN" has-session -t "$session" 2>/dev/null; then
+        log_info "🔗 セッションへ接続: $session"
+        "$TMUX_BIN" attach-session -t "$session"
+      else
+        log_warn "⏱️  tmux セッション起動待ちタイムアウト: $session"
+        log_info "  🔍 確認: tmux ls  /  bash bin/autonomy.sh status $project"
+      fi
     fi
   fi
 }

@@ -33,6 +33,9 @@ exit 0
 '
   make_stub_bin tmux 'echo "$@" >> "$TEST_TEMP/tmux.log"; exit 0'
   export CCSU_TMUX_BIN=tmux
+  # spawn 経路テストでは配備同期を無効化 (実 ~/.claudeos へ書き込まない)。
+  # 同期経路は専用テスト (下記) で CLAUDEOS_HOME をサンドボックス化して検証する。
+  export CCSU_SKIP_DEPLOY_SYNC=1
   SCRIPT="$REPO_ROOT/bin/autonomy.sh"
 }
 teardown() { _bats_common_teardown; }
@@ -112,6 +115,31 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"SKIP"* ]]
   [[ "$output" == *"Demo:cron登録あり"* ]]
+}
+
+@test "start: 配備ドリフトを起動前に自動同期する (CCSU_SKIP_DEPLOY_SYNC 無効時)" {
+  # CLAUDEOS_HOME をサンドボックス化し、template と差分のある古い launcher を置く。
+  local fakehome="$TEST_TEMP/claudeos-home"; mkdir -p "$fakehome"
+  printf '#!/usr/bin/env bash\n# STALE LAUNCHER (drift)\nexit 0\n' > "$fakehome/cron-launcher.sh"
+  run env CLAUDEOS_HOME="$fakehome" CCSU_SKIP_DEPLOY_SYNC=0 \
+    bash "$SCRIPT" start Demo
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"配備ドリフト検出"* ]]
+  # template の正本へ追従していること (STALE マーカーが消える)
+  ! grep -q "STALE LAUNCHER" "$fakehome/cron-launcher.sh"
+  # backup が作成されている
+  ls "$fakehome"/cron-launcher.sh.bak-* >/dev/null 2>&1
+}
+
+@test "start: 配備差分なしなら同期ログを出さない (冪等 no-op)" {
+  # template をそのままコピー = 差分ゼロ
+  local fakehome="$TEST_TEMP/claudeos-home2"; mkdir -p "$fakehome"
+  cp "$REPO_ROOT/Claude/templates/linux/cron-launcher.sh" "$fakehome/cron-launcher.sh"
+  cp "$REPO_ROOT/Claude/templates/linux/report-and-mail.py" "$fakehome/report-and-mail.py"
+  run env CLAUDEOS_HOME="$fakehome" CCSU_SKIP_DEPLOY_SYNC=0 \
+    bash "$SCRIPT" start Demo
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"配備ドリフト検出"* ]]
 }
 
 @test "start: 存在しないプロジェクトでエラー" {
