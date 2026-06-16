@@ -204,6 +204,30 @@ EOF
   [ "$(cat "$TEST_TEMP/sessmin")" = "300" ]
 }
 
+# ---- ループ統合: set -e 下の即死回帰 (throttle read EOF) ----------
+# 背景: 本番の supervisor は autonomy.sh __run (set -euo pipefail) 下で sup__loop を回す。
+#   throttle 行 `read -r < <(sup__throttle_apply ...)` は出力が改行終端でないと EOF 直撃で
+#   read が status 1 を返し、set -e が supervisor を「🚀 start」直後・cron-launcher 到達前に
+#   即死させていた (json は running のまま凍結)。bats の `run` は set -e を伝播しないため
+#   既存の結合テストでは検出できなかった。本テストは明示的に set -euo pipefail 下で実走する。
+@test "sup__loop: set -euo pipefail 下でも throttle read で即死しない (PR-C 回帰)" {
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+echo "\$2" > "$TEST_TEMP/sessmin"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  export CCSU_SUP_TODAY=2026-06-15
+  echo '{ "deploy": {"ready": false}, "supervisor": {"max_restarts_per_day": 1, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  # 本番 __run と同一環境 (set -euo pipefail) で sup__loop を実走させる。
+  run bash -c 'set -euo pipefail; source "$1"; sup__loop Demo' _ "$REPO_ROOT/lib/supervisor.sh"
+  [ "$status" -eq 0 ]
+  # cron-launcher まで到達した決定的証拠 (read で死んでいれば sessmin は生成されない)
+  [ -f "$TEST_TEMP/sessmin" ]
+  # 終端処理に到達し terminal status が書かれている (running 凍結でない)
+  [ "$(sup__get Demo status '')" = "daily-cap" ]
+}
+
 # ---- ループ統合: クレジット上限ガード配線 (PR-E) ----------
 # 観測戦略: cron-launcher stub が当該セッションの cost を $CLAUDEOS_SESSION_COST_FILE へ
 #   書き出す (= cron-launcher が SJT_COST_FILE を鏡写しする挙動の代替)。supervisor が

@@ -148,7 +148,9 @@ sup__throttle_apply() {
   (( daily > 0 && daily < dcap )) && dcap="$daily"   # 原値より増やさない
   (( sess  > 0 && sess  < scap )) && scap="$sess"
   (( scap > 300 )) && scap=300                        # 5h 厳守 (session_min≤300)
-  printf '%s %s' "$dcap" "$scap"
+  # 末尾改行は必須: 呼び出し側は `read -r < <(...)` で受ける。改行が無いと read は
+  # EOF 直撃で終了ステータス 1 を返し、set -e 下の sup__loop を即死させる。
+  printf '%s %s\n' "$dcap" "$scap"
 }
 
 # sup__throttle_goal_bias <tier>
@@ -298,7 +300,9 @@ sup__loop() {
     local _days _tier _dcap _scap
     _days="$(sup__days_remaining "$deadline")"
     _tier="$(sup__throttle_tier "$_days")"
-    read -r _dcap _scap < <(sup__throttle_apply "$_tier" "$daily_max_base" "$session_min_base")
+    # `|| true`: read は入力が改行終端でない (EOF 直撃) と代入成功でも status 1 を返す。
+    # set -e 下で supervisor を落とさないための防御 (sup__throttle_apply は改行付き出力)。
+    read -r _dcap _scap < <(sup__throttle_apply "$_tier" "$daily_max_base" "$session_min_base") || true
     daily_max="$_dcap"; session_min="$_scap"
     if [[ "$_tier" != "$SUP_THROTTLE_TIER" ]]; then
       SUP_THROTTLE_TIER="$_tier"
