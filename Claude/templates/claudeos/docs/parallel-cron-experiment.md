@@ -75,7 +75,7 @@ PROJECT=$1
 # CTO セッション（バックグラウンド）
 claude -p "$(cat ~/.claudeos/roles/cto-build.md)" \
   --project "$PROJECT" \
-  --output-format stream-json \
+  --output-format stream-json --verbose \
   > ~/.claudeos/logs/${PROJECT}-cto.log 2>&1 &
 CTO_PID=$!
 
@@ -85,7 +85,7 @@ sleep 300
 # QA セッション（バックグラウンド）
 claude -p "$(cat ~/.claudeos/roles/qa-monitor.md)" \
   --project "$PROJECT" \
-  --output-format stream-json \
+  --output-format stream-json --verbose \
   > ~/.claudeos/logs/${PROJECT}-qa.log 2>&1 &
 QA_PID=$!
 

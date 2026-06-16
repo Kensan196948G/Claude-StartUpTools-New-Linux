@@ -365,6 +365,9 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   #   - --permission-mode dontAsk でツール毎プロンプトを除去 (auto mode 相当)。
   #   - --dangerously-skip-permissions は付けない (headless では不要・多経路化回避)。
   #   - --allowedTools は settings/auto-mode へ委譲 (本スクリプトに権限ロジックを持ち込まない)。
+  #   - --verbose は claude CLI 契約上の必須: `--print` + `--output-format stream-json` は
+  #     --verbose が無いと "When using --print, --output-format=stream-json requires --verbose"
+  #     で即 exit 1。逐次 JSON イベント列を出すために必要 (ライブスモークで検出)。
   #   - 出力は stream-json-tail.sh へ pipe し、session_id (resume用) と cost (PR-E ledger用)
   #     をファイル捕捉しつつ人間可読ログを LOG_FILE へ流す。
   _CCSU_SJT="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/libexec/stream-json-tail.sh"
@@ -373,7 +376,7 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   export SJT_SESSION_ID_FILE SJT_COST_FILE
 
   _HL_CMD=( timeout --foreground "${DURATION_SEC}s" claude -p "$PROMPT_ARG"
-            --output-format stream-json --permission-mode dontAsk )
+            --output-format stream-json --verbose --permission-mode dontAsk )
   # proactive output style があれば append (env 指定時のみ・既定は未使用)
   if [[ -n "${CLAUDEOS_PROACTIVE_STYLE_FILE:-}" ]] && [[ -f "$CLAUDEOS_PROACTIVE_STYLE_FILE" ]]; then
     _HL_CMD+=( --append-system-prompt-file "$CLAUDEOS_PROACTIVE_STYLE_FILE" )

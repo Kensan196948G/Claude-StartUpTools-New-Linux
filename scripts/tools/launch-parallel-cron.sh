@@ -124,14 +124,14 @@ lp__launch_role() {
       cd "$proj_dir" || exit 1
       export SJT_SESSION_ID_FILE="$sid_file" SJT_COST_FILE="$cost_file"
       timeout --foreground "${dur_sec}s" claude -p "$prompt" \
-        --output-format stream-json --permission-mode dontAsk 2>&1 \
+        --output-format stream-json --verbose --permission-mode dontAsk 2>&1 \
         | bash "$LP_SJT"
     ) > "$log" 2>&1 &
   else
     (
       cd "$proj_dir" || exit 1
       timeout --foreground "${dur_sec}s" claude -p "$prompt" \
-        --output-format stream-json --permission-mode dontAsk
+        --output-format stream-json --verbose --permission-mode dontAsk
     ) > "$log" 2>&1 &
   fi
   printf '%s\n' "$!"
@@ -199,7 +199,7 @@ lp__main() {
   if (( dry_run )); then
     local idx
     for idx in "${!roles[@]}"; do
-      printf '  %s▶ [%d] %s%s : claude -p "$(cat %s)" --output-format stream-json --permission-mode dontAsk &\n' \
+      printf '  %s▶ [%d] %s%s : claude -p "$(cat %s)" --output-format stream-json --verbose --permission-mode dontAsk &\n' \
         "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "${files[$idx]}"
     done
     printf '  %s⏳ ロール間隔: %ss (--stagger)%s\n' "$C_YELLOW" "$stagger" "$C_RESET"
