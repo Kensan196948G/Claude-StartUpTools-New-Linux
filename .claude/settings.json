@@ -142,7 +142,11 @@
     ],
     "deny": [
       "Bash(git push --force*)",
-      "Bash(git push -f *)"
+      "Bash(git push -f *)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f)",
+      "Bash(git push * main)",
+      "Bash(git push * master)"
     ]
   },
   "autoMode": {
