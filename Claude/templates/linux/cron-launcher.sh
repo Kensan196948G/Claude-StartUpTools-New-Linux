@@ -337,10 +337,14 @@ if [[ -f "$_CCSU_GOAL_EXTRACT" ]]; then
   source "$_CCSU_GOAL_EXTRACT"
   if _GOAL_DIRECTIVE="$(goal_extract__build "$RESUME_GOAL_TYPE" "$CLAUDEOS_GOALS_DIR")" \
        && [[ -n "$_GOAL_DIRECTIVE" ]]; then
+    # START_PROMPT 等に元から埋め込まれた canonical /goal ブロックを除去し、
+    # 注入する権威 /goal と二重化させない。二重 /goal は claude -p が貪欲パースで
+    # 条件を 4000 字超へ膨張させ (got N>4000) → 0 ターン即終了 crash-loop を招く。
+    PROMPT_ARG="$(printf '%s' "$PROMPT_ARG" | goal_extract__strip_block)"
     PROMPT_ARG="${_GOAL_DIRECTIVE}
 
 ${PROMPT_ARG}"
-    echo "🎯 [cron-launcher] /goal 注入: goal_type=${RESUME_GOAL_TYPE} dir=${CLAUDEOS_GOALS_DIR}" >> "$LOG_FILE"
+    echo "🎯 [cron-launcher] /goal 注入 (埋込 /goal 除去・二重化防止): goal_type=${RESUME_GOAL_TYPE} dir=${CLAUDEOS_GOALS_DIR}" >> "$LOG_FILE"
   else
     echo "ℹ️  [cron-launcher] /goal 抽出なし — START_PROMPT のみで起動 (goal_type=${RESUME_GOAL_TYPE})" >> "$LOG_FILE"
   fi

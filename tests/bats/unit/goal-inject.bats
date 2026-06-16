@@ -56,6 +56,36 @@ second
   [ "$status" -ne 0 ]
 }
 
+# ---- strip_block ----------------------------------------
+@test "goal_extract__strip_block: 埋込 /goal ブロックを除去し他本文は保持" {
+  run bash -c 'printf '\''前文\n/goal "\n■ Goal\n動かす\n"\n後文\n'\'' | { source "'"$REPO_ROOT"'/libexec/goal-extract.sh"; goal_extract__strip_block; }'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"前文"* ]]
+  [[ "$output" == *"後文"* ]]
+  [[ "$output" != *"/goal"* ]]
+  [[ "$output" != *"■ Goal"* ]]
+  [[ "$output" != *"動かす"* ]]
+}
+@test "goal_extract__strip_block: /goal 不在なら本文を不変で通す" {
+  run bash -c 'printf '\''A\nB\nC\n'\'' | { source "'"$REPO_ROOT"'/libexec/goal-extract.sh"; goal_extract__strip_block; }'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"A"* ]] && [[ "$output" == *"B"* ]] && [[ "$output" == *"C"* ]]
+}
+@test "goal_extract__strip_block: 閉じ \" 欠落は非破壊 (何も消さない)" {
+  # 開き /goal はあるが閉じ単独 " 行が無い → 本文を一切失わない
+  run bash -c 'printf '\''/goal "\n未完\n本文\n'\'' | { source "'"$REPO_ROOT"'/libexec/goal-extract.sh"; goal_extract__strip_block; }'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"未完"* ]]
+  [[ "$output" == *"本文"* ]]
+}
+@test "goal_extract__strip_block: 先頭 /goal のみ除去し 2 個目は残す" {
+  run bash -c 'printf '\''/goal "\nfirst\n"\nmid\n/goal "\nsecond\n"\n'\'' | { source "'"$REPO_ROOT"'/libexec/goal-extract.sh"; goal_extract__strip_block; }'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"first"* ]]
+  [[ "$output" == *"mid"* ]]
+  [[ "$output" == *"second"* ]]
+}
+
 # ---- ensure_stop ----------------------------------------
 @test "goal_extract__ensure_stop: stop 欠落時は閉じ \" 直前へ補う" {
   run bash -c 'printf '\''/goal "\n動く\n"\n'\'' | { source "'"$REPO_ROOT"'/libexec/goal-extract.sh"; goal_extract__ensure_stop 15; }'
