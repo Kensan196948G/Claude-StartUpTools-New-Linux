@@ -124,6 +124,22 @@ au__start() {
     fi
   fi
 
+  # goal/blocked 事前チェック: state.json に停止条件がある場合は --force 必須
+  # (deploy.ready=true 等の場合 supervisor が step3 で即終了するループを防ぐ)
+  local _pstate; _pstate="$(launcher__project_dir "$project")/state.json"
+  if [[ -f "$_pstate" ]]; then
+    local _pre_reason; _pre_reason="$(sup__project_stop_reason "$_pstate")"
+    if [[ -n "$_pre_reason" ]]; then
+      if (( force )); then
+        log_warn "⚠️ $project は停止条件を満たしています ($_pre_reason). --force のため続行"
+      else
+        log_error "⛔ $project は停止条件を満たしています: $_pre_reason"
+        log_info  "  --force で上書き起動するか、状態を解消してください"
+        return 1
+      fi
+    fi
+  fi
+
   local runner logf
   mkdir -p "$SUP_DIR"; chmod 700 "$SUP_DIR" 2>/dev/null || true
   rm -f "$(sup__stop_file "$project")"   # 起動前に古い stop フラグをクリア (fresh start)
@@ -172,6 +188,14 @@ au__start_all() {
     if au__has_cron "$p" && (( force == 0 )); then
       skips+=("$p:cron登録あり(--forceで許可)")
       continue
+    fi
+    if (( force == 0 )); then
+      local _aps; _aps="$(launcher__project_dir "$p")/state.json"
+      if [[ -f "$_aps" ]]; then
+        local _ar; _ar="$(sup__project_stop_reason "$_aps")"
+        # goal-reached のみ SKIP (完了済み)。blocked は CTO が対応できるよう priority 維持。
+        [[ "$_ar" == goal-reached:* ]] && { skips+=("$p:$_ar"); continue; }
+      fi
     fi
     projects+=("$p")
   done < <(au__project_list "$include_self" | queue__order "$qbase" "$(sup__today)" "$(date +%s)")

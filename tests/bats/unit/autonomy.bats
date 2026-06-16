@@ -63,6 +63,32 @@ EOF
   grep -q "__run Demo" "$TEST_TEMP/setsid.log"
 }
 
+@test "start: deploy.ready=true は spawn 拒否 (goal-reached guard)" {
+  printf '{"deploy":{"ready":true}}\n' > "$TEST_TEMP/projects/Demo/state.json"
+  run bash "$SCRIPT" start Demo
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"停止条件を満たしています"* ]]
+  [[ "$output" == *"goal-reached:deploy.ready"* ]]
+  [ ! -f "$TEST_TEMP/setsid.log" ]
+}
+
+@test "start --force: deploy.ready=true でも警告して spawn する" {
+  printf '{"deploy":{"ready":true}}\n' > "$TEST_TEMP/projects/Demo/state.json"
+  run bash "$SCRIPT" start Demo --force
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"停止条件を満たしています"* ]]
+  [[ "$output" == *"--force"* ]]
+  grep -q "__run Demo" "$TEST_TEMP/setsid.log"
+}
+
+@test "start --all: deploy.ready=true プロジェクトを SKIP に分類" {
+  printf '{"deploy":{"ready":true}}\n' > "$TEST_TEMP/projects/Demo/state.json"
+  run bash "$SCRIPT" start --all --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SKIP"* ]]
+  [[ "$output" == *"Demo:goal-reached:deploy.ready"* ]]
+}
+
 @test "start: --force で cron ありでも続行" {
   _seed_cron Demo
   run bash "$SCRIPT" start Demo --force
