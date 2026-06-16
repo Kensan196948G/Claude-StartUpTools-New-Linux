@@ -122,5 +122,43 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Bash(git *)", "Bash(gh *)", "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
+      "Bash(yarn *)", "Bash(bats *)", "Bash(shellcheck *)", "Bash(jq *)",
+      "Bash(bash *)", "Bash(sh *)", "Bash(cat *)", "Bash(ls *)", "Bash(find *)",
+      "Bash(grep *)", "Bash(sed *)", "Bash(awk *)", "Bash(mkdir *)", "Bash(cp *)",
+      "Bash(mv *)", "Bash(rm *)", "Bash(chmod *)", "Bash(touch *)", "Bash(head *)",
+      "Bash(tail *)", "Bash(wc *)", "Bash(sort *)", "Bash(uniq *)", "Bash(diff *)",
+      "Bash(kill *)", "Bash(ps *)", "Bash(timeout *)", "Bash(sleep *)",
+      "Bash(flock *)", "Bash(date *)", "Bash(printf *)", "Bash(env *)",
+      "Bash(which *)", "Bash(curl *)", "Bash(coderabbit *)", "Bash(docker *)",
+      "Bash(python3 *)", "Bash(pip3 *)", "Bash(make *)", "Bash(tar *)",
+      "Bash(tee *)", "Bash(stat *)",
+      "mcp__github__*", "mcp__memory__*",
+      "WebFetch(*)", "WebSearch(*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f)",
+      "Bash(git push * main)",
+      "Bash(git push * master)"
+    ]
+  },
+  "autoMode": {
+    "hard_deny": [
+      "$defaults",
+      "main または master ブランチへの直接 git push を実行しない (常に PR 経由でマージする)",
+      "main または master ブランチへの force push を実行しない",
+      "git commit に --no-verify を付与して pre-commit hook をスキップしない",
+      "main ブランチを origin/main に対して git reset --hard で書き換えない",
+      "ユーザーの明示的指示なく ~/.claude/CLAUDE.md または .claude/settings.json または .claude/hooks/ を編集しない",
+      "CI checks が failing 状態の pull request を merge しない",
+      ".claude/ ディレクトリまたは .claude/settings.json を削除しない"
+    ]
   }
 }

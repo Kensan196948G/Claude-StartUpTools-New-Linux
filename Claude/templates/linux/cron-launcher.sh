@@ -366,10 +366,11 @@ printf '%s' "$PROMPT_ARG" > "$PROMPT_FILE"
 if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   # ---- headless 経路: claude -p --output-format stream-json ----
   # 設計:
-  #   - --permission-mode bypassPermissions で全ツールを許可（dontAsk は "聞かずに拒否" のため不可）。
-  #     dontAsk は settings.json allow リストにない tool を自動拒否し、Bash/MCP が全滅する。
-  #     bypassPermissions = --dangerously-skip-permissions の named 版 (ライブスモーク 2026-06-16 で実証)。
-  #   - --allowedTools は settings/auto-mode へ委譲 (本スクリプトに権限ロジックを持ち込まない)。
+  #   - 権限モード: 既定 auto → settings.json permissions.allow/deny + autoMode.hard_deny を尊重。
+  #     CLAUDEOS_HEADLESS_SKIP_PERMS=1 で --dangerously-skip-permissions へ opt-in (緊急脱出用)。
+  #     ※ bypassPermissions/dangerously-skip は autoMode.hard_deny を完全バイパスするため既定は使わない。
+  #     ※ dontAsk は settings.json allow リストにない tool を自動拒否し Bash/MCP が全滅する → 使用不可。
+  #   - --allowedTools は settings.json permissions.allow に委譲 (本スクリプトに権限ロジックを持ち込まない)。
   #   - --verbose は claude CLI 契約上の必須: `--print` + `--output-format stream-json` は
   #     --verbose が無いと "When using --print, --output-format=stream-json requires --verbose"
   #     で即 exit 1。逐次 JSON イベント列を出すために必要 (ライブスモークで検出)。
@@ -391,8 +392,14 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   if [[ "${CLAUDEOS_HEADLESS_AUTH:-subscription}" != "api-key" ]]; then
     _HL_AUTH=( env -u ANTHROPIC_API_KEY )
   fi
+  # 権限モード: auto (既定) / dangerously-skip-permissions (CLAUDEOS_HEADLESS_SKIP_PERMS=1 opt-in)
+  if [[ "${CLAUDEOS_HEADLESS_SKIP_PERMS:-0}" == "1" ]]; then
+    _HL_PERM=( --dangerously-skip-permissions )
+  else
+    _HL_PERM=( --permission-mode auto )
+  fi
   _HL_CMD=( timeout --foreground "${DURATION_SEC}s" "${_HL_AUTH[@]}" claude -p "$PROMPT_ARG"
-            --output-format stream-json --verbose --permission-mode bypassPermissions )
+            --output-format stream-json --verbose "${_HL_PERM[@]}" )
   # proactive output style があれば append (env 指定時のみ・既定は未使用)
   if [[ -n "${CLAUDEOS_PROACTIVE_STYLE_FILE:-}" ]] && [[ -f "$CLAUDEOS_PROACTIVE_STYLE_FILE" ]]; then
     _HL_CMD+=( --append-system-prompt-file "$CLAUDEOS_PROACTIVE_STYLE_FILE" )
