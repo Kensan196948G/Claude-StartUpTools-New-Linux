@@ -30,6 +30,11 @@ teardown() { _bats_common_teardown; }
 @test "sup__abnormal_reason: security>0" { run sup__abnormal_reason 2 0; [ "$output" = "blocked:security_critical=2" ]; }
 @test "sup__abnormal_reason: blocked>0" { run sup__abnormal_reason 0 3; [ "$output" = "blocked:blocked_issues=3" ]; }
 @test "sup__abnormal_reason: 正常は空" { run sup__abnormal_reason 0 0; [ -z "$output" ]; }
+@test "sup__abnormal_reason: 第3引数省略は halt 既定(blocked で停止・後方互換)" { run sup__abnormal_reason 0 3; [ "$output" = "blocked:blocked_issues=3" ]; }
+@test "sup__abnormal_reason: halt_on_blocked=true は blocked で停止" { run sup__abnormal_reason 0 3 true; [ "$output" = "blocked:blocked_issues=3" ]; }
+@test "sup__abnormal_reason: halt_on_blocked=false は blocked を無視し継続(空)" { run sup__abnormal_reason 0 3 false; [ -z "$output" ]; [ "$status" -eq 0 ]; }
+@test "sup__abnormal_reason: halt_on_blocked=false でも security は常に停止(fail-safe)" { run sup__abnormal_reason 2 3 false; [ "$output" = "blocked:security_critical=2" ]; }
+@test "sup__abnormal_reason: 未知の値は halt 扱い(false 厳密一致のみ opt-out)" { run sup__abnormal_reason 0 3 yes; [ "$output" = "blocked:blocked_issues=3" ]; }
 @test "sup__cap_reason: minutes 到達" { run sup__cap_reason 600 600 0 6; [[ "$output" == daily-cap:minutes* ]]; }
 @test "sup__cap_reason: restarts 到達" { run sup__cap_reason 0 600 6 6; [[ "$output" == daily-cap:restarts* ]]; }
 @test "sup__cap_reason: 上限内は空" { run sup__cap_reason 10 600 1 6; [ -z "$output" ]; [ "$status" -eq 0 ]; }
@@ -99,6 +104,22 @@ teardown() { _bats_common_teardown; }
   echo '{ "deploy": {"ready": false}, "blocked_issues": [101,102] }' > "$TEST_TEMP/p.json"
   run sup__project_stop_reason "$TEST_TEMP/p.json"
   [ "$output" = "blocked:blocked_issues=2" ]
+}
+@test "sup__project_stop_reason: supervisor.halt_on_blocked=false は blocked を無視し継続(空)" {
+  echo '{ "deploy": {"ready": false}, "blocked_issues": [101,102], "supervisor": {"halt_on_blocked": false} }' > "$TEST_TEMP/p.json"
+  run sup__project_stop_reason "$TEST_TEMP/p.json"
+  [ -z "$output" ]
+  [ "$status" -eq 0 ]
+}
+@test "sup__project_stop_reason: halt_on_blocked=false でも security_critical は停止(fail-safe)" {
+  echo '{ "deploy": {"ready": false}, "blocked_issues": [101], "kpi": {"security_critical": 1}, "supervisor": {"halt_on_blocked": false} }' > "$TEST_TEMP/p.json"
+  run sup__project_stop_reason "$TEST_TEMP/p.json"
+  [ "$output" = "blocked:security_critical=1" ]
+}
+@test "sup__project_stop_reason: halt_on_blocked=true 明示も blocked で停止" {
+  echo '{ "deploy": {"ready": false}, "blocked_issues": [101], "supervisor": {"halt_on_blocked": true} }' > "$TEST_TEMP/p.json"
+  run sup__project_stop_reason "$TEST_TEMP/p.json"
+  [ "$output" = "blocked:blocked_issues=1" ]
 }
 
 # ---- 状態 I/O ----------------------------------------------
