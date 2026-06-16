@@ -88,7 +88,21 @@ _seed_state() {
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
   [[ "$output" == *"dontAsk"* ]]
+  [[ "$output" == *"--verbose"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]
+}
+
+@test "headless: --print + stream-json には --verbose が必須 (claude CLI 契約)" {
+  # ライブスモーク回帰: --verbose 欠落だと実 claude が
+  #   "When using --print, --output-format=stream-json requires --verbose"
+  # で exit 1 する。偽 claude は契約を検証しないため、ここで argv 表明として固定する。
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  run cat "$CLAUDE_ARGV"
+  [[ "$output" == *"--verbose"* ]]
+  [[ "$output" == *"--output-format"* ]]
+  [[ "$output" == *"stream-json"* ]]
 }
 
 @test "headless: timeout 秒が DURATION 連動 (1分 → 60s)" {

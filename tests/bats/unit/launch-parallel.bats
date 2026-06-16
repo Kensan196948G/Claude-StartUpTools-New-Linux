@@ -119,6 +119,8 @@ _all_argv() { cat "$CLAUDE_ARGV_DIR"/argv-* 2>/dev/null; }
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
   [[ "$output" == *"dontAsk"* ]]
+  # --print + stream-json は --verbose 必須 (claude CLI 契約・ライブスモーク回帰)
+  [[ "$output" == *"--verbose"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]
 }
 
