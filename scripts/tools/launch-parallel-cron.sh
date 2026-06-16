@@ -60,6 +60,20 @@ lp__role_to_file() {
 }
 
 # ------------------------------------------------------------
+# lp__auth_prefix — headless 課金経路の env プレフィックスを 1 トークン/行で出力。
+#   subscription (既定): `env -u ANTHROPIC_API_KEY` を返し、購読プランの OAuth
+#     ($300 月次 Agent SDK 枠) を使う。API platform の $150 固定上限ゲート
+#     (400 "specified API usage limits") を回避する (cron-launcher と同型)。
+#   api-key:            空 (ANTHROPIC_API_KEY をそのまま使い API platform 課金へ退避)。
+#   CLAUDEOS_HEADLESS_AUTH で切替。env -u は claude のサブプロセス環境からのみ鍵を外す。
+# ------------------------------------------------------------
+lp__auth_prefix() {
+  if [[ "${CLAUDEOS_HEADLESS_AUTH:-subscription}" != "api-key" ]]; then
+    printf '%s\n' env -u ANTHROPIC_API_KEY
+  fi
+}
+
+# ------------------------------------------------------------
 # lp__parse_roles <csv> — "cto, qa" → 1 行 1 ロール (空要素/前後空白除去)
 # ------------------------------------------------------------
 lp__parse_roles() {
@@ -119,18 +133,23 @@ lp__launch_role() {
   cost_file="$LP_RUNTIME_DIR/sessions/${project}-${role}.cost"
   mkdir -p "$LP_RUNTIME_DIR/sessions"
 
+  # headless 課金経路の env プレフィックス (空配列= api-key 系統そのまま)
+  local -a auth=()
+  local _tok
+  while IFS= read -r _tok; do [[ -n "$_tok" ]] && auth+=("$_tok"); done < <(lp__auth_prefix)
+
   if [[ -f "$LP_SJT" ]]; then
     (
       cd "$proj_dir" || exit 1
       export SJT_SESSION_ID_FILE="$sid_file" SJT_COST_FILE="$cost_file"
-      timeout --foreground "${dur_sec}s" claude -p "$prompt" \
+      timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
         --output-format stream-json --verbose --permission-mode dontAsk 2>&1 \
         | bash "$LP_SJT"
     ) > "$log" 2>&1 &
   else
     (
       cd "$proj_dir" || exit 1
-      timeout --foreground "${dur_sec}s" claude -p "$prompt" \
+      timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
         --output-format stream-json --verbose --permission-mode dontAsk
     ) > "$log" 2>&1 &
   fi
@@ -197,10 +216,14 @@ lp__main() {
 
   # dry-run: 計画のみ (実起動なし)
   if (( dry_run )); then
+    # 実起動と同じ課金プレフィックスを表示 (env -u ... or 空) — 表示と実体を一致させる
+    local _auth_disp=""
+    local _tok
+    while IFS= read -r _tok; do [[ -n "$_tok" ]] && _auth_disp+="$_tok "; done < <(lp__auth_prefix)
     local idx
     for idx in "${!roles[@]}"; do
-      printf '  %s▶ [%d] %s%s : claude -p "$(cat %s)" --output-format stream-json --verbose --permission-mode dontAsk &\n' \
-        "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "${files[$idx]}"
+      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose --permission-mode dontAsk &\n' \
+        "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "$((duration_min * 60))" "$_auth_disp" "${files[$idx]}"
     done
     printf '  %s⏳ ロール間隔: %ss (--stagger)%s\n' "$C_YELLOW" "$stagger" "$C_RESET"
     printf '%s✅ DRY-RUN 完了 — セットアップに問題はありません (実起動なし)%s\n' "$C_GREEN" "$C_RESET"

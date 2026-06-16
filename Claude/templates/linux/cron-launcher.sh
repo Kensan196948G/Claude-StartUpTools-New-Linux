@@ -370,12 +370,23 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   #     で即 exit 1。逐次 JSON イベント列を出すために必要 (ライブスモークで検出)。
   #   - 出力は stream-json-tail.sh へ pipe し、session_id (resume用) と cost (PR-E ledger用)
   #     をファイル捕捉しつつ人間可読ログを LOG_FILE へ流す。
+  #   - 課金経路 (CLAUDEOS_HEADLESS_AUTH):
+  #       subscription (既定) → claude 直前で `env -u ANTHROPIC_API_KEY` し、購読プランの
+  #         OAuth ($300 月次 Agent SDK 枠) を使う。API platform の $150 固定上限ゲート
+  #         (400 "specified API usage limits") を回避する (ライブスモークで実証)。
+  #       api-key            → ANTHROPIC_API_KEY をそのまま使い API platform 課金へ退避。
+  #     env -u は claude のサブプロセス環境からのみ鍵を外し、本プロセスや他経路へ影響しない。
   _CCSU_SJT="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/libexec/stream-json-tail.sh"
   SJT_SESSION_ID_FILE="$SESSIONS_DIR/${SESSION_ID}.claude-session"
   SJT_COST_FILE="$SESSIONS_DIR/${SESSION_ID}.cost"
   export SJT_SESSION_ID_FILE SJT_COST_FILE
 
-  _HL_CMD=( timeout --foreground "${DURATION_SEC}s" claude -p "$PROMPT_ARG"
+  # headless 課金経路の env プレフィックス (空配列= api-key 系統そのまま)
+  _HL_AUTH=()
+  if [[ "${CLAUDEOS_HEADLESS_AUTH:-subscription}" != "api-key" ]]; then
+    _HL_AUTH=( env -u ANTHROPIC_API_KEY )
+  fi
+  _HL_CMD=( timeout --foreground "${DURATION_SEC}s" "${_HL_AUTH[@]}" claude -p "$PROMPT_ARG"
             --output-format stream-json --verbose --permission-mode dontAsk )
   # proactive output style があれば append (env 指定時のみ・既定は未使用)
   if [[ -n "${CLAUDEOS_PROACTIVE_STYLE_FILE:-}" ]] && [[ -f "$CLAUDEOS_PROACTIVE_STYLE_FILE" ]]; then

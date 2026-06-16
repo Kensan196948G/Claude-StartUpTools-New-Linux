@@ -40,10 +40,13 @@ setup() {
   mkdir -p "$PROJECT_DIR/.claude"
 
   # 偽 claude: argv を PID 別ファイルへ記録 + 固定 stream-json を stdout へ
+  #   加えて ANTHROPIC_API_KEY の「存在のみ」を env-* ファイルへ記録する (値は書かない)。
   CLAUDE_ARGV_DIR="$TEST_TEMP/claude-argv"; mkdir -p "$CLAUDE_ARGV_DIR"
+  CLAUDE_ENV_DIR="$TEST_TEMP/claude-env"; mkdir -p "$CLAUDE_ENV_DIR"
   cat > "$STUB_BIN/claude" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$@" > "$CLAUDE_ARGV_DIR/argv-\$\$"
+if [[ -n "\${ANTHROPIC_API_KEY+x}" ]]; then printf 'PRESENT\n'; else printf 'ABSENT\n'; fi > "$CLAUDE_ENV_DIR/env-\$\$"
 cat <<'JSON'
 {"type":"system","subtype":"init","session_id":"sess-par-xyz","model":"claude-opus-4-8"}
 {"type":"result","subtype":"success","total_cost_usd":0.10,"num_turns":1,"session_id":"sess-par-xyz"}
@@ -64,6 +67,8 @@ teardown() { _bats_common_teardown; }
 
 # 全 argv ファイルを連結して返す
 _all_argv() { cat "$CLAUDE_ARGV_DIR"/argv-* 2>/dev/null; }
+# 全 env 記録ファイルを連結して返す (各ロールの ANTHROPIC_API_KEY 存在/不在)
+_all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
 
 # =========================================================
 # 単体: 純粋関数
@@ -143,6 +148,40 @@ _all_argv() { cat "$CLAUDE_ARGV_DIR"/argv-* 2>/dev/null; }
   # 起動前に弾くため claude は呼ばれない
   run bash -c 'ls "'"$CLAUDE_ARGV_DIR"'"/argv-* 2>/dev/null | wc -l'
   [ "$output" -eq 0 ]
+}
+
+# =========================================================
+# 統合: headless 課金経路 (CLAUDEOS_HEADLESS_AUTH)
+# =========================================================
+@test "billing: 既定 (subscription) は両ロールの claude 環境から鍵を外す" {
+  run env ANTHROPIC_API_KEY=dummy-key-xxxx \
+    bash "$LP" Demo --roles cto,qa --stagger 0 --duration 1
+  [ "$status" -eq 0 ]
+  run _all_env
+  # 2 ロールとも ABSENT、PRESENT は 1 件も無い
+  [[ "$output" != *"PRESENT"* ]]
+  [[ "$output" == *"ABSENT"* ]]
+}
+
+@test "billing: api-key 指定は両ロールが ANTHROPIC_API_KEY を保持する" {
+  run env CLAUDEOS_HEADLESS_AUTH=api-key ANTHROPIC_API_KEY=dummy-key-xxxx \
+    bash "$LP" Demo --roles cto,qa --stagger 0 --duration 1
+  [ "$status" -eq 0 ]
+  run _all_env
+  [[ "$output" != *"ABSENT"* ]]
+  [[ "$output" == *"PRESENT"* ]]
+}
+
+@test "billing/dry-run: subscription は env -u プレフィックスを表示する" {
+  run env ANTHROPIC_API_KEY=dummy-key-xxxx bash "$LP" Demo --roles cto --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"env -u ANTHROPIC_API_KEY"* ]]
+}
+
+@test "billing/dry-run: api-key は env -u プレフィックスを表示しない" {
+  run env CLAUDEOS_HEADLESS_AUTH=api-key bash "$LP" Demo --roles cto --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ANTHROPIC_API_KEY"* ]]
 }
 
 # =========================================================
