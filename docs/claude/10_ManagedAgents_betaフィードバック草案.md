@@ -2,7 +2,8 @@
 
 提出先: Anthropic Managed Agents (beta) フィードバック窓口（Console / support）
 作成: 2026-06-16 / 起票判断: 👤 人間（外部サービスへの送信は人間最終決断）
-ステータス: 📝 草案（提出待ち）
+ステータス: 📨 提出済み（2026-06-16 / support.claude.com 技術的な問題・エラー経由 / Support 会話ID 215474722418070）
+提出経路: support.claude.com → Send us a message → 技術的な問題/エラー → Product Support（人間）へエスカレーション依頼済み。英語レポート（本ファイル「English report」節）を会話へ貼付。正式 case 番号はメール返信で受領予定。
 
 このファイルは PoC 手順書 `07_ManagedAgents_PoC手順書.md` §6-3 の診断結果を、Anthropic へ
 そのまま送れる形に整えた提出ドラフトです。**秘匿値（PAT・API key・Vault token）は一切含めず**、
@@ -97,7 +98,8 @@ credential, scopes, repository, endpoint, and network on our side.
 
 ## 🔁 提出後の運用（社内）
 
-- 提出したら本ファイル冒頭ステータスを `📝 草案` → `📨 提出済み (日付 / ticket #)` に更新。
+- ✅ 2026-06-16 提出済み。Support 会話ID `215474722418070`。正式 case 番号はメール返信で受領後に追記する。
+- ⏳ 次アクション: Anthropic Product Support からのメール返信（case 番号 / 調査結果 / ETA）を待つ。返信到着が受け入れテスト②③再開のトリガー。
 - 受け入れテスト②③は Agent 経由 GitHub MCP に依存するため、**修正回答が来るまで PoC は保留**。
 - `docs/GH-Claude.txt`（秘匿キーファイル）は②③エンドツーエンド成功まで保持（人間判断・2026-06-16）。
 - 次セッションでは PAT/Vault の再検証は不要（直接 MCP で完全実証済み）。前進路はプラットフォーム側修正のみ。
