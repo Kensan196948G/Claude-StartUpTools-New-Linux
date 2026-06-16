@@ -42,6 +42,32 @@ goal_extract__block() {
 }
 
 # ------------------------------------------------------------
+# goal_extract__strip_block   (本文を stdin で受ける)
+#   最初の `/goal "` 行 〜 対応する閉じ `"` 行のブロックを丸ごと除去して出力。
+#   用途: START_PROMPT 等に元から埋め込まれた canonical `/goal` を、別途注入する
+#         権威 `/goal` ディレクティブと二重化させないため除去する。
+#         claude -p は複数行 `/goal "..."` を貪欲にパースし、2 個目の `/goal` や
+#         後続本文まで条件へ取り込んで 4000 字制限を超過 (got N>4000) → 0 ターン
+#         即終了の crash-loop を起こす。注入 `/goal` を唯一にすることで防ぐ。
+#   設計: 行バッファし「開き `/goal "` と対応する閉じ `"` 行が両方揃った時のみ」除去。
+#         閉じ `"` 欠落時は何も消さない (非破壊フォールバック)。block/ensure_stop と
+#         同じ「閉じは単独 `"` 行」規約を踏襲。単一行 `/goal "..."` は対象外 (テンプレは複数行)。
+# ------------------------------------------------------------
+goal_extract__strip_block() {
+  awk '
+    { lines[NR]=$0 }
+    !open_nr && /\/goal[[:space:]]*"/ { open_nr=NR; next }
+    open_nr && !close_nr && NR>open_nr && /^[[:space:]]*"[[:space:]]*$/ { close_nr=NR }
+    END {
+      for (i=1;i<=NR;i++) {
+        if (open_nr && close_nr && i>=open_nr && i<=close_nr) continue
+        print lines[i]
+      }
+    }
+  '
+}
+
+# ------------------------------------------------------------
 # goal_extract__ensure_stop <max_turns>   (本文を stdin で受ける)
 #   `stop after` を含まなければ、閉じ `"` 行の直前へ
 #   `- or stop after <N> turns` を挿入して出力。
