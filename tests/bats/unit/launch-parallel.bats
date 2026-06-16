@@ -112,7 +112,7 @@ _all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
 # =========================================================
 # 統合: 並列起動 argv 検証
 # =========================================================
-@test "並列: CTO/QA 双方が -p / stream-json / bypassPermissions で起動し skip-permissions は付かない" {
+@test "並列: CTO/QA 双方が -p / stream-json / permission-mode auto で起動し skip-permissions は付かない" {
   run bash "$LP" Demo --roles cto,qa --stagger 0 --duration 1
   [ "$status" -eq 0 ]
   # 2 ロール分の argv ファイルが生成される
@@ -124,7 +124,8 @@ _all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
   [[ "$output" == *"--output-format"* ]]
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
-  [[ "$output" == *"bypassPermissions"* ]]
+  [[ "$output" == *"auto"* ]]
+  [[ "$output" != *"bypassPermissions"* ]]
   [[ "$output" != *"dontAsk"* ]]
   # --print + stream-json は --verbose 必須 (claude CLI 契約・ライブスモーク回帰)
   [[ "$output" == *"--verbose"* ]]

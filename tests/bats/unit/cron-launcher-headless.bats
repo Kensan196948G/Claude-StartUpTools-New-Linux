@@ -82,7 +82,7 @@ _seed_state() {
 # =========================================================
 # 統合: headless 起動の argv 検証
 # =========================================================
-@test "headless: claude -p / stream-json / bypassPermissions が付く (dontAsk は不可)" {
+@test "headless: claude -p / stream-json / permission-mode auto が付く (bypassPermissions・dontAsk は不可)" {
   _seed_state ""   # resume なし
   run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
   [ "$status" -eq 0 ]
@@ -92,10 +92,20 @@ _seed_state() {
   [[ "$output" == *"--output-format"* ]]
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
-  [[ "$output" == *"bypassPermissions"* ]]
+  [[ "$output" == *"auto"* ]]
   [[ "$output" == *"--verbose"* ]]
   [[ "$output" != *"dontAsk"* ]]
+  [[ "$output" != *"bypassPermissions"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]
+}
+
+@test "headless: CLAUDEOS_HEADLESS_SKIP_PERMS=1 で --dangerously-skip-permissions が付く" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_HEADLESS_SKIP_PERMS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  run cat "$CLAUDE_ARGV"
+  [[ "$output" == *"--dangerously-skip-permissions"* ]]
+  [[ "$output" != *"--permission-mode"* ]]
 }
 
 @test "headless: --print + stream-json には --verbose が必須 (claude CLI 契約)" {

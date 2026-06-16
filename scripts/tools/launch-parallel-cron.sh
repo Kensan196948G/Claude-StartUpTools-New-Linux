@@ -139,19 +139,27 @@ lp__launch_role() {
   local _tok
   while IFS= read -r _tok; do [[ -n "$_tok" ]] && auth+=("$_tok"); done < <(lp__auth_prefix)
 
+  # 権限モード: auto (既定) / dangerously-skip-permissions (CLAUDEOS_HEADLESS_SKIP_PERMS=1 opt-in)
+  local -a perm=()
+  if [[ "${CLAUDEOS_HEADLESS_SKIP_PERMS:-0}" == "1" ]]; then
+    perm=( --dangerously-skip-permissions )
+  else
+    perm=( --permission-mode auto )
+  fi
+
   if [[ -f "$LP_SJT" ]]; then
     (
       cd "$proj_dir" || exit 1
       export SJT_SESSION_ID_FILE="$sid_file" SJT_COST_FILE="$cost_file"
       timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
-        --output-format stream-json --verbose --permission-mode bypassPermissions 2>&1 \
+        --output-format stream-json --verbose "${perm[@]}" 2>&1 \
         | bash "$LP_SJT"
     ) > "$log" 2>&1 &
   else
     (
       cd "$proj_dir" || exit 1
       timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
-        --output-format stream-json --verbose --permission-mode bypassPermissions
+        --output-format stream-json --verbose "${perm[@]}"
     ) > "$log" 2>&1 &
   fi
   printf '%s\n' "$!"
@@ -221,10 +229,13 @@ lp__main() {
     local _auth_disp=""
     local _tok
     while IFS= read -r _tok; do [[ -n "$_tok" ]] && _auth_disp+="$_tok "; done < <(lp__auth_prefix)
+    # 実起動と同じ権限モードを表示
+    local _perm_disp="--permission-mode auto"
+    [[ "${CLAUDEOS_HEADLESS_SKIP_PERMS:-0}" == "1" ]] && _perm_disp="--dangerously-skip-permissions"
     local idx
     for idx in "${!roles[@]}"; do
-      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose --permission-mode bypassPermissions &\n' \
-        "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "$((duration_min * 60))" "$_auth_disp" "${files[$idx]}"
+      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose %s &\n' \
+        "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "$((duration_min * 60))" "$_auth_disp" "${files[$idx]}" "$_perm_disp"
     done
     printf '  %s⏳ ロール間隔: %ss (--stagger)%s\n' "$C_YELLOW" "$stagger" "$C_RESET"
     printf '%s✅ DRY-RUN 完了 — セットアップに問題はありません (実起動なし)%s\n' "$C_GREEN" "$C_RESET"
