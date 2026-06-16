@@ -42,10 +42,14 @@ setup() {
   cp "$SJT" "$CANON_LIBEXEC/stream-json-tail.sh"
 
   # 偽 claude: 各 argv を 1 行ずつ記録 + 固定 stream-json を stdout へ
+  #   加えて ANTHROPIC_API_KEY の「存在のみ」を CLAUDE_ENV_KEY へ記録する (値は書かない)。
+  #   subscription 経路では env -u で鍵が外れ UNSET、api-key 経路では SET になる想定。
   CLAUDE_ARGV="$TEST_TEMP/claude-argv"
+  CLAUDE_ENV_KEY="$TEST_TEMP/claude-env-key"
   cat > "$STUB_BIN/claude" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$@" > "$CLAUDE_ARGV"
+if [[ -n "\${ANTHROPIC_API_KEY+x}" ]]; then printf 'SET\n'; else printf 'UNSET\n'; fi > "$CLAUDE_ENV_KEY"
 cat <<'JSON'
 {"type":"system","subtype":"init","session_id":"sess-headless-xyz","model":"claude-opus-4-8"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"作業中"}]}}
@@ -163,6 +167,55 @@ _seed_state() {
   [[ "$output" == *"--output-format"* ]]
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]
+}
+
+# =========================================================
+# 統合: headless 課金経路 (CLAUDEOS_HEADLESS_AUTH)
+#   subscription (既定): env -u ANTHROPIC_API_KEY で購読 OAuth ($300 枠) へ。
+#   api-key:            鍵を保持し API platform ($150 固定上限) へ退避。
+# =========================================================
+@test "billing: 既定 (subscription) は claude 環境から ANTHROPIC_API_KEY を外す" {
+  _seed_state ""
+  # 実環境に鍵が在る状況を模す: 外れたことが観測できるよう SET 状態で起動する。
+  run env CLAUDEOS_HEADLESS=1 ANTHROPIC_API_KEY=dummy-key-xxxx bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ -f "$CLAUDE_ENV_KEY" ]
+  [ "$(cat "$CLAUDE_ENV_KEY")" = "UNSET" ]
+}
+
+@test "billing: subscription 明示指定でも鍵を外す" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_HEADLESS_AUTH=subscription \
+    ANTHROPIC_API_KEY=dummy-key-xxxx bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ "$(cat "$CLAUDE_ENV_KEY")" = "UNSET" ]
+}
+
+@test "billing: api-key 指定は ANTHROPIC_API_KEY を保持する (退避経路)" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_HEADLESS_AUTH=api-key \
+    ANTHROPIC_API_KEY=dummy-key-xxxx bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ "$(cat "$CLAUDE_ENV_KEY")" = "SET" ]
+}
+
+@test "billing: subscription では timeout argv に env -u プレフィックスが入る" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=1 ANTHROPIC_API_KEY=dummy-key-xxxx bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  run cat "$TIMEOUT_ARGV"
+  [[ "$output" == *"env"* ]]
+  [[ "$output" == *"-u"* ]]
+  [[ "$output" == *"ANTHROPIC_API_KEY"* ]]
+}
+
+@test "billing: api-key では timeout argv に env -u プレフィックスが入らない" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_HEADLESS_AUTH=api-key \
+    ANTHROPIC_API_KEY=dummy-key-xxxx bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  run cat "$TIMEOUT_ARGV"
+  [[ "$output" != *"ANTHROPIC_API_KEY"* ]]
 }
 
 # =========================================================
