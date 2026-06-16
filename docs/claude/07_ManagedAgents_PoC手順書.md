@@ -189,9 +189,11 @@ jq -n --arg id "$TOOL_USE_ID" '{events: [{type: "user.tool_confirmation", tool_u
 - 🎯 **残る唯一の未検証要素 = Vault 登録 PAT の値そのもの**（失効 / スコープ不足 / 対象 repo
   アクセス権欠如）。status code を伴わない crash は認証拒否で MCP handshake が落ちる兆候と整合。
 - 🔑 **検証手順（👤 人間決裁・秘匿操作）**: 信頼できる端末で PAT を `read -rs` 変数へ置き、
-  `curl -sI -H "Authorization: Bearer $GH_PAT" https://api.github.com/user`（HTTP 200 + `x-oauth-scopes`
-  に `repo`／`github-...-expiration` が未来日）、`/repos/Kensan196948G/Synapse-OS`（200）、
-  `/repos/.../contents/README.md`（200）を確認。401=失効、404/403=スコープ/権限不足。
+  ① `curl -sI -H "Authorization: Bearer $GH_PAT" https://api.github.com/user`（HTTP 200・`github-...-expiration`
+  が未来日）、② `/repos/Kensan196948G/Synapse-OS`（200）、③ `/repos/.../contents/README.md`（200）を確認。
+  401=失効、404/403=対象 repo 未選択またはスコープ/権限不足。**合否は ②③ の endpoint 結果（200 か否か）で判定する**。
+  ⚠️ `x-oauth-scopes` ヘッダは **classic PAT 専用**で、§2-2 の Fine-grained PAT では**空で返る**ため
+  スコープ判定の根拠にしない（`x-accepted-github-permissions` が参考になる場合あり）。
   不合格なら新 PAT を発行し Vault credential を再登録（Secrets=人間決裁）。
 
 - ✅ **診断実測（2026-06-16・遠隔/職場端末・選択肢i 診断のみ）**: 職場で発行した別 PAT
@@ -199,7 +201,8 @@ jq -n --arg id "$TOOL_USE_ID" '{events: [{type: "user.tool_confirmation", tool_u
   を確認。「有効な PAT なら Synapse-OS README は読める」を実証し、GitHub 側・repo・スコープ・
   ネットワークの健全性を確定。➡️ **crash 真因は「Vault 登録済み PAT の値」に一本化確定**
   （残容疑＝失効／スコープ不足／タイプミス）。診断 PAT は broad classic（`admin:*`/`repo` 等）の
-  ため Vault には登録せず削除。本番投入 PAT は Fine-grained・単一 repo・Contents Read（③で +PR Write）
+  ため Vault には登録せず削除。本番投入 PAT は Fine-grained・単一 repo・**Contents: Read/Write**
+  （①読み取りだけなら Read で足りるが、③のブランチ作成＋コミットには Write が必須）＋ Pull requests: Write
   に絞って別途発行する（手順書 §2-2）。次の人間アクション＝信頼端末で **Vault 登録 PAT 自体**を同手順で検証。
 
 #### 🧪 残りの受け入れテスト
