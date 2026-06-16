@@ -4,8 +4,9 @@
 #
 # 検証観点 (プラン欠落4 c):
 #   [統合] CLAUDEOS_HEADLESS=1 で cron-launcher.sh を実走 (偽 claude/timeout で課金なし):
-#     - claude argv に -p / --output-format stream-json / --permission-mode dontAsk が付く
-#     - --dangerously-skip-permissions は付かない (headless では不要・多経路化回避)
+#     - claude argv に -p / --output-format stream-json / --permission-mode bypassPermissions が付く
+#       (dontAsk は allow 未登録 tool を自動拒否するため不可。2026-06-16 ライブスモーク実証)
+#     - --dangerously-skip-permissions フラグ形式は付かない (bypassPermissions で代替)
 #     - timeout 秒が DURATION 連動 (DURATION_MIN=1 → 60s)
 #     - resume id 有無で --resume が切替わる
 #     - 捕捉 session_id が state.execution.last_claude_session_id へ往復保存される
@@ -81,7 +82,7 @@ _seed_state() {
 # =========================================================
 # 統合: headless 起動の argv 検証
 # =========================================================
-@test "headless: claude -p / stream-json / dontAsk が付き skip-permissions は付かない" {
+@test "headless: claude -p / stream-json / bypassPermissions が付く (dontAsk は不可)" {
   _seed_state ""   # resume なし
   run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
   [ "$status" -eq 0 ]
@@ -91,8 +92,9 @@ _seed_state() {
   [[ "$output" == *"--output-format"* ]]
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
-  [[ "$output" == *"dontAsk"* ]]
+  [[ "$output" == *"bypassPermissions"* ]]
   [[ "$output" == *"--verbose"* ]]
+  [[ "$output" != *"dontAsk"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]
 }
 
