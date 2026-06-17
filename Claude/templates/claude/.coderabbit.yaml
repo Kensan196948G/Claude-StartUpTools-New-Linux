@@ -48,10 +48,9 @@ reviews:
     - "!**/test-results/**"
     - "!**/*.min.js"
     - "!**/*.min.css"
-    # ドキュメント差分は別途扱う
-    - "**/*.md"
-    - "**/CHANGELOG.md"
-    - "**/RELEASE_NOTES.md"
+    # 自動生成ドキュメントのみレビュー対象外（生成物。手書き .md / CLAUDE.md / SKILL.md は通常どおりレビューする）
+    - "!**/CHANGELOG.md"
+    - "!**/RELEASE_NOTES.md"
 
   path_instructions:
     - path: "**/*.{ts,tsx,js,jsx}"
