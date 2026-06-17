@@ -142,11 +142,25 @@ EOF
   chmod +x "$CCSU_CRON_LAUNCHER"
   bash "$SCRIPT" add --project MyProj --time 21:00 --dow 1 >/dev/null
   bash "$SCRIPT" add --project Other --time 08:00 --dow 2 >/dev/null
-  run bash "$SCRIPT" launch --all
+  run bash "$SCRIPT" launch --all --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"BG 起動: MyProj"* ]]
   [[ "$output" == *"BG 起動: Other"* ]]
   [[ "$output" == *"2 件を BG 起動"* ]]
+}
+
+@test "launch --all: 非対話では --yes 必須" {
+  cat > "$CCSU_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+true
+EOF
+  chmod +x "$CCSU_CRON_LAUNCHER"
+  bash "$SCRIPT" add --project MyProj --time 21:00 --dow 1 >/dev/null
+  bash "$SCRIPT" add --project Other --time 08:00 --dow 2 >/dev/null
+  run bash "$SCRIPT" launch --all
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--yes が必要"* ]]
+  [[ "$output" != *"BG 起動:"* ]]
 }
 
 @test "launch --all: 登録ゼロなら警告して何もしない" {

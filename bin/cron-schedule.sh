@@ -11,7 +11,7 @@
 #   cron-schedule.sh remove --id <id>
 #   cron-schedule.sh remove-all
 #   cron-schedule.sh run-now --project P [--duration 300] [--foreground]  # 既定 BG
-#   cron-schedule.sh launch [--project P[,P2]] [--duration N] [--all]     # 登録から一括 BG
+#   cron-schedule.sh launch [--project P[,P2]] [--duration N] [--all] [--yes] # 登録から一括 BG
 #   cron-schedule.sh bulk-register [--github-only] [--unmanaged-only] [--apply]  # 曜日分散一括登録
 # ============================================================
 
@@ -28,7 +28,7 @@ source "$SCRIPT_DIR/../lib/cron-manager.sh"
 source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
 CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
-DEFAULT_DURATION=300
+DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '300')"
 
 # --- 自動配備: launcher 起動の直前にテンプレ → ~/.claudeos を同期 (恒久ドリフト対策) ---
 #   cron が実走するのは配備済み実行体のため、PR merge 後の runtime ズレをここで吸収する。
@@ -113,15 +113,16 @@ cs__registered_projects() {
 }
 
 # --- 非対話/対話: 登録済みプロジェクトを選んで一括 BG 起動 ---
-#   cs__launch [--project P[,P2,...]] [--duration N] [--all]
+#   cs__launch [--project P[,P2,...]] [--duration N] [--all] [--yes]
 #   引数なし → 登録一覧から番号 (複数可: 1,3 / すべて: a) を選択
 cs__launch() {
-  local projects_csv="" duration="" all=0
+  local projects_csv="" duration="" all=0 yes=0 all_selected=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)  projects_csv="$2"; shift 2 ;;
       --duration) duration="$2"; shift 2 ;;
-      --all)      all=1; shift ;;
+      --all)      all=1; all_selected=1; shift ;;
+      --yes|-y)   yes=1; shift ;;
       *) log_error "launch: 不明な引数: $1"; return 1 ;;
     esac
   done
@@ -158,6 +159,7 @@ cs__launch() {
     local raw; read -rp "  起動する番号: " raw
     raw="$(printf '%s' "$raw" | tr -d ' ')"
     if [[ "${raw,,}" == "a" || "${raw,,}" == "all" ]]; then
+      all_selected=1
       for i in "${!reg_p[@]}"; do chosen_p+=("${reg_p[$i]}"); chosen_d+=("${reg_d[$i]}"); done
     else
       local -a idxs; IFS=',' read -ra idxs <<< "$raw"
@@ -171,6 +173,16 @@ cs__launch() {
   fi
 
   (( ${#chosen_p[@]} == 0 )) && { log_warn "起動対象がありません"; return 0; }
+  if (( all_selected && ${#chosen_p[@]} > 1 && yes == 0 )); then
+    if [[ -t 0 ]]; then
+      local ans
+      read -rp "  ${#chosen_p[@]} 件を一括 BG 起動しますか? (Y/N): " ans || true
+      [[ "${ans^^}" == "Y" ]] || { log_info "一括 BG 起動をキャンセルしました"; return 0; }
+    else
+      log_warn "launch --all は非対話では --yes が必要です"
+      return 1
+    fi
+  fi
   local i
   for i in "${!chosen_p[@]}"; do
     cs__launch_bg "${chosen_p[$i]}" "${chosen_d[$i]}" || log_warn "起動失敗: ${chosen_p[$i]}"

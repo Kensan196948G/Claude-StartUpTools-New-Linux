@@ -64,15 +64,16 @@ cron スロットの割り当ては `bin/cron-schedule.sh bulk-register` が担�
 
 ```bash
 # まず DRY-RUN で割り当て計画を確認（--apply なし）
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --dow 1,2,3,4,5,6
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6
 
 # 計画に問題なければ --apply で実登録（登録済みは自動 skip）
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --dow 1,2,3,4,5,6 --apply
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6 --apply
 ```
 
-- `--start 6 --spacing 5`: 06:00 を起点に 5 時間間隔（= 1 セッション 300 分と重複しない最小間隔）。
+- `--start 6 --spacing 3 --duration 180`: 06:00 を起点に 3 時間間隔（= 1 セッション 180 分と重複しない最小間隔）。
 - `--dow 1,2,3,4,5,6`: 月〜土。0 を加えると日曜も使う。
 - 未登録のみ対象にしたい場合は `--unmanaged-only`（cron 登録済み / supervisor 管理下を除外）。
+- 利用クレジット枯渇時は `bulk-register --apply` と `launch --all --yes` を使わず、単発 `run-now --duration 60` へ落とす。
 
 ---
 
@@ -81,28 +82,30 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --dow 1,2,3,4,5,6 
 `bulk-register` は **曜日 round-robin × 時刻スロット**で負荷分散する。割り当て式は
 `hour = start_hour + slot * spacing`、`hour > 23` になったスロットは ⚠️ 付きで skip される。
 
-既定（`--start 6 --spacing 5 --dow 1,2,3,4,5,6`）の場合:
+省クレジット既定（`--start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6`）の場合:
 
 | スロット | 時刻 | 月 | 火 | 水 | 木 | 金 | 土 |
 |---|---|---|---|---|---|---|---|
 | slot 0 | 06:00 | ● | ● | ● | ● | ● | ● |
-| slot 1 | 11:00 | ● | ● | ● | ● | ● | ● |
-| slot 2 | 16:00 | ● | ● | ● | ● | ● | ● |
-| slot 3 | 21:00 | ● | ● | ● | ● | ● | ● |
-| slot 4 | (26:00 → skip) | — | — | — | — | — | — |
+| slot 1 | 09:00 | ● | ● | ● | ● | ● | ● |
+| slot 2 | 12:00 | ● | ● | ● | ● | ● | ● |
+| slot 3 | 15:00 | ● | ● | ● | ● | ● | ● |
+| slot 4 | 18:00 | ● | ● | ● | ● | ● | ● |
+| slot 5 | 21:00 | ● | ● | ● | ● | ● | ● |
+| slot 6 | (24:00 → skip) | — | — | — | — | — | — |
 
-➡️ **容量 = 4 スロット × 6 曜日 = 24 枠**。25 番目以降のプロジェクトは
-`⚠️ スロット超過(26時) → skip` で**黙って登録されない**ので、ログを必ず確認すること。
+➡️ **容量 = 6 スロット × 6 曜日 = 36 枠**。37 番目以降のプロジェクトは
+`⚠️ スロット超過(24時) → skip` で**黙って登録されない**ので、ログを必ず確認すること。
 
 ### 🔧 24 枠を超えて登録したいとき
 
 | 方法 | コマンド例 | 容量 | トレードオフ |
 |---|---|---|---|
-| 日曜も使う | `--dow 0,1,2,3,4,5,6` | 28 枠 | 週 7 日稼働になる |
-| 間隔を詰める | `--spacing 4`（06/10/14/18/22 の 5 スロット） | 30 枠 | 5h セッションが 1h 重複（⚠️ 警告あり）|
-| duration 短縮 | `--duration 240 --spacing 4` | 30 枠 | 1 セッション 4h に短縮 |
+| 日曜も使う | `--dow 0,1,2,3,4,5,6` | 42 枠 | 週 7 日稼働になる |
+| さらに短縮 | `--duration 120 --spacing 2` | 54 枠 | 1 セッション 2h に短縮 |
+| 優先度で間引く | `localExcludes` に低優先度 repo を追加 | 可変 | 実行対象を減らす |
 
-> 24 枠は「1 マシン上で 5h セッションを重ねずに回せる物理上限」。プロジェクト数が増え続ける場合は、
+> 36 枠は「1 マシン上で 3h セッションを重ねずに回せる物理上限」。プロジェクト数が増え続ける場合は、
 > 重複稼働（同時に複数 Claude セッション）を許容するか、優先度の低いプロジェクトを
 > `localExcludes` で間引くかの運用判断が必要になる。
 
@@ -156,8 +159,8 @@ bash -c 'source lib/config-loader.sh; config_project_list | grep <NAME>'
 # 3. 除外対象なら localExcludes に追加（config/config.json）
 
 # 4. cron スロットを割り当て（DRY-RUN → --apply）
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --dow 1,2,3,4,5,6        # 計画確認
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --dow 1,2,3,4,5,6 --apply # 実登録
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6        # 計画確認
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6 --apply # 実登録
 
 # 5. cron に入ったか確認
 crontab -l | grep 'project=<NAME> '
