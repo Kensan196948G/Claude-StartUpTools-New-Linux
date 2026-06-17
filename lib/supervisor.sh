@@ -75,13 +75,16 @@ sup__goal_reason() {
   esac
 }
 
-# sup__abnormal_reason <security_critical> <blocked_count>
+# sup__abnormal_reason <security_critical> <blocked_count> [halt_on_blocked:true|false]
+#   security_critical>0 は halt 設定に依らず常に停止 (fail-safe・opt-out 不可)。
+#   blocked_issues>0 は halt_on_blocked!="false" のときのみ停止。"false" 明示で
+#   opt-out しブロックを抱えたまま開発継続を許可する (既定 true=従来どおり停止)。
 sup__abnormal_reason() {
-  local sec="${1:-0}" blocked="${2:-0}"
+  local sec="${1:-0}" blocked="${2:-0}" halt_blocked="${3:-true}"
   [[ "$sec" =~ ^[0-9]+$ ]] || sec=0
   [[ "$blocked" =~ ^[0-9]+$ ]] || blocked=0
-  if   (( sec > 0 ));     then printf 'blocked:security_critical=%s' "$sec"
-  elif (( blocked > 0 )); then printf 'blocked:blocked_issues=%s' "$blocked"
+  if   (( sec > 0 )); then printf 'blocked:security_critical=%s' "$sec"
+  elif [[ "$halt_blocked" != "false" ]] && (( blocked > 0 )); then printf 'blocked:blocked_issues=%s' "$blocked"
   fi
 }
 
@@ -166,15 +169,17 @@ sup__throttle_goal_bias() {
 
 # sup__project_stop_reason <project_state_json> — 到達/異常を集約 (空=継続)
 sup__project_stop_reason() {
-  local pstate="$1" ready mode sec blocked reason
+  local pstate="$1" ready mode sec blocked halt_blocked reason
   [[ -f "$pstate" ]] || return 0
   ready="$(json_get "$pstate" '.deploy.ready' 'false')"
   mode="$(json_get "$pstate" '.project.phase_mode' '')"
   [[ -z "$mode" ]] && mode="$(json_get "$pstate" '.maintenance.phase_mode' '')"
   sec="$(json_get "$pstate" '.kpi.security_critical' '0')"
   blocked="$(json_get "$pstate" '.blocked_issues | length' '0')"
+  # 欠落時は 'true' (従来どおり blocked で停止)。'false' 明示でのみ opt-out。
+  halt_blocked="$(json_get "$pstate" '.supervisor.halt_on_blocked' 'true')"
   reason="$(sup__goal_reason "$ready" "$mode")"; [[ -n "$reason" ]] && { printf '%s' "$reason"; return 0; }
-  reason="$(sup__abnormal_reason "$sec" "$blocked")"; [[ -n "$reason" ]] && { printf '%s' "$reason"; return 0; }
+  reason="$(sup__abnormal_reason "$sec" "$blocked" "$halt_blocked")"; [[ -n "$reason" ]] && { printf '%s' "$reason"; return 0; }
   return 0
 }
 

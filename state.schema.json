@@ -369,7 +369,8 @@
         "cooldown_seconds": { "type": "integer", "description": "再起動間のクールダウン(秒)。既定 30" },
         "crash_loop_threshold": { "type": "integer", "description": "短命セッション連続で crash-loop 停止する回数。既定 3" },
         "crash_loop_min_seconds": { "type": "integer", "description": "この秒数未満を短命セッションとみなす。既定 120" },
-        "credit_monthly_budget_usd": { "type": "number", "minimum": 0, "description": "Agent SDK 当月クレジット予算(USD)。0=無制限。当月消費が 95% 到達で credit-cap 停止 (PR-E)。既定 0" }
+        "credit_monthly_budget_usd": { "type": "number", "minimum": 0, "description": "Agent SDK 当月クレジット予算(USD)。0=無制限。当月消費が 95% 到達で credit-cap 停止 (PR-E)。既定 0" },
+        "halt_on_blocked": { "type": "boolean", "description": "blocked_issues 非空のとき supervisor を停止するか。既定 true(従来どおり停止)。false 明示でのみ opt-out し、ブロックを抱えたまま開発継続を許可する。security_critical>0 はこの設定に依らず常に停止 (fail-safe・opt-out 不可)。" }
       }
     },
     "credits": {
