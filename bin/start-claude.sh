@@ -74,7 +74,9 @@ main() {
   # start 後に mtime が前進する (= supervisor が今回 state を書き換えた) のを
   # 待ってから status を読むことで、前回 run の stale な blocked/stopped/goal-reached
   # を誤検出しないようにする (ファイル存在チェックだけでは古い状態を拾う)。
-  local _sup_state="$HOME/.claudeos/supervisor/${safe}.json"
+  # supervisor.sh と同一の解決式に揃える (CCSU_SUP_DIR / CLAUDEOS_HOME 上書きを尊重)。
+  # 既定 (両 override 未設定) は $HOME/.claudeos/supervisor で従来どおり非破壊。
+  local _sup_state="${CCSU_SUP_DIR:-$CCSU_HOME/supervisor}/${safe}.json"
   local _sup_mtime_before
   _sup_mtime_before="$(stat -c %Y "$_sup_state" 2>/dev/null || echo 0)"
 
@@ -165,9 +167,24 @@ main() {
         sleep 0.2
       done
       if [[ -f "$_suplog" ]]; then
-        log_info "  📜 ログ追尾: $_suplog"
-        printf "\n"
-        tail -n 20 -f "$_suplog"
+        if [[ -n "${TMUX:-}" ]] && command -v "$TMUX_BIN" >/dev/null 2>&1; then
+          # tmux 内: 追尾ログを別ウィンドウ(別タブ)で開き、メニュー端末は即解放する。
+          # new-window は本スクリプトのプロセスから独立するため、戻っても supervisor は継続。
+          local _q
+          printf -v _q '%q' "$_suplog"
+          # shellcheck disable=SC2086  # _q は printf %q で安全に pre-quote 済み
+          if "$TMUX_BIN" new-window -n "follow:$(basename "$project")" "tail -n 20 -f $_q" 2>/dev/null; then
+            log_ok "  🪟 追尾ログを tmux 別ウィンドウ(別タブ)で開きました: $_suplog"
+            log_info "     Ctrl-b n / Ctrl-b w で切替・閉じても supervisor は継続します"
+          else
+            log_warn "  ⚠️  tmux 別ウィンドウ生成に失敗 — 手動で追尾してください"
+            log_info "  📜 別タブで追尾: tail -f $_suplog"
+          fi
+        else
+          # tmux 外: メニュー端末をブロックせず即復帰し、別端末での追尾手順を案内する。
+          log_info "  📜 別タブ/別端末で追尾するには: tail -f $_suplog"
+          log_info "     (この端末はメニュー操作へ戻ります・supervisor は独立継続)"
+        fi
       else
         log_warn "  ⏳ ログ未生成: $_suplog"
         log_info "  🔍 確認: bash bin/autonomy.sh status $project"
