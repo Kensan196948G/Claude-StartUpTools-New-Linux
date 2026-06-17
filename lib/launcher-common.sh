@@ -85,10 +85,6 @@ launcher__select_project() {
 
     is_selectable=1
     [[ "$run_status" == "running" ]] && is_selectable=0
-    if [[ "$mode" == "background" ]]; then
-      [[ "$run_status" == "goal-reached" ]] && is_selectable=0
-      [[ "$run_status" == "blocked" ]]      && is_selectable=0
-    fi
 
     if (( is_selectable )); then
       display_num=$(( display_num + 1 ))
@@ -115,12 +111,6 @@ launcher__select_project() {
         running)
           printf '       %s🔴 %-42s%s %s(実行中・選択不可)%s\n' \
             "$C_RED" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
-        goal-reached)
-          printf '       %s✅ %-42s%s %s(目標達成・選択不可)%s\n' \
-            "$C_DKGREEN" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
-        blocked)
-          printf '       %s🚫 %-42s%s %s(ブロック・選択不可)%s\n' \
-            "$C_WHITE" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
       esac
     fi
   done

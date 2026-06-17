@@ -39,20 +39,20 @@
 段階1: 登録（可視化）        段階2: トリガー（起動）
   .git があるフォルダ    →     cron スロットが割り当てられている
   = config_project_list に載る   = 週次で cron-launcher が起動する
-  ✅ auto-init が面倒を見る       ⚠️ bulk-register を明示実行する必要がある
+  ✅ git 化を明示実行する          ⚠️ bulk-register を明示実行する必要がある
 ```
 
-### 段階1: 登録（可視化）— 🟢 自動
+### 段階1: 登録（可視化）— 🟢 明示
 
-`/home/kensan/Projects` 配下に `.git`（ディレクトリ）を持つフォルダは、`config_project_list`
+`/home/kensan/Projects` 配下に `.git`（ディレクトリまたは worktree/submodule のファイル）を持つフォルダは、`config_project_list`
 （`lib/config-loader.sh`）が L1 メニュー / cron / autonomy / docker の **全 4 経路**で候補として列挙する。
 
-- **新規フォルダの自動 git 化**: `bin/menu.sh` の実起動（`menu` 経路）時に `project_autoinit_scan`
-  （`lib/project-autoinit.sh`）が `.git` 未保有フォルダを検知し、`git init` + `CLAUDE.md` テンプレ配置 +
-  初期 commit を自動実行する。冪等・非破壊・ローカル限定（GitHub repo 作成等の外部操作はしない）。
-  無効化は config の `.autoInitProjects=false`。`--render`（テスト描画）経路では実行しない。
-- 自動除外: `.git` が**ファイル**の worktree、本ツール repo 自身（`CCSU_ROOT`）、および
-  `config/config.json` の `localExcludes` に列挙したフォルダ。
+- **新規フォルダの git 化**: 通常の `start.sh` は高速起動と不要ログ抑制を優先し、自動 `git init` は行わない。
+  必要な場合のみ config の `.autoInitProjects=true` を設定すると、`bin/menu.sh` の実起動（`menu` 経路）時に
+  `project_autoinit_scan`（`lib/project-autoinit.sh`）が `.git` 未保有フォルダを検知し、
+  `git init` + `CLAUDE.md` テンプレ配置 + 初期 commit を実行する。冪等・非破壊・ローカル限定
+  （GitHub repo 作成等の外部操作はしない）。`--render`（テスト描画）経路では実行しない。
+- 自動除外: 本ツール repo 自身（`CCSU_ROOT`）、および `config/config.json` の `localExcludes` に列挙したフォルダ。
 
 > ⚠️ **重要**: auto-init が完了しても、それは段階1（可視化）に過ぎない。
 > **cron スロットは自動では付かない。** 段階2を必ず実施すること。
@@ -73,14 +73,16 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --d
 - `--start 6 --spacing 3 --duration 180`: 06:00 を起点に 3 時間間隔（= 1 セッション 180 分と重複しない最小間隔）。
 - `--dow 1,2,3,4,5,6`: 月〜土。0 を加えると日曜も使う。
 - 未登録のみ対象にしたい場合は `--unmanaged-only`（cron 登録済み / supervisor 管理下を除外）。
-- 利用クレジット枯渇時は `bulk-register --apply` と `launch --all --yes` を使わず、単発 `run-now --duration 60` へ落とす。
+- 登録上限は `config.json` の `cron.maxProjectsPerDay=2` / `cron.maxDurationMinutes=180`。3件目/日と180分超は拒否する。
+- `run-now` / `launch --project` は cron 登録済みプロジェクトだけ実行できる。未登録プロジェクトの単発実行は禁止。
+- 利用クレジット枯渇時は `bulk-register --apply` と `launch --all --yes` を使わず、登録済み対象の単発 `run-now --duration 60` へ落とす。
 
 ---
 
-## 📐 cron スロットの容量天井（24 枠）
+## 📐 cron スロットの容量天井（12 枠）
 
-`bulk-register` は **曜日 round-robin × 時刻スロット**で負荷分散する。割り当て式は
-`hour = start_hour + slot * spacing`、`hour > 23` になったスロットは ⚠️ 付きで skip される。
+`bulk-register` は **1日2プロジェクト × 曜日 round-robin**で負荷分散する。割り当て式は
+`hour = start_hour + slot * spacing`、`slot` は 0 または 1 のみ。1日3件目は作らない。
 
 省クレジット既定（`--start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6`）の場合:
 
@@ -88,26 +90,19 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --d
 |---|---|---|---|---|---|---|---|
 | slot 0 | 06:00 | ● | ● | ● | ● | ● | ● |
 | slot 1 | 09:00 | ● | ● | ● | ● | ● | ● |
-| slot 2 | 12:00 | ● | ● | ● | ● | ● | ● |
-| slot 3 | 15:00 | ● | ● | ● | ● | ● | ● |
-| slot 4 | 18:00 | ● | ● | ● | ● | ● | ● |
-| slot 5 | 21:00 | ● | ● | ● | ● | ● | ● |
-| slot 6 | (24:00 → skip) | — | — | — | — | — | — |
 
-➡️ **容量 = 6 スロット × 6 曜日 = 36 枠**。37 番目以降のプロジェクトは
-`⚠️ スロット超過(24時) → skip` で**黙って登録されない**ので、ログを必ず確認すること。
+➡️ **容量 = 2 スロット × 6 曜日 = 12 枠**。13 番目以降のプロジェクトは
+`⚠️ 容量超過(12件/週) → skip` で**黙って登録されない**ので、ログを必ず確認すること。
 
-### 🔧 24 枠を超えて登録したいとき
+### 🔧 12 枠を超えて登録したいとき
 
 | 方法 | コマンド例 | 容量 | トレードオフ |
 |---|---|---|---|
-| 日曜も使う | `--dow 0,1,2,3,4,5,6` | 42 枠 | 週 7 日稼働になる |
-| さらに短縮 | `--duration 120 --spacing 2` | 54 枠 | 1 セッション 2h に短縮 |
+| 日曜も使う | `--dow 0,1,2,3,4,5,6` | 14 枠 | 週 7 日稼働になる |
 | 優先度で間引く | `localExcludes` に低優先度 repo を追加 | 可変 | 実行対象を減らす |
 
-> 36 枠は「1 マシン上で 3h セッションを重ねずに回せる物理上限」。プロジェクト数が増え続ける場合は、
-> 重複稼働（同時に複数 Claude セッション）を許容するか、優先度の低いプロジェクトを
-> `localExcludes` で間引くかの運用判断が必要になる。
+> 12 枠は「1日2プロジェクト・各3h」を守る運用上限。プロジェクト数が増え続ける場合は、
+> 優先度の低いプロジェクトを `localExcludes` で間引くか、週次ローテーションを手動で組み替える。
 
 ---
 
@@ -130,7 +125,7 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --d
 
 🔑 **新規フォルダを追加したら、まず「これは開発対象か / 除外対象か」を判断する。**
 除外対象なら `localExcludes` に足してから（段階2の前に）`bulk-register` する。そうしないと
-不要フォルダにも cron 枠を消費させてしまい、24 枠の天井を無駄に圧迫する。
+不要フォルダにも cron 枠を消費させてしまい、12 枠の天井を無駄に圧迫する。
 
 ---
 
@@ -165,11 +160,11 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --d
 # 5. cron に入ったか確認
 crontab -l | grep 'project=<NAME> '
 
-# 6. （任意）次回起動を待たず即実行
-bash bin/cron-schedule.sh run-now <NAME>
+# 6. （任意）次回起動を待たず即実行（cron 登録済みのみ）
+bash bin/cron-schedule.sh run-now --project <NAME>
 ```
 
-🔑 **段階2（手順4）を忘れない**こと。auto-init はフォルダを「見える」ようにするだけで、
+🔑 **段階2（手順4）を忘れない**こと。git 化はフォルダを「見える」ようにするだけで、
 「動く」ようにするのは `bulk-register` の役目。この 2 段階を両方満たして初めて、
 新規プロジェクトも既存と同じ確実性で自律開発が回り始める。
 

@@ -3,7 +3,9 @@
   "version": "4.0.0-linux",
   "projects": "/home/kensan/Projects",
   "projectsDir": "/home/kensan/Projects",
-  "_localExcludes_comment": "config_project_list の除外正本 (L1メニュー/cron/autonomy/docker 全4経路に効く)。製品でないツール repo・バックアップ・アーカイブ・純インフラ等の git フォルダをここへ列挙して自動開発対象から外す。worktree (.git がファイル) と本ツール repo 自身 (CCSU_ROOT) は config-loader が自動除外するため記載不要。新規プロジェクトの cron 登録手順は docs/claude/11_新規プロジェクトのcron登録とオンボーディング.md を参照。",
+  "autoInitProjects": false,
+  "_autoInitProjects_comment": "true にすると start.sh 起動時に非Gitフォルダを git init する。通常起動の高速化と不要ログ抑制のため既定 false。",
+  "_localExcludes_comment": "config_project_list の除外正本 (L1メニュー/cron/autonomy/docker 全4経路に効く)。製品でないツール repo・バックアップ・アーカイブ・純インフラ等の git フォルダをここへ列挙して自動開発対象から外す。worktree (.git がファイル) も登録プロジェクトとして扱う。本ツール repo 自身 (CCSU_ROOT) は config-loader が自動除外するため記載不要。新規プロジェクトの cron 登録手順は docs/claude/11_新規プロジェクトのcron登録とオンボーディング.md を参照。",
   "localExcludes": [],
   "tools": {
     "defaultTool": "claude",
@@ -109,11 +111,13 @@
     "_comment": "v3.1.0 新設。Linux 側 crontab で ClaudeCode を週次自動起動する機能の設定。",
     "enabled": true,
     "defaultDurationMinutes": 180,
+    "maxDurationMinutes": 180,
+    "maxProjectsPerDay": 2,
     "launcherPath": "/home/kensan/.claudeos/cron-launcher.sh",
     "sessionsDir": "/home/kensan/.claudeos/sessions",
     "logsDir": "/home/kensan/.claudeos/logs",
     "entryPrefix": "CLAUDEOS",
-    "_headlessDefault_comment": "PR-G で既定反転。true = cron 起動は claude -p ヘッドレス既定 (CLAUDEOS_HEADLESS 未設定=1 と整合)。false で従来 tmux TUI 既定へ戻す (CLAUDEOS_HEADLESS=0 相当の退避経路)。",
+    "_headlessDefault_comment": "PR-G で既定反転。true = cron 起動は claude -p ヘッドレス既定 (CLAUDEOS_HEADLESS 未設定=1 と整合)。false で TUI 退避へ戻す。tmux は --tmux または CLAUDEOS_TMUX=1 明示時のみ。",
     "headlessDefault": true
   },
   "supervisor": {
@@ -152,7 +156,7 @@
     "enableEnvVar": "CLAUDEOS_EMAIL_ENABLED"
   },
   "sessionTabs": {
-    "_comment": "tmux/libexec/watch-session.sh によるセッション情報表示。",
+    "_comment": "libexec/watch-session.sh による headless セッション情報表示。tmux セッション表示は --tmux 明示時のみ。",
     "enabled": true,
     "title": "Claude Session Info",
     "pollIntervalSeconds": 1,

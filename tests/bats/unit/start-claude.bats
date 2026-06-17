@@ -70,13 +70,18 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"supervisor 起動"* ]]
 }
 
-@test "start-claude: --safe-mode は supervisor 非経由で tmux セッションを直接起動" {
+@test "start-claude: --safe-mode は既定で tmux なし直接起動" {
   run bash "$SCRIPT" --project MyProj --safe-mode --background --duration 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"safe-mode 診断起動"* ]]
   # supervisor (autonomy.sh) を経由しない → state ファイルなし
   [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
-  # tmux_run 直接呼び出しでセッションは作成される
+  [ ! -f "$TMUX_STATE/claudeos-MyProj" ]
+}
+
+@test "start-claude: --safe-mode --tmux は tmux セッションを直接起動" {
+  run bash "$SCRIPT" --project MyProj --safe-mode --tmux --background --duration 5
+  [ "$status" -eq 0 ]
   [ -f "$TMUX_STATE/claudeos-MyProj" ]
 }
 
@@ -94,15 +99,23 @@ teardown() { _bats_common_teardown; }
   [ ! -f "$TMUX_STATE/new-window.log" ]
 }
 
-@test "start-claude: foreground headless は tmux 内で別ウィンドウを開き即復帰" {
-  # tmux 内: 追尾ログを別ウィンドウ(別タブ)へ逃がし、メニュー端末は即解放する。
+@test "start-claude: foreground headless は tmux 内でも既定で別ウィンドウを開かない" {
   export TMUX="/tmp/fake,0,0"
   mkdir -p "$CCSU_SUP_DIR"
   printf 'log line\n' > "$CCSU_SUP_DIR/MyProj.log"
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
+  [[ "$output" == *"tail -f"* ]]
+  [ ! -f "$TMUX_STATE/new-window.log" ]
+}
+
+@test "start-claude: foreground headless --tmux は tmux 内で別ウィンドウを開く" {
+  export TMUX="/tmp/fake,0,0"
+  mkdir -p "$CCSU_SUP_DIR"
+  printf 'log line\n' > "$CCSU_SUP_DIR/MyProj.log"
+  run bash "$SCRIPT" --project MyProj --foreground --tmux --duration 5
+  [ "$status" -eq 0 ]
   [[ "$output" == *"別ウィンドウ(別タブ)で開きました"* ]]
-  # tmux new-window が呼ばれ follow:<project> 名で追尾が開く
   [ -f "$TMUX_STATE/new-window.log" ]
   grep -q "follow:MyProj" "$TMUX_STATE/new-window.log"
 }

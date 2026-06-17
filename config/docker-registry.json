@@ -114,6 +114,42 @@
       "autostart": false,
       "stack": "fullstack",
       "registered_at": "2026-06-04T13:59:27+09:00"
+    },
+    "ActiveDirectory-Entry-Tools": {
+      "compose": "docker-compose.yml",
+      "autostart": false,
+      "stack": "fullstack",
+      "registered_at": "2026-06-18T05:55:26+09:00"
+    },
+    "Construction-DX-Idea": {
+      "compose": "docker-compose.yml",
+      "autostart": false,
+      "stack": "static",
+      "registered_at": "2026-06-18T05:55:26+09:00"
+    },
+    "MIRAI_Site_Carbon_Navigator": {
+      "compose": "docker-compose.yml",
+      "autostart": false,
+      "stack": "python",
+      "registered_at": "2026-06-18T05:55:26+09:00"
+    },
+    "worktree-sprint3a-rebase": {
+      "compose": "docker-compose.yml",
+      "autostart": false,
+      "stack": "fullstack",
+      "registered_at": "2026-06-18T05:55:26+09:00"
+    },
+    "worktree-sprint4a": {
+      "compose": "docker-compose.yml",
+      "autostart": false,
+      "stack": "fullstack",
+      "registered_at": "2026-06-18T05:55:26+09:00"
+    },
+    "worktree-sprint4b": {
+      "compose": "docker-compose.yml",
+      "autostart": false,
+      "stack": "fullstack",
+      "registered_at": "2026-06-18T05:55:26+09:00"
     }
   }
 }

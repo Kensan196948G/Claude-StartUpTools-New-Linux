@@ -7,7 +7,7 @@
 #     S1: 🌙ローカルBG自律
 #     L1: 🖥️ローカル即起動 → フォアグラウンド明記
 #     項6: 💾ドライブマッピング診断 → 💾マウント/NW疎通診断
-#     項7: ⚙️端末設定 → ⚙️tmux/端末セットアップ
+#     項7: ⚙️端末設定 → ⚙️端末/tmux fallback セットアップ
 #     接続表示: ローカルパス中心
 #
 # テスト: menu.sh --render で show_menu を1回描画して終了 (突合/bats用)
@@ -83,13 +83,13 @@ show_menu() {
   for item in \
     " 5  🩺 ツール確認・診断" \
     " 6  💾 マウント / ネットワーク疎通診断" \
-    " 7  ⚙️  tmux / 端末セットアップ" \
+    " 7  ⚙️  端末 / tmux fallback セットアップ" \
     " 8  🩹 MCP ヘルスチェック" \
     " 9  🤝 Agent Teams ランタイム" \
     "10  🌿 Worktree Manager" \
     "11  🏛️  Architecture Check" \
     "12  📊 Statusline 設定" \
-    "13  📡 Claude ログ監視 (tmux/tail)" \
+    "13  📡 Claude ログ監視 (tail)" \
     "16  🤝 Agent Teams Status (CLI 表示)" \
     "PD  🌐 Projects Dashboard (進捗 WebUI)" \
     "MC  🎛️  Mission Control (統合管理)" \

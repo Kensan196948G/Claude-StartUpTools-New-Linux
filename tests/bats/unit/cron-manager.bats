@@ -98,11 +98,11 @@ teardown() { _bats_common_teardown; }
 # --- cron__add ---
 
 @test "cron__add: 追加後 cron__list で取得できる" {
-  id="$(cron__add MyProj 300 21:00 1 2 3 4 5 6)"
+  id="$(cron__add MyProj 180 21:00 1 2 3 4 5 6)"
   [ -n "$id" ]
   run cron__list
   [ "$status" -eq 0 ]
-  [[ "$output" == *"${id}|MyProj|300|"*"|0 21 * * 1,2,3,4,5,6" ]]
+  [[ "$output" == *"${id}|MyProj|180|"*"|0 21 * * 1,2,3,4,5,6" ]]
 }
 
 @test "cron__add: crontab に # CLAUDEOS コメントと launcher コマンドが入る" {
@@ -115,22 +115,36 @@ teardown() { _bats_common_teardown; }
 
 @test "cron__add: 既存の他人 cron を壊さない" {
   printf '%s\n' "0 5 * * * /usr/bin/other-job" > "$CRON_STORE"
-  cron__add MyProj 300 21:00 1 >/dev/null
+  cron__add MyProj 180 21:00 1 >/dev/null
   run cat "$CRON_STORE"
   [[ "$output" == *"other-job"* ]]
   [[ "$output" == *"CLAUDEOS"* ]]
 }
 
 @test "cron__add: crontab の % が \\% にエスケープされる" {
-  cron__add MyProj 300 21:00 1 >/dev/null
+  cron__add MyProj 180 21:00 1 >/dev/null
   run cat "$CRON_STORE"
   [[ "$output" == *'\%Y'* ]]
+}
+
+@test "cron__add: duration が 180 分を超えると拒否" {
+  run cron__add MyProj 181 21:00 1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"上限 180m"* ]]
+}
+
+@test "cron__add: 同一曜日は 2 プロジェクトまで" {
+  cron__add ProjA 180 08:00 1 >/dev/null
+  cron__add ProjB 180 12:00 1 >/dev/null
+  run cron__add ProjC 180 16:00 1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"登録上限 2 プロジェクト/日"* ]]
 }
 
 # --- cron__remove / cron__remove_all ---
 
 @test "cron__remove: id 指定で該当エントリのみ削除" {
-  id1="$(cron__add ProjA 300 21:00 1)"
+  id1="$(cron__add ProjA 180 21:00 1)"
   id2="$(cron__add ProjB 120 08:00 2)"
   run cron__remove "$id1"
   [ "$output" = "1" ]
@@ -141,14 +155,14 @@ teardown() { _bats_common_teardown; }
 
 @test "cron__remove: 他人 cron は残す" {
   printf '%s\n' "0 5 * * * /usr/bin/other-job" > "$CRON_STORE"
-  id="$(cron__add MyProj 300 21:00 1)"
+  id="$(cron__add MyProj 180 21:00 1)"
   cron__remove "$id" >/dev/null
   run cat "$CRON_STORE"
   [[ "$output" == *"other-job"* ]]
 }
 
 @test "cron__remove_all: 全 CLAUDEOS エントリを削除" {
-  cron__add ProjA 300 21:00 1 >/dev/null
+  cron__add ProjA 180 21:00 1 >/dev/null
   cron__add ProjB 120 08:00 2 >/dev/null
   run cron__remove_all
   [ "$output" -ge 2 ]
@@ -158,7 +172,7 @@ teardown() { _bats_common_teardown; }
 
 @test "cron__remove_all: 他人 cron は残す" {
   printf '%s\n' "0 5 * * * /usr/bin/other-job" > "$CRON_STORE"
-  cron__add ProjA 300 21:00 1 >/dev/null
+  cron__add ProjA 180 21:00 1 >/dev/null
   cron__remove_all >/dev/null
   run cat "$CRON_STORE"
   [[ "$output" == *"other-job"* ]]
@@ -167,10 +181,10 @@ teardown() { _bats_common_teardown; }
 # --- cron__format_display ---
 
 @test "cron__format_display: id/project/曜日/時刻/duration を整形" {
-  run cron__format_display abc12345 MyProj 300 2026-06-01T10:00:00 "0 21 * * 1,6"
+  run cron__format_display abc12345 MyProj 180 2026-06-01T10:00:00 "0 21 * * 1,6"
   [[ "$output" == *"[abc12345]"* ]]
   [[ "$output" == *"project=MyProj"* ]]
   [[ "$output" == *"月/土"* ]]
   [[ "$output" == *"21:00"* ]]
-  [[ "$output" == *"300m"* ]]
+  [[ "$output" == *"180m"* ]]
 }

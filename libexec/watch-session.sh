@@ -2,8 +2,8 @@
 # ============================================================
 # watch-session.sh — セッション状態監視 / 操作 (メニュー項15)
 #
-# 対話モード (既定): 実行中セッション (headless 🤖 / tmux 🖥) を番号付きで
-#   列挙し、番号選択 → [l]ログ/[a]接続 / [s]停止 を選べる。
+# 対話モード (既定): 実行中 headless セッションを番号付きで列挙し、
+#   番号選択 → [l]ログ/[s]停止 を選べる。tmux は --tmux 明示時だけ表示する。
 # --once: 非対話の1回表示 (bats用)。
 # ============================================================
 
@@ -54,7 +54,7 @@ _render_history() {
 
 # 非対話表示 (--once / bats)
 _render_once() {
-  local sdir="$1"
+  local sdir="$1" show_tmux="${2:-0}"
   local hp; hp="$(_running_headless_projects)"
   printf '  %s● 実行中の ClaudeOS セッション (headless 🤖):%s\n' "$C_GREEN" "$C_RESET"
   if [[ -n "$hp" ]]; then
@@ -62,7 +62,7 @@ _render_once() {
   else
     printf '      (実行中なし)\n'
   fi
-  if has_cmd "$TMUX_BIN"; then
+  if (( show_tmux )) && has_cmd "$TMUX_BIN"; then
     printf '\n  %s● 実行中の ClaudeOS セッション (tmux 🖥):%s\n' "$C_GREEN" "$C_RESET"
     local r; r="$(_running_tmux_sessions)"
     if [[ -n "$r" ]]; then
@@ -93,17 +93,7 @@ _session_action_headless() {
   case "${op,,}" in
     l)
       if [[ -f "$suplog" ]]; then
-        if [[ -n "${TMUX:-}" ]] && has_cmd "$TMUX_BIN"; then
-          local q; printf -v q '%q' "$suplog"
-          # shellcheck disable=SC2086
-          if "$TMUX_BIN" new-window -n "follow:$proj" "tail -n 30 -f $q" 2>/dev/null; then
-            log_ok "追尾ログを tmux 別ウィンドウで開きました (Ctrl-b n で切替)"
-          else
-            log_warn "別ウィンドウ生成失敗 — 手動追尾: tail -f $suplog"
-          fi
-        else
-          log_info "別端末で追尾: tail -f $suplog"
-        fi
+        log_info "別端末で追尾: tail -f $suplog"
       else
         log_warn "ログファイルが見つかりません: $suplog"
       fi
@@ -151,14 +141,18 @@ _session_action_tmux() {
 
 # 対話メニュー: headless 🤖 → tmux 🖥 を統合番号選択
 _interactive_menu() {
-  local sdir="$1"
+  local sdir="$1" show_tmux="${2:-0}"
   while true; do
     clear 2>/dev/null || true
     log_info "セッション状態監視 ($(date +%H:%M:%S))"
 
     local -a headless_prjs tmux_sess
     mapfile -t headless_prjs < <(_running_headless_projects)
-    mapfile -t tmux_sess < <(_running_tmux_sessions)
+    if (( show_tmux )); then
+      mapfile -t tmux_sess < <(_running_tmux_sessions)
+    else
+      tmux_sess=()
+    fi
 
     printf '\n  %s● 実行中の ClaudeOS セッション:%s\n' "$C_GREEN" "$C_RESET"
     local idx=1 started cost info
@@ -208,13 +202,20 @@ _interactive_menu() {
 }
 
 main() {
-  local once=0; [[ "${1:-}" == "--once" ]] && once=1
+  local once=0 show_tmux="${CLAUDEOS_WATCH_TMUX:-0}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --once) once=1; shift ;;
+      --tmux) show_tmux=1; shift ;;
+      *) log_error "不明な引数: $1"; return 1 ;;
+    esac
+  done
   local sdir="${CCSU_SESSIONS_DIR:-$CCSU_HOME/sessions}"
   [[ -d "$sdir" ]] || { log_warn "セッションディレクトリがありません: $sdir"; return 0; }
   if (( once )); then
-    _render_once "$sdir"
+    _render_once "$sdir" "$show_tmux"
   else
-    _interactive_menu "$sdir"
+    _interactive_menu "$sdir" "$show_tmux"
   fi
 }
 

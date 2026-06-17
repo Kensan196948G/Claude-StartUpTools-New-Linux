@@ -3,12 +3,12 @@
 # start-claude.sh — ClaudeCode 起動エントリ (Linux native)
 #
 # Linux ローカル Claude 起動。
-#   多重起動防止: Named Mutex → tmux has-session (tmux_run 内)
+#   多重起動防止: supervisor/flock。tmux は --tmux 明示時のみ fallback として使う。
 #
 # 使い方 (menu.sh から):
-#   start-claude.sh --project P --foreground [--duration 300]   # L1: tmux attach
-#   start-claude.sh --project P --background [--duration 300]   # S1: detached
-#   start-claude.sh --project P --safe-mode  [--duration 300]   # 診断: hooks/MCP 無効の素起動
+#   start-claude.sh --project P --foreground [--duration 300]          # L1: headless/log 既定
+#   start-claude.sh --project P --background [--duration 300]          # S1: supervisor BG
+#   start-claude.sh --project P --safe-mode  [--duration 300] [--tmux] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
 # ============================================================
 
@@ -26,8 +26,75 @@ source "$SCRIPT_DIR/../lib/tmux-runner.sh"
 # shellcheck source=lib/notify.sh
 source "$SCRIPT_DIR/../lib/notify.sh"
 
+direct__run_safe_mode() {
+  local project="$1" duration="$2" mode="$3" dur_sec log_file stamp safe runner
+  dur_sec=$((duration * 60))
+  safe="$(ccsu_safe_name "$project")"
+  mkdir -p "$CCSU_HOME/logs"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  log_file="$CCSU_HOME/logs/manual-safe-${stamp}-${safe}.log"
+
+  if [[ "$mode" == "foreground" ]]; then
+    log_info "🩺 safe-mode 直接起動: $project (tmux なし / Ctrl+C 可)"
+    ( cd "$(launcher__project_dir "$project")" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" --safe-mode )
+  else
+    if has_cmd setsid; then runner=setsid; else runner=nohup; fi
+    "$runner" bash -c 'cd "$1" && timeout --foreground "$2" "$3" --safe-mode' \
+      _ "$(launcher__project_dir "$project")" "${dur_sec}s" "$CLAUDE_BIN" >>"$log_file" 2>&1 < /dev/null &
+    disown 2>/dev/null || true
+    log_ok "safe-mode BG 起動: $project (tmux なし)"
+    log_info "  ログ: $log_file"
+  fi
+}
+
+direct__run_headless_once() {
+  local project="$1" duration="$2" mode="$3" dur_sec project_dir prompt="" log_file stamp safe runner
+  dur_sec=$((duration * 60))
+  project_dir="$(launcher__project_dir "$project")"
+  safe="$(ccsu_safe_name "$project")"
+  mkdir -p "$CCSU_HOME/logs"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  log_file="$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.log"
+
+  template_sync__apply "$project_dir"
+  [[ -f "$project_dir/.claude/START_PROMPT.md" ]] && prompt="$(cat "$project_dir/.claude/START_PROMPT.md")"
+
+  if [[ "$mode" == "foreground" ]]; then
+    log_info "🔧 直接 headless 起動: $project (tmux なし / Ctrl+C 可)"
+    if [[ -f "$SCRIPT_DIR/../libexec/stream-json-tail.sh" ]]; then
+      local rc
+      set +e
+      ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto ) \
+        | bash "$SCRIPT_DIR/../libexec/stream-json-tail.sh"
+      rc="${PIPESTATUS[0]}"
+      set -e
+      return "$rc"
+    fi
+    ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto )
+  else
+    local prompt_file wrapper
+    prompt_file="$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.prompt"
+    wrapper="$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.sh"
+    printf '%s' "$prompt" > "$prompt_file"
+    cat > "$wrapper" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+project_dir="$1"; dur="$2"; claude_bin="$3"; prompt_file="$4"
+prompt="$(cat "$prompt_file" 2>/dev/null || true)"
+cd "$project_dir"
+timeout --foreground "$dur" "$claude_bin" -p "$prompt" --output-format stream-json --verbose --permission-mode auto
+EOF
+    chmod +x "$wrapper"
+    if has_cmd setsid; then runner=setsid; else runner=nohup; fi
+    "$runner" bash "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$prompt_file" >>"$log_file" 2>&1 < /dev/null &
+    disown 2>/dev/null || true
+    log_ok "直接 headless BG 起動: $project (tmux なし)"
+    log_info "  ログ: $log_file"
+  fi
+}
+
 main() {
-  local project="" mode="foreground" duration=300 safe_mode=0
+  local project="" mode="foreground" duration=300 safe_mode=0 use_tmux=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)    project="$2"; shift 2 ;;
@@ -35,6 +102,7 @@ main() {
       --background) mode="background"; shift ;;
       --duration)   duration="$2"; shift 2 ;;
       --safe-mode)  safe_mode=1; shift ;;
+      --tmux)       use_tmux=1; shift ;;
       --local)      shift ;;   # 互換: ローカル一本化のため無視
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
@@ -58,11 +126,15 @@ main() {
   notify__play claude   # 起動通知音 (非ブロッキング・失敗無害)
 
   # --safe-mode: 診断起動 (claude 2.1.169+ の --safe-mode で hooks/MCP 無効の素起動)。
-  # supervisor (autonomy.sh) を経由せず直接 tmux_run する — 自動再起動なし。
+  # supervisor (autonomy.sh) を経由しない。tmux は --tmux 明示時だけ使う。
   # 環境起因の起動不能・hook 暴走などの切り分けに使う。
   if [[ "$safe_mode" == "1" ]]; then
     log_info "🩺 safe-mode 診断起動: supervisor 非経由・自動再起動なし ($project)"
-    CCSU_CLAUDE_SAFE_MODE=1 tmux_run "$project" "$duration" "$mode"
+    if (( use_tmux )); then
+      CCSU_CLAUDE_SAFE_MODE=1 tmux_run "$project" "$duration" "$mode"
+    else
+      direct__run_safe_mode "$project" "$duration" "$mode"
+    fi
     return 0
   fi
 
@@ -128,7 +200,11 @@ main() {
       read -r _ans
       if [[ "${_ans^^}" == "Y" ]]; then
         log_info "🔧 手動モードで起動します (supervisor なし・自動再起動なし)"
-        tmux_run "$project" "$duration" "$mode"
+        if (( use_tmux )); then
+          tmux_run "$project" "$duration" "$mode"
+        else
+          direct__run_headless_once "$project" "$duration" "$mode"
+        fi
       else
         log_info "⏹️  起動をキャンセルしました"
         log_info "  💡 blocked_issues を解消すると supervisor 経由で正常起動できます"
@@ -139,7 +215,11 @@ main() {
       read -r _ans
       if [[ "${_ans^^}" == "Y" ]]; then
         log_info "🔧 手動モードで起動します (supervisor なし・自動再起動なし)"
-        tmux_run "$project" "$duration" "$mode"
+        if (( use_tmux )); then
+          tmux_run "$project" "$duration" "$mode"
+        else
+          direct__run_headless_once "$project" "$duration" "$mode"
+        fi
       else
         log_info "⏹️  起動をキャンセルしました"
       fi
@@ -167,7 +247,7 @@ main() {
         sleep 0.2
       done
       if [[ -f "$_suplog" ]]; then
-        if [[ -n "${TMUX:-}" ]] && command -v "$TMUX_BIN" >/dev/null 2>&1; then
+        if (( use_tmux )) && [[ -n "${TMUX:-}" ]] && command -v "$TMUX_BIN" >/dev/null 2>&1; then
           # tmux 内: 追尾ログを別ウィンドウ(別タブ)で開き、メニュー端末は即解放する。
           # new-window は本スクリプトのプロセスから独立するため、戻っても supervisor は継続。
           local _q
@@ -190,19 +270,25 @@ main() {
         log_info "  🔍 確認: bash bin/autonomy.sh status $project"
       fi
     else
-      # TUI 経路 (CLAUDEOS_HEADLESS=0): 従来どおり tmux セッションへ attach。
-      # tmux セッションが起動するまで最大30秒待機。
-      local i
-      for ((i = 0; i < 60; i++)); do
-        "$TMUX_BIN" has-session -t "$session" 2>/dev/null && break
-        sleep 0.5
-      done
-      if "$TMUX_BIN" has-session -t "$session" 2>/dev/null; then
-        log_info "🔗 セッションへ接続: $session"
-        "$TMUX_BIN" attach-session -t "$session"
+      if (( use_tmux )); then
+        # TUI + tmux 明示時のみ従来どおり tmux セッションへ attach。
+        local i
+        for ((i = 0; i < 60; i++)); do
+          "$TMUX_BIN" has-session -t "$session" 2>/dev/null && break
+          sleep 0.5
+        done
+        if "$TMUX_BIN" has-session -t "$session" 2>/dev/null; then
+          log_info "🔗 セッションへ接続: $session"
+          "$TMUX_BIN" attach-session -t "$session"
+        else
+          log_warn "⏱️  tmux セッション起動待ちタイムアウト: $session"
+          log_info "  🔍 確認: tmux ls  /  bash bin/autonomy.sh status $project"
+        fi
       else
-        log_warn "⏱️  tmux セッション起動待ちタイムアウト: $session"
-        log_info "  🔍 確認: tmux ls  /  bash bin/autonomy.sh status $project"
+        local _suplog="${_sup_state%.json}.log"
+        log_info "🚀 TUI fallback を tmux なしで起動しました: $project"
+        log_info "  📜 ログ: $_suplog"
+        log_info "  📊 状態: bash bin/autonomy.sh status $project"
       fi
     fi
   fi

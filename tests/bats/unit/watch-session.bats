@@ -125,7 +125,7 @@ EOF
 
 # ─── tmux と headless の混在 ───────────────────────────────
 
-@test "tmux セッションも headless セッションも同時に表示" {
+@test "tmux セッションは --tmux 指定時のみ headless と同時に表示" {
   _mk_session "HeadlessProj" "completed"
   _mk_supervisor "HeadlessProj" "running" "$$"
 
@@ -140,6 +140,11 @@ EOF
   chmod +x "$STUB_BIN/tmux"
 
   run bash "$WATCH_SH" --once
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"🤖 HeadlessProj"* ]]
+  [[ "$output" != *"🖥"* ]]
+
+  run bash "$WATCH_SH" --once --tmux
   [ "$status" -eq 0 ]
   [[ "$output" == *"🤖 HeadlessProj"* ]]
   [[ "$output" == *"🖥"* ]]

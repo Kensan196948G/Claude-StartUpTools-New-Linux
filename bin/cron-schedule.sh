@@ -7,11 +7,11 @@
 # 使い方:
 #   cron-schedule.sh                  # 対話メニュー
 #   cron-schedule.sh list             # 一覧 (非対話)
-#   cron-schedule.sh add --project P --time 21:00 --dow 1,2,3,4,5,6 [--duration 300]
+#   cron-schedule.sh add --project P --time 21:00 --dow 1,2,3,4,5,6 [--duration 180]
 #   cron-schedule.sh remove --id <id>
 #   cron-schedule.sh remove-all
-#   cron-schedule.sh run-now --project P [--duration 300] [--foreground]  # 既定 BG
-#   cron-schedule.sh launch [--project P[,P2]] [--duration N] [--all] [--yes] # 登録から一括 BG
+#   cron-schedule.sh run-now --project P [--duration 180] [--foreground] [--tmux]  # cron 登録済みのみ
+#   cron-schedule.sh launch [--project P[,P2]] [--duration N] [--all] [--yes] [--tmux] # 登録から一括 BG
 #   cron-schedule.sh bulk-register [--github-only] [--unmanaged-only] [--apply]  # 曜日分散一括登録
 # ============================================================
 
@@ -28,7 +28,7 @@ source "$SCRIPT_DIR/../lib/cron-manager.sh"
 source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
 CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
-DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '300')"
+DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '180')"
 
 # --- 自動配備: launcher 起動の直前にテンプレ → ~/.claudeos を同期 (恒久ドリフト対策) ---
 #   cron が実走するのは配備済み実行体のため、PR merge 後の runtime ズレをここで吸収する。
@@ -89,10 +89,9 @@ cs__remove() {
 }
 
 # --- BG 起動: cron-launcher.sh を端末から切り離して非ブロッキング起動 ---
-#   setsid (無ければ nohup) で起動。claude UI は tmux セッション claudeos-<safe> に入り、
-#   項15 (セッション状態監視) / tmux attach で後から閲覧できる。
+#   既定は headless (claude -p) + ログ/PID 監視。tmux は --tmux 明示時だけ使う。
 cs__launch_bg() {
-  local project="$1" duration="${2:-$DEFAULT_DURATION}" safe logp runner
+  local project="$1" duration="${2:-$DEFAULT_DURATION}" use_tmux="${3:-0}" safe logp runner
   [[ -n "$project" ]] || { log_error "BG 起動: project が空です"; return 1; }
   _cs__auto_deploy
   [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
@@ -100,11 +99,17 @@ cs__launch_bg() {
   mkdir -p "$CRON_LOGS_DIR"
   logp="$CRON_LOGS_DIR/cron-$(date +%Y%m%d-%H%M%S)-${safe}.log"
   if has_cmd setsid; then runner=setsid; else runner=nohup; fi
-  "$runner" bash "$CRON_LAUNCHER" "$project" "$duration" >> "$logp" 2>&1 < /dev/null &
+  if [[ "$use_tmux" == "1" ]]; then
+    "$runner" env CLAUDEOS_HEADLESS=0 CLAUDEOS_TMUX=1 bash "$CRON_LAUNCHER" "$project" "$duration" >> "$logp" 2>&1 < /dev/null &
+  else
+    "$runner" env CLAUDEOS_HEADLESS=1 CLAUDEOS_TMUX=0 bash "$CRON_LAUNCHER" "$project" "$duration" >> "$logp" 2>&1 < /dev/null &
+  fi
   disown 2>/dev/null || true
-  log_ok "BG 起動: $project (duration=${duration}m) → claudeos-${safe}"
+  log_ok "BG 起動: $project (duration=${duration}m, mode=$([[ "$use_tmux" == "1" ]] && printf 'tmux' || printf 'headless'))"
   log_info "  ログ: $logp"
-  log_info "  監視: メニュー MO (ライブ監視タブ) / 項15 / tmux attach -t claudeos-${safe}"
+  log_info "  監視: 項15 / tail -f $logp"
+  [[ "$use_tmux" == "1" ]] && log_info "  tmux: tmux attach -t claudeos-${safe}"
+  return 0
 }
 
 # --- 登録済み cron プロジェクト一覧 (重複除外。出力: project<TAB>duration) ---
@@ -112,17 +117,32 @@ cs__registered_projects() {
   cron__list | awk -F'|' 'NF>=3 && $2!="" && !seen[$2]++ { print $2"\t"$3 }'
 }
 
+cs__registered_duration() {
+  local project="$1"
+  cron__list | awk -F'|' -v p="$project" '$2==p { print $3; found=1; exit } END { exit !found }'
+}
+
+cs__duration_within_limit() {
+  local duration="$1"
+  [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください"; return 1; }
+  if [[ "$CRON_MAX_DURATION_MIN" =~ ^[0-9]+$ ]] && (( CRON_MAX_DURATION_MIN > 0 && duration > CRON_MAX_DURATION_MIN )); then
+    log_error "duration=${duration}m は上限 ${CRON_MAX_DURATION_MIN}m を超えています"
+    return 1
+  fi
+}
+
 # --- 非対話/対話: 登録済みプロジェクトを選んで一括 BG 起動 ---
-#   cs__launch [--project P[,P2,...]] [--duration N] [--all] [--yes]
+#   cs__launch [--project P[,P2,...]] [--duration N] [--all] [--yes] [--tmux]
 #   引数なし → 登録一覧から番号 (複数可: 1,3 / すべて: a) を選択
 cs__launch() {
-  local projects_csv="" duration="" all=0 yes=0 all_selected=0
+  local projects_csv="" duration="" all=0 yes=0 all_selected=0 use_tmux=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)  projects_csv="$2"; shift 2 ;;
       --duration) duration="$2"; shift 2 ;;
       --all)      all=1; all_selected=1; shift ;;
       --yes|-y)   yes=1; shift ;;
+      --tmux)     use_tmux=1; shift ;;
       *) log_error "launch: 不明な引数: $1"; return 1 ;;
     esac
   done
@@ -141,10 +161,14 @@ cs__launch() {
     local nm i
     for nm in "${names[@]}"; do
       [[ -z "$nm" ]] && continue
-      local dd="$DEFAULT_DURATION"
+      local dd=""
       for i in "${!reg_p[@]}"; do
         if [[ "${reg_p[$i]}" == "$nm" ]]; then dd="${reg_d[$i]}"; break; fi
       done
+      if [[ -z "$dd" ]]; then
+        log_error "未登録プロジェクトは実行できません: $nm"
+        return 1
+      fi
       chosen_p+=("$nm"); chosen_d+=("${duration:-$dd}")
     done
   elif (( all )); then
@@ -173,6 +197,12 @@ cs__launch() {
   fi
 
   (( ${#chosen_p[@]} == 0 )) && { log_warn "起動対象がありません"; return 0; }
+  if [[ "$CRON_MAX_PROJECTS_PER_DAY" =~ ^[0-9]+$ ]] && (( CRON_MAX_PROJECTS_PER_DAY > 0 && ${#chosen_p[@]} > CRON_MAX_PROJECTS_PER_DAY )); then
+    log_error "一括起動は最大 ${CRON_MAX_PROJECTS_PER_DAY} プロジェクトまでです"
+    return 1
+  fi
+  local i
+  for i in "${!chosen_d[@]}"; do cs__duration_within_limit "${chosen_d[$i]}" || return 1; done
   if (( all_selected && ${#chosen_p[@]} > 1 && yes == 0 )); then
     if [[ -t 0 ]]; then
       local ans
@@ -183,31 +213,39 @@ cs__launch() {
       return 1
     fi
   fi
-  local i
   for i in "${!chosen_p[@]}"; do
-    cs__launch_bg "${chosen_p[$i]}" "${chosen_d[$i]}" || log_warn "起動失敗: ${chosen_p[$i]}"
+    cs__launch_bg "${chosen_p[$i]}" "${chosen_d[$i]}" "$use_tmux" || log_warn "起動失敗: ${chosen_p[$i]}"
   done
   log_ok "${#chosen_p[@]} 件を BG 起動しました"
 }
 
 # --- 非対話: run-now (BG 既定。--foreground は BG 起動 + ログ tail) ---
 cs__run_now() {
-  local project="" duration="$DEFAULT_DURATION" fg=0
+  local project="" duration="" fg=0 use_tmux=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)         project="$2"; shift 2 ;;
       --duration)        duration="$2"; shift 2 ;;
       --foreground|--fg) fg=1; shift ;;
       --background|--bg) fg=0; shift ;;
+      --tmux)            use_tmux=1; shift ;;
       *) log_error "run-now: 不明な引数: $1"; return 1 ;;
     esac
   done
   [[ -n "$project" ]] || { log_error "run-now: --project は必須"; return 1; }
   [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
+  local registered_duration
+  if ! registered_duration="$(cs__registered_duration "$project")"; then
+    log_error "未登録プロジェクトは実行できません: $project"
+    log_info  "  先に cron 登録してください: bash bin/cron-schedule.sh add --project $project --time HH:MM --dow <0-6>"
+    return 1
+  fi
+  duration="${duration:-$registered_duration}"
+  cs__duration_within_limit "$duration" || return 1
   if (( fg )); then
     # headless 経路では全出力が LOG_FILE へ流れ端末には何も出ない。
     # BG 起動後にログファイルを tail -f してライブ表示する。
-    cs__launch_bg "$project" "$duration"
+    cs__launch_bg "$project" "$duration" "$use_tmux"
     local safe logf waited=0
     safe="$(ccsu_safe_name "$project")"
     while (( waited < 8 )); do
@@ -222,14 +260,14 @@ cs__run_now() {
       log_warn "  ログファイルが見つかりませんでした (watch-session でご確認ください)"
     fi
   else
-    cs__launch_bg "$project" "$duration"
+    cs__launch_bg "$project" "$duration" "$use_tmux"
   fi
 }
 
-# --- GitHub レポジトリ判定 (.git + remote origin) ---
+# --- GitHub レポジトリ判定 (worktree/submodule 含む Git + remote origin) ---
 cs__is_github() {
   local d; d="$(config_projects_dir)/$1"
-  [[ -d "$d/.git" ]] || return 1
+  [[ -e "$d/.git" ]] || return 1
   git -C "$d" remote get-url origin >/dev/null 2>&1
 }
 
@@ -256,7 +294,7 @@ cs__bulk_register() {
     esac
   done
   [[ "$start_hour" =~ ^[0-9]+$ && "$duration" =~ ^[0-9]+$ ]] || { log_error "--start / --duration は数値"; return 1; }
-  # 既定 spacing: duration を時間換算 (= 重複しない最小間隔)。例 300m → 5h
+  # 既定 spacing: duration を時間換算 (= 重複しない最小間隔)。例 180m → 3h
   [[ -z "$spacing" ]] && spacing=$(( (duration + 59) / 60 ))
   [[ "$spacing" =~ ^[0-9]+$ ]] || { log_error "--spacing は数値"; return 1; }
   (( spacing < 1 )) && spacing=1
@@ -286,9 +324,19 @@ cs__bulk_register() {
   log_info "一括 cron 登録 計画: ${#cands[@]} 件 / 曜日=$dow / 開始 ${start_hour}時 / 間隔 ${spacing}h / duration ${duration}m"
   (( apply == 0 )) && printf '  %s※ DRY-RUN (実登録は --apply を付与)%s\n' "$C_YELLOW" "$C_RESET"
 
-  local i day_idx slot hour d t ok=0 skip=0
+  local per_day="$CRON_MAX_PROJECTS_PER_DAY"
+  [[ "$per_day" =~ ^[0-9]+$ ]] || per_day=1
+  (( per_day < 1 )) && per_day=1
+  local i day_idx slot hour d t ok=0 skip=0 capacity
+  capacity=$(( ndow * per_day ))
   for i in "${!cands[@]}"; do
-    day_idx=$(( i % ndow )); slot=$(( i / ndow ))
+    if (( i >= capacity )); then
+      printf '  ⚠️  %-30s 容量超過(%d件/週) → skip\n' "${cands[$i]}" "$capacity"
+      skip=$((skip+1))
+      continue
+    fi
+    day_idx=$(( i / per_day ))
+    slot=$(( i % per_day ))
     d="${dows[$day_idx]}"; hour=$(( start_hour + slot * spacing ))
     if (( hour > 23 )); then printf '  ⚠️  %-30s スロット超過(%d時) → skip\n' "${cands[$i]}" "$hour"; skip=$((skip+1)); continue; fi
     t="$(printf '%02d:00' "$hour")"

@@ -37,6 +37,7 @@ config_projects_dir() {
 
 # --- プロジェクト列挙 (正本) ---
 #   条件: config_projects_dir 直下の「ディレクトリ かつ Git リポジトリ(.git 保有)」のみ。
+#   worktree/submodule の .git ファイルも Git リポジトリとして扱う。
 #   ファイル・非 Git ディレクトリ・隠しエントリは除外。出力は名前を 1 行 1 件 (名前順)。
 #   ※ */ グロブがディレクトリのみ・隠し除外を満たすため、.md/.sh/.json 等は自然に落ちる。
 config_project_excluded() {
@@ -56,7 +57,7 @@ config_project_list() {
   local d name
   for d in "$base"/*/; do
     [[ -d "$d" ]] || continue         # マッチ無し時の literal "*/" 対策
-    [[ -d "${d}.git" ]] || continue   # Git リポジトリのみ (.git サブディレクトリ保有)
+    [[ -e "${d}.git" ]] || continue   # Git リポジトリのみ (.git dir/file 保有)
     name="$(basename "$d")"
     config_project_excluded "$name" "$d" && continue
     printf '%s\n' "$name"

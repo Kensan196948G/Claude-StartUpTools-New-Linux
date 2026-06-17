@@ -11,8 +11,7 @@
 #   - session.json の生成・更新（start/end/status）
 #   - ログを /home/kensan/.claudeos/logs/ へ
 #   - 終了時に HTML レポートメールを送信 (v3.2.0 追加)
-#   - tmux セッション claudeos-<safe> に監視用メタデータを付与 (v3.3.8 追加)
-#     (安定ウィンドウ名 + @ccsu_project / @ccsu_duration_min)
+#   - 既定は headless (claude -p)。tmux は CLAUDEOS_HEADLESS=0 + CLAUDEOS_TMUX=1 の明示時のみ。
 # ============================================================
 
 set -euo pipefail
@@ -454,7 +453,7 @@ PYEOF
   # 既存の終了コード伝播 (L416付近) に合わせて exit ファイルへ書き出す
   echo "$CLAUDE_EXIT" > "$CLAUDE_EXIT_FILE"
 
-# ---- 従来の tmux 対話 TUI 経路 (既定) ----
+# ---- 従来の対話 TUI 経路 (明示フォールバック) ----
 else
 # wrapper script: -e フラグ経由で env var を渡す（tmux サーバーのグローバル環境に依存しない）
 # set -e を使わず claude_exit に明示的に格納する（非0終了でも wait-for -S を必ず実行するため）
@@ -476,7 +475,7 @@ chmod +x "$CLAUDE_WRAPPER"
 
 _TMUX_DONE="done-${SAFE_PROJECT}"
 
-if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-1}" == "1" ]]; then
+if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
   # Claude を tmux セッション内で起動（TTY あり → attach で UI 閲覧可能）
   # -e で env var を明示渡し（tmux サーバーのグローバル環境に依存しない）
 
@@ -523,7 +522,7 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-1}" == "1" ]]; then
   fi
   tmux kill-session -t "$_KEEPER_SESSION" 2>/dev/null || true
 else
-  # tmux 無効時は従来通り TTY なし実行
+  # tmux 無効時は TTY なし直実行。既定ではここも tmux を使わない。
   timeout --foreground "${DURATION_SEC}s" claude --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
 fi
 fi  # CLAUDEOS_HEADLESS 分岐の終端
