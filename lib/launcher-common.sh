@@ -25,18 +25,116 @@ launcher__project_dir() { printf '%s/%s' "$(config_projects_dir)" "$1"; }
 # launcher__project_exists <project> — ディレクトリが存在すれば 0
 launcher__project_exists() { [[ -d "$(launcher__project_dir "$1")" ]]; }
 
-# launcher__select_project — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
-#   (一覧が空なら手動入力)
+# launcher__project_run_status <project> — supervisor 状態を返す
+# stdout: ok | running | goal-reached | crash-loop | blocked
+launcher__project_run_status() {
+  local project="$1"
+  local sup_dir="${CCSU_SUP_DIR:-${CCSU_HOME}/supervisor}"
+  local safe; safe="$(ccsu_safe_name "$project")"
+  local sup_json="$sup_dir/${safe}.json"
+
+  if [[ ! -f "$sup_json" ]]; then printf 'ok'; return; fi
+
+  local status pid
+  status="$(json_get "$sup_json" '.status' 'stopped')"
+  pid="$(json_get "$sup_json" '.pid' '0')"
+
+  if [[ "$status" == "running" ]] && [[ "$pid" != "0" ]] && kill -0 "$pid" 2>/dev/null; then
+    printf 'running'; return
+  fi
+
+  case "$status" in
+    goal-reached) printf 'goal-reached'; return ;;
+    crash-loop)   printf 'crash-loop';   return ;;
+    blocked)
+      local state_json halt
+      state_json="$(config_projects_dir)/$project/state.json"
+      halt="$(json_get "$state_json" '.supervisor.halt_on_blocked' 'true')"
+      [[ "$halt" != "false" ]] && { printf 'blocked'; return; }
+      ;;
+  esac
+  printf 'ok'
+}
+
+# launcher__select_project [mode] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
+#   mode: foreground (既定) | background
+#   実行可 = 番号付き色分け表示 / 実行不可 = 番号なし (選択不可)
 launcher__select_project() {
+  local mode="${1:-foreground}"
+  local mode_label
+  case "$mode" in
+    background) mode_label="バックグラウンド" ;;
+    *)          mode_label="フォアグラウンド" ;;
+  esac
+
   local -a projs; mapfile -t projs < <(launcher__project_list)
   if (( ${#projs[@]} == 0 )); then
     local name; read -rp "  プロジェクト名: " name; printf '%s' "$name"; return 0
   fi
-  local i
-  for i in "${!projs[@]}"; do printf '  [%d] %s\n' "$((i + 1))" "${projs[$i]}" >&2; done
-  local idx; read -rp "  番号: " idx
-  if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#projs[@]} )); then
-    printf '%s' "${projs[$((idx - 1))]}"
+
+  local -a selectable_idxs=()
+  local display_num=0
+
+  printf '\n  %s📋 プロジェクト一覧 [%s起動]%s\n' "$C_CYAN" "$mode_label" "$C_RESET" >&2
+  printf '     %s番号付き = 選択可  ── = 選択不可%s\n\n' "$C_WHITE" "$C_RESET" >&2
+
+  local i proj run_status is_selectable
+  for i in "${!projs[@]}"; do
+    proj="${projs[$i]}"
+    run_status="$(launcher__project_run_status "$proj")"
+
+    is_selectable=1
+    [[ "$run_status" == "running" ]] && is_selectable=0
+    if [[ "$mode" == "background" ]]; then
+      [[ "$run_status" == "goal-reached" ]] && is_selectable=0
+      [[ "$run_status" == "blocked" ]]      && is_selectable=0
+    fi
+
+    if (( is_selectable )); then
+      display_num=$(( display_num + 1 ))
+      selectable_idxs+=("$i")
+      case "$run_status" in
+        goal-reached)
+          printf '  %s[%2d]%s %s🟡 %-40s%s %s(目標達成済)%s\n' \
+            "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
+            "$C_DKGREEN" "$C_RESET" >&2 ;;
+        crash-loop)
+          printf '  %s[%2d]%s %s🟡 %-40s%s %s(クラッシュ)%s\n' \
+            "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
+            "$C_YELLOW" "$C_RESET" >&2 ;;
+        blocked)
+          printf '  %s[%2d]%s %s🟡 %-40s%s %s(ブロック中)%s\n' \
+            "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
+            "$C_RED" "$C_RESET" >&2 ;;
+        *)
+          printf '  %s[%2d]%s %s🟢 %s%s\n' \
+            "$C_GREEN" "$display_num" "$C_RESET" "$C_GREEN" "$proj" "$C_RESET" >&2 ;;
+      esac
+    else
+      case "$run_status" in
+        running)
+          printf '       %s🔴 %-42s%s %s(実行中・選択不可)%s\n' \
+            "$C_RED" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
+        goal-reached)
+          printf '       %s✅ %-42s%s %s(目標達成・選択不可)%s\n' \
+            "$C_DKGREEN" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
+        blocked)
+          printf '       %s🚫 %-42s%s %s(ブロック・選択不可)%s\n' \
+            "$C_WHITE" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
+      esac
+    fi
+  done
+
+  printf '\n' >&2
+  if (( ${#selectable_idxs[@]} == 0 )); then
+    printf '  %s選択可能なプロジェクトがありません%s\n' "$C_RED" "$C_RESET" >&2
+    return 0
   fi
-  return 0   # 範囲外でも空 + exit 0 (set -e 安全)
+
+  local idx
+  read -rp "  番号 (1-${display_num}): " idx
+  if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#selectable_idxs[@]} )); then
+    printf '%s' "${projs[${selectable_idxs[$((idx - 1))]}]}"
+  fi
+  return 0
 }

@@ -178,7 +178,7 @@ cs__launch() {
   log_ok "${#chosen_p[@]} 件を BG 起動しました"
 }
 
-# --- 非対話: run-now (BG 既定。--foreground で従来の同期実行) ---
+# --- 非対話: run-now (BG 既定。--foreground は BG 起動 + ログ tail) ---
 cs__run_now() {
   local project="" duration="$DEFAULT_DURATION" fg=0
   while [[ $# -gt 0 ]]; do
@@ -193,9 +193,22 @@ cs__run_now() {
   [[ -n "$project" ]] || { log_error "run-now: --project は必須"; return 1; }
   [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
   if (( fg )); then
-    _cs__auto_deploy
-    log_info "今すぐ実行 (フォアグラウンド): $project (duration=${duration}m)"
-    bash "$CRON_LAUNCHER" "$project" "$duration"
+    # headless 経路では全出力が LOG_FILE へ流れ端末には何も出ない。
+    # BG 起動後にログファイルを tail -f してライブ表示する。
+    cs__launch_bg "$project" "$duration"
+    local safe logf waited=0
+    safe="$(ccsu_safe_name "$project")"
+    while (( waited < 8 )); do
+      logf="$(ls -t "$CRON_LOGS_DIR"/cron-*-"${safe}".log 2>/dev/null | head -1)"
+      [[ -n "$logf" ]] && break
+      sleep 1; waited=$(( waited + 1 ))
+    done
+    if [[ -n "$logf" ]]; then
+      log_info "  ログ監視 (Ctrl+C で終了・プロセスは継続): $logf"
+      tail -f "$logf" || true
+    else
+      log_warn "  ログファイルが見つかりませんでした (watch-session でご確認ください)"
+    fi
   else
     cs__launch_bg "$project" "$duration"
   fi
@@ -334,7 +347,7 @@ cs__menu() {
          fi
          read -rp "  Enter で戻る " _ ;;
       7) cs__launch || true
-         read -rp "  Enter で戻る " _ ;;
+         bash "$SCRIPT_DIR/../libexec/watch-session.sh" || true ;;
       0) return 0 ;;
       *) log_warn "無効な入力"; sleep 1 ;;
     esac

@@ -146,7 +146,7 @@ confirm_yes_no() {
 # L1/S1: プロジェクト選択 → Yes/No 確認 → start-claude.sh
 launch_claude() {
   local mode="$1" project mode_label
-  project="$(launcher__select_project)"
+  project="$(launcher__select_project "$mode")"
   [[ -n "$project" ]] || { log_warn "プロジェクト未選択"; sleep 1; return 0; }
   case "$mode" in
     foreground) mode_label="🖥️  フォアグラウンド即起動" ;;
