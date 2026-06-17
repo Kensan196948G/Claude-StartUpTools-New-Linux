@@ -144,6 +144,11 @@ au__start() {
   mkdir -p "$SUP_DIR"; chmod 700 "$SUP_DIR" 2>/dev/null || true
   rm -f "$(sup__stop_file "$project")"   # 起動前に古い stop フラグをクリア (fresh start)
   logf="$SUP_DIR/$(ccsu_safe_name "$project").log"
+  # 追記ログ ($logf は >> で履歴蓄積) に新セッション境界を1行差し込み、過去の
+  # 🚀 start / 🛑 stop 履歴と今回の起動を視覚的に分離する。タイムスタンプ欠落 +
+  # headless 不可視で「動いていない」と誤認されるのを防ぐための衛生処理。
+  printf '%s──────── 🆕 new session: %s @ %s ────────%s\n' \
+    "$C_MAGENTA" "$project" "$(date -Iseconds)" "$C_RESET" >>"$logf"
   if has_cmd setsid; then runner=setsid; else runner=nohup; fi
   "$runner" bash "$SELF" __run "$project" ${duration:+"$duration"} </dev/null >>"$logf" 2>&1 &
   disown 2>/dev/null || true
@@ -155,7 +160,8 @@ au__start() {
     sleep 0.2
   done
   log_ok "🤖 supervisor 起動: $project"
-  log_info "  📊 状態: bash bin/autonomy.sh status $project   ログ: $logf"
+  log_info "  👁 追従: tail -f $logf   (ヘッドレス起動のため TUI 画面は出ません/ログで稼働を追えます)"
+  log_info "  📊 状態: bash bin/autonomy.sh status $project"
   log_info "  🛑 停止: bash bin/autonomy.sh stop $project    (--now で即停止)"
 }
 
