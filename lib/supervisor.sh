@@ -70,7 +70,7 @@ sup__goal_reason() {
   local ready="$1" mode="$2"
   [[ "$ready" == "true" ]] && { printf 'goal-reached:deploy.ready'; return 0; }
   case "$mode" in
-    maintenance|released) printf 'goal-reached:phase_mode=%s' "$mode" ;;
+    maintenance|released|release-ready) printf 'goal-reached:phase_mode=%s' "$mode" ;;
     *) : ;;
   esac
 }
@@ -171,7 +171,9 @@ sup__throttle_goal_bias() {
 sup__project_stop_reason() {
   local pstate="$1" ready mode sec blocked halt_blocked reason
   [[ -f "$pstate" ]] || return 0
+  # .deploy.ready (標準) / .status.deploy_ready (旧スキーマ互換) の両パスを確認
   ready="$(json_get "$pstate" '.deploy.ready' 'false')"
+  [[ "$ready" != "true" ]] && ready="$(json_get "$pstate" '.status.deploy_ready' 'false')"
   mode="$(json_get "$pstate" '.project.phase_mode' '')"
   [[ -z "$mode" ]] && mode="$(json_get "$pstate" '.maintenance.phase_mode' '')"
   sec="$(json_get "$pstate" '.kpi.security_critical' '0')"

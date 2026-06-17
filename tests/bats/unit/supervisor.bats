@@ -26,6 +26,7 @@ teardown() { _bats_common_teardown; }
 @test "sup__goal_reason: deploy.ready=true" { run sup__goal_reason true development; [ "$output" = "goal-reached:deploy.ready" ]; }
 @test "sup__goal_reason: phase_mode=maintenance" { run sup__goal_reason false maintenance; [ "$output" = "goal-reached:phase_mode=maintenance" ]; }
 @test "sup__goal_reason: released" { run sup__goal_reason false released; [ "$output" = "goal-reached:phase_mode=released" ]; }
+@test "sup__goal_reason: release-ready は goal-reached" { run sup__goal_reason false release-ready; [ "$output" = "goal-reached:phase_mode=release-ready" ]; }
 @test "sup__goal_reason: development は継続(空)" { run sup__goal_reason false development; [ -z "$output" ]; }
 @test "sup__abnormal_reason: security>0" { run sup__abnormal_reason 2 0; [ "$output" = "blocked:security_critical=2" ]; }
 @test "sup__abnormal_reason: blocked>0" { run sup__abnormal_reason 0 3; [ "$output" = "blocked:blocked_issues=3" ]; }
@@ -93,6 +94,16 @@ teardown() { _bats_common_teardown; }
   echo '{ "project": {"phase_mode":"maintenance"} }' > "$TEST_TEMP/p.json"
   run sup__project_stop_reason "$TEST_TEMP/p.json"
   [ "$output" = "goal-reached:phase_mode=maintenance" ]
+}
+@test "sup__project_stop_reason: phase_mode=release-ready → goal-reached" {
+  echo '{ "project": {"phase_mode":"release-ready"} }' > "$TEST_TEMP/p.json"
+  run sup__project_stop_reason "$TEST_TEMP/p.json"
+  [ "$output" = "goal-reached:phase_mode=release-ready" ]
+}
+@test "sup__project_stop_reason: status.deploy_ready=true (旧スキーマ互換) → goal-reached" {
+  echo '{ "status": {"deploy_ready": true} }' > "$TEST_TEMP/p.json"
+  run sup__project_stop_reason "$TEST_TEMP/p.json"
+  [ "$output" = "goal-reached:deploy.ready" ]
 }
 @test "sup__project_stop_reason: development は空(継続)" {
   echo '{ "project": {"phase_mode":"development"}, "deploy": {"ready": false} }' > "$TEST_TEMP/p.json"
