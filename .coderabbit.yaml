@@ -128,6 +128,3 @@ knowledge_base:
     scope: "auto"
   pull_requests:
     scope: "auto"
-
-# レビュー対象外パスのデフォルト無効化
-ignore_dot_files: false
