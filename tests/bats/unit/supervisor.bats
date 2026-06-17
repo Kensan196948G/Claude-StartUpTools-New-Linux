@@ -177,6 +177,32 @@ teardown() { _bats_common_teardown; }
   run sup__loop Demo 5
   [ "$(sup__get Demo status '')" = "crash-loop" ]
 }
+@test "sup__loop: コスト≥\$0.02 の短命セッションは crash-short にカウントしない" {
+  # 短命でも実コスト ($0.18) があるセッションは「実作業の証拠」→ crash-loop を回避
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+echo 0.18 > "$CLAUDEOS_SESSION_COST_FILE"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  echo '{ "deploy": {"ready": false}, "supervisor": {"crash_loop_threshold": 2, "crash_loop_min_seconds": 999999, "max_restarts_per_day": 2} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo 5
+  # crash-loop ではなく daily-cap で停止 (consecutive_short がリセットされ続ける)
+  [ "$(sup__get Demo status '')" = "daily-cap" ]
+  [ "$(sup__get Demo consecutive_short 99)" = "0" ]
+}
+@test "sup__loop: コスト\$0.00 の短命セッションは crash-short にカウントする" {
+  # コスト未発生 (API エラー想定) の短命は従来どおり crash-short カウント
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+echo 0.00 > "$CLAUDEOS_SESSION_COST_FILE"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  echo '{ "deploy": {"ready": false}, "supervisor": {"crash_loop_threshold": 2, "crash_loop_min_seconds": 999999, "max_restarts_per_day": 100} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo 5
+  [ "$(sup__get Demo status '')" = "crash-loop" ]
+}
 @test "sup__loop: 起動前 stop フラグで manual 停止 (restarts=0)" {
   echo '{ "deploy": {"ready": false} }' > "$TEST_TEMP/projects/Demo/state.json"
   mkdir -p "$CCSU_SUP_DIR"; : > "$CCSU_SUP_DIR/Demo.stop"

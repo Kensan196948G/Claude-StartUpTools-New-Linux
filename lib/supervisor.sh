@@ -363,7 +363,17 @@ sup__loop() {
     SUP_RESTARTS=$(( SUP_RESTARTS + 1 ))
     SUP_MINUTES=$(( SUP_MINUTES + sess_secs / 60 ))
     SUP_LAST_SECS="$sess_secs"
-    if (( sess_secs < crash_min )); then SUP_CONSEC_SHORT=$(( SUP_CONSEC_SHORT + 1 )); else SUP_CONSEC_SHORT=0; fi
+    # コスト ≥ $0.02 なら実作業の証拠 → 時間が短くても crash-short にカウントしない
+    # (真のクラッシュは API エラー即終了でコスト $0.00 または極小値になる)
+    local _is_productive=0
+    if [[ -n "$_sess_cost" ]] && awk "BEGIN{exit (${_sess_cost} >= 0.02) ? 0 : 1}" 2>/dev/null; then
+      _is_productive=1
+    fi
+    if (( sess_secs < crash_min && ! _is_productive )); then
+      SUP_CONSEC_SHORT=$(( SUP_CONSEC_SHORT + 1 ))
+    else
+      SUP_CONSEC_SHORT=0
+    fi
     SUP_LAST_REASON="session ended (${sess_secs}s)"; sup__persist "$project"
 
     # 8) Goal/異常 (セッション後)
