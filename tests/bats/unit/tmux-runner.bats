@@ -122,6 +122,7 @@ teardown() { _bats_common_teardown; }
 # ---- 終了レポートメール (手動セッション) ----------------------
 
 @test "tmux__send_report: EMAIL_ENABLED 未設定なら python3 を呼ばない" {
+  unset CLAUDEOS_EMAIL_ENABLED
   make_stub_bin python3 'echo called > "$TEST_TEMP/py-called"; exit 0'
   CCSU_REPORT_SCRIPT="$TEST_TEMP/report.py"; : > "$CCSU_REPORT_SCRIPT"
   run tmux__send_report sid "$TEST_TEMP/log" completed s e 5 Proj
@@ -168,6 +169,7 @@ teardown() { _bats_common_teardown; }
 }
 
 @test "tmux_run: EMAIL_ENABLED 未設定なら watcher 案内を出さない" {
+  unset CLAUDEOS_EMAIL_ENABLED
   run tmux_run MyProj 5 background
   [ "$status" -eq 0 ]
   [[ "$output" != *"終了時にレポート送信"* ]]

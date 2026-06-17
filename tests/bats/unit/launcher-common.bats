@@ -181,10 +181,8 @@ EOF
 
 # ─── launcher__select_project: mode ──────────────────────────
 
-@test "launcher__select_project: running プロジェクトは foreground でも選択不可" {
+@test "launcher__select_project: running プロジェクトも foreground で選択可" {
   _mk_sup_json "Alpha" "running" "$$"   # Alpha = running (PID 生存)
-  # Beta = ok (JSON なし)
-  # 1 番 = Beta のみ選択可のはず。'1' 入力で Beta を返す
   run bash -c "
     export AI_STARTUP_CONFIG_PATH='$AI_STARTUP_CONFIG_PATH'
     export CCSU_SUP_DIR='$CCSU_SUP_DIR'
@@ -192,7 +190,7 @@ EOF
     printf '1\n' | launcher__select_project foreground 2>/dev/null
   "
   [ "$status" -eq 0 ]
-  [ "$output" = "Beta" ]
+  [ "$output" = "Alpha" ]
 }
 
 @test "launcher__select_project: goal-reached は foreground で選択可 (番号付き)" {
@@ -236,7 +234,7 @@ EOF
   [ "$output" = "Alpha" ]
 }
 
-@test "launcher__select_project: 全選択不可なら空を返す" {
+@test "launcher__select_project: /exit は空を返して戻る" {
   _mk_sup_json "Alpha" "running" "$$"
   _mk_sup_json "Beta"  "running" "$$"
   _mk_sup_json "Worktree" "running" "$$"
@@ -244,7 +242,7 @@ EOF
     export AI_STARTUP_CONFIG_PATH='$AI_STARTUP_CONFIG_PATH'
     export CCSU_SUP_DIR='$CCSU_SUP_DIR'
     source '$REPO_ROOT/lib/launcher-common.sh'
-    printf '1\n' | launcher__select_project foreground 2>/dev/null
+    printf '/exit\n' | launcher__select_project foreground 2>/dev/null
   "
   [ "$status" -eq 0 ]
   [ "$output" = "" ]

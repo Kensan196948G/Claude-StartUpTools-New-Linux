@@ -62,7 +62,7 @@ show_menu() {
   # 起動
   printf '  %s🚀 %s起動%s\n' "$C_CYAN" "$C_DKCYAN" "$C_RESET"
   printf '   %s L1 %s  🖥️  ローカル即起動 (フォアグラウンド)\n' "$C_BG_GREEN" "$C_RESET"
-  printf '   %s S1 %s  🌙 バックグラウンド起動 (自律 / 5h)\n' "$C_BG_YELLOW" "$C_RESET"
+  printf '   %s S1 %s  🌙 バックグラウンド起動 (自律 / 3h)\n' "$C_BG_YELLOW" "$C_RESET"
   printf '\n'
 
   if (( is_maint == 0 )); then
@@ -144,13 +144,48 @@ confirm_yes_no() {
 }
 
 # L1/S1: プロジェクト選択 → Yes/No 確認 → start-claude.sh
+handle_running_project() {
+  local project="$1"
+  printf '\n  %s🔴 %s は実行中です。%s\n' "$C_YELLOW" "$project" "$C_RESET"
+  printf '    %s[a]%s 接続   %s[s]%s 停止   %s[k]%s 即停止   %s[r]%s 再起動   %s[c]%s キャンセル\n' \
+    "$C_YELLOW" "$C_RESET" "$C_YELLOW" "$C_RESET" "$C_RED" "$C_RESET" "$C_GREEN" "$C_RESET" "$C_WHITE" "$C_RESET"
+  local op; read -rp "  操作: " op
+  case "${op,,}" in
+    a)
+      bash "$LIBEXEC/watch-session.sh" --connect "$project" || true
+      read -rp "  Enter で戻る " _ || true
+      return 0 ;;
+    s)
+      bash "$BIN/autonomy.sh" stop "$project" || true
+      read -rp "  Enter で戻る " _ || true
+      return 0 ;;
+    k)
+      bash "$BIN/autonomy.sh" stop "$project" --now || true
+      read -rp "  Enter で戻る " _ || true
+      return 0 ;;
+    r)
+      bash "$BIN/autonomy.sh" stop "$project" --now || true
+      return 2 ;;
+    *) return 0 ;;
+  esac
+}
+
 launch_claude() {
-  local mode="$1" project mode_label
+  local mode="$1" project mode_label run_status action_rc
   project="$(launcher__select_project "$mode")"
   [[ -n "$project" ]] || { log_warn "プロジェクト未選択"; sleep 1; return 0; }
+  run_status="$(launcher__project_run_status "$project")"
+  if [[ "$run_status" == "running" ]]; then
+    if handle_running_project "$project"; then
+      return 0
+    else
+      action_rc=$?
+      [[ "$action_rc" -eq 2 ]] || return 0
+    fi
+  fi
   case "$mode" in
     foreground) mode_label="🖥️  フォアグラウンド即起動" ;;
-    background) mode_label="🌙 バックグラウンド自律起動 (5h)" ;;
+    background) mode_label="🌙 バックグラウンド自律起動 (3h)" ;;
     *)          mode_label="$mode" ;;
   esac
   printf '\n  %s🚀 %s%s%s を %s%s%s で実行します。%s\n' \

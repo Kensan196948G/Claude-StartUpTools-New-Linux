@@ -21,7 +21,11 @@ case "$sub" in
   *) exit 0 ;;
 esac
 '
-  make_stub_bin claude 'exit 0'
+  make_stub_bin claude 'printf "%s\n" "$*" >> "$TEST_TEMP/claude.log"; exit 0'
+  make_stub_bin gnome-terminal '
+printf "%s\n" "$*" >> "$TEST_TEMP/terminal.log"
+exit 0
+'
   make_stub_bin setsid '
 echo "$@" >> "$TEST_TEMP/setsid.log"
 p="${4:-}"
@@ -70,6 +74,31 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"supervisor 起動"* ]]
 }
 
+@test "start-claude: duration 未指定は supervisor 既定 180m を使う" {
+  run bash "$SCRIPT" --project MyProj --background
+  [ "$status" -eq 0 ]
+  grep -q "__run MyProj 180" "$TEST_TEMP/setsid.log"
+}
+
+@test "start-claude: duration 180m 超は拒否する" {
+  run bash "$SCRIPT" --project MyProj --background --duration 181
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"上限 180m"* ]]
+}
+
+@test "start-claude: 実行中セッションが2件なら新規起動を拒否する" {
+  mkdir -p "$CLAUDEOS_HOME/supervisor"
+  cat > "$CLAUDEOS_HOME/supervisor/RunA.json" <<JSON
+{"project":"RunA","status":"running","pid":$$}
+JSON
+  cat > "$CLAUDEOS_HOME/supervisor/RunB.json" <<JSON
+{"project":"RunB","status":"running","pid":$$}
+JSON
+  run bash "$SCRIPT" --project MyProj --background --duration 5
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"同時実行セッション上限"* ]]
+}
+
 @test "start-claude: --safe-mode は既定で tmux なし直接起動" {
   run bash "$SCRIPT" --project MyProj --safe-mode --background --duration 5
   [ "$status" -eq 0 ]
@@ -85,37 +114,62 @@ teardown() { _bats_common_teardown; }
   [ -f "$TMUX_STATE/claudeos-MyProj" ]
 }
 
-@test "start-claude: foreground headless は tmux 外で即復帰し追尾手順を案内" {
-  # tmux 外: ブロックせず即復帰し、別端末での tail -f 手順を案内する。
-  # 旧実装の `tail -f` はここで run を永久ブロックしていた → 即復帰の回帰防止。
+@test "start-claude: foreground は新規端末タブで Claude プロンプトを起動する" {
+  export DISPLAY=":99"
+  run bash "$SCRIPT" --project MyProj --foreground --duration 5
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Claude プロンプトを新規端末タブで起動しました"* ]]
+  [ -f "$TEST_TEMP/terminal.log" ]
+  grep -q -- "--tab" "$TEST_TEMP/terminal.log"
+  grep -q -- "Claude: MyProj" "$TEST_TEMP/terminal.log"
+  [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
+  [ ! -f "$TMUX_STATE/new-window.log" ]
+}
+
+@test "start-claude: DISPLAY なしでも wt.exe があれば Windows Terminal タブを使う" {
+  rm -f "$TEST_TEMP/terminal.log"
+  make_stub_bin wt.exe '
+printf "%s\n" "$*" >> "$TEST_TEMP/wt.log"
+exit 0
+'
+  unset DISPLAY
+  unset WAYLAND_DISPLAY
+  run bash "$SCRIPT" --project MyProj --foreground --duration 5
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Claude プロンプトを新規端末タブで起動しました"* ]]
+  [ -f "$TEST_TEMP/wt.log" ]
+  grep -q -- "new-tab" "$TEST_TEMP/wt.log"
+  grep -q -- "Claude: MyProj" "$TEST_TEMP/wt.log"
+}
+
+@test "start-claude: foreground は端末タブ不可なら現在端末で Claude プロンプトを起動する" {
   unset TMUX
-  mkdir -p "$CCSU_SUP_DIR"
-  printf 'log line\n' > "$CCSU_SUP_DIR/MyProj.log"
+  unset DISPLAY
+  unset WAYLAND_DISPLAY
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
-  [[ "$output" == *"tail -f"* ]]
-  [[ "$output" == *"メニュー操作へ戻ります"* ]]
-  # tmux 外なので別ウィンドウは開かない
+  [[ "$output" == *"Claude プロンプト起動"* ]]
+  [ -f "$TEST_TEMP/claude.log" ]
+  ! grep -q -- "-p" "$TEST_TEMP/claude.log"
+  [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
   [ ! -f "$TMUX_STATE/new-window.log" ]
 }
 
-@test "start-claude: foreground headless は tmux 内でも既定で別ウィンドウを開かない" {
+@test "start-claude: foreground は tmux 内でも既定で端末タブを使う" {
   export TMUX="/tmp/fake,0,0"
-  mkdir -p "$CCSU_SUP_DIR"
-  printf 'log line\n' > "$CCSU_SUP_DIR/MyProj.log"
+  export DISPLAY=":99"
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
-  [[ "$output" == *"tail -f"* ]]
+  [[ "$output" == *"Claude プロンプトを新規端末タブで起動しました"* ]]
+  [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
+  [ -f "$TEST_TEMP/terminal.log" ]
   [ ! -f "$TMUX_STATE/new-window.log" ]
 }
 
-@test "start-claude: foreground headless --tmux は tmux 内で別ウィンドウを開く" {
+@test "start-claude: foreground --tmux は tmux fallback を使う" {
   export TMUX="/tmp/fake,0,0"
-  mkdir -p "$CCSU_SUP_DIR"
-  printf 'log line\n' > "$CCSU_SUP_DIR/MyProj.log"
   run bash "$SCRIPT" --project MyProj --foreground --tmux --duration 5
   [ "$status" -eq 0 ]
-  [[ "$output" == *"別ウィンドウ(別タブ)で開きました"* ]]
-  [ -f "$TMUX_STATE/new-window.log" ]
-  grep -q "follow:MyProj" "$TMUX_STATE/new-window.log"
+  [ -f "$TMUX_STATE/claudeos-MyProj" ]
+  [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
 }

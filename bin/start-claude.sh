@@ -6,9 +6,9 @@
 #   多重起動防止: supervisor/flock。tmux は --tmux 明示時のみ fallback として使う。
 #
 # 使い方 (menu.sh から):
-#   start-claude.sh --project P --foreground [--duration 300]          # L1: headless/log 既定
-#   start-claude.sh --project P --background [--duration 300]          # S1: supervisor BG
-#   start-claude.sh --project P --safe-mode  [--duration 300] [--tmux] # 診断: hooks/MCP 無効の素起動
+#   start-claude.sh --project P --foreground [--duration 180]          # L1: 新規端末タブで Claude TUI
+#   start-claude.sh --project P --background [--duration 180]          # S1: supervisor BG
+#   start-claude.sh --project P --safe-mode  [--duration 180] [--tmux] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
 # ============================================================
 
@@ -25,6 +25,188 @@ source "$SCRIPT_DIR/../lib/launcher-common.sh"
 source "$SCRIPT_DIR/../lib/tmux-runner.sh"
 # shellcheck source=lib/notify.sh
 source "$SCRIPT_DIR/../lib/notify.sh"
+
+terminal__open_tab() {
+  local title="$1" wrapper="$2"
+  shift 2
+
+  [[ "${CCSU_DISABLE_TERMINAL_TAB:-0}" == "1" ]] && return 1
+
+  local wt_bin=""
+  if [[ -n "${CCSU_WT_BIN:-}" ]]; then
+    wt_bin="$CCSU_WT_BIN"
+  elif has_cmd wt.exe; then
+    wt_bin="$(command -v wt.exe)"
+  fi
+  if [[ -n "$wt_bin" ]]; then
+    local cmd arg
+    printf -v cmd 'bash %q' "$wrapper"
+    for arg in "$@"; do printf -v cmd '%s %q' "$cmd" "$arg"; done
+    if has_cmd wsl.exe; then
+      if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
+        "$wt_bin" -w 0 new-tab --title "$title" wsl.exe -d "$WSL_DISTRO_NAME" --cd "$PWD" bash -lc "$cmd" >/dev/null 2>&1 &
+      else
+        "$wt_bin" -w 0 new-tab --title "$title" wsl.exe --cd "$PWD" bash -lc "$cmd" >/dev/null 2>&1 &
+      fi
+    else
+      "$wt_bin" -w 0 new-tab --title "$title" bash -lc "$cmd" >/dev/null 2>&1 &
+    fi
+    disown 2>/dev/null || true
+    return 0
+  fi
+
+  [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]] || return 1
+
+  if has_cmd gnome-terminal; then
+    gnome-terminal --tab --title="$title" -- bash "$wrapper" "$@" >/dev/null 2>&1 &
+  elif has_cmd konsole; then
+    konsole --new-tab -p "tabtitle=$title" -e bash "$wrapper" "$@" >/dev/null 2>&1 &
+  elif has_cmd xfce4-terminal; then
+    local cmd q
+    printf -v cmd 'bash %q' "$wrapper"
+    for q in "$@"; do printf -v cmd '%s %q' "$cmd" "$q"; done
+    xfce4-terminal --tab --title="$title" --command="$cmd" >/dev/null 2>&1 &
+  elif has_cmd mate-terminal; then
+    mate-terminal --tab --title="$title" -- bash "$wrapper" "$@" >/dev/null 2>&1 &
+  elif has_cmd tilix; then
+    tilix --new-process --title="$title" -e bash "$wrapper" "$@" >/dev/null 2>&1 &
+  elif has_cmd x-terminal-emulator; then
+    x-terminal-emulator -T "$title" -e bash "$wrapper" "$@" >/dev/null 2>&1 &
+  elif has_cmd xterm; then
+    xterm -T "$title" -e bash "$wrapper" "$@" >/dev/null 2>&1 &
+  else
+    return 1
+  fi
+  disown 2>/dev/null || true
+}
+
+terminal__unavailable_hint() {
+  if ! has_cmd wt.exe && [[ -z "${CCSU_WT_BIN:-}" ]] && [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    printf 'wt.exe 未検出かつ Linux GUI DISPLAY 未設定です。WSL ではない Linux/SSH 環境からクライアント側 Windows Terminal タブは自動生成できません。'
+  elif ! has_cmd wt.exe && [[ -z "${CCSU_WT_BIN:-}" ]]; then
+    printf 'wt.exe 未検出です。Linux GUI 端末も対応コマンドが見つかりません。'
+  else
+    printf '対応する端末起動コマンドでタブ作成に失敗しました。'
+  fi
+}
+
+session__foreground_dir() { printf '%s/foreground' "$CCSU_HOME"; }
+
+session__running_supervisor_count() {
+  local sup_dir="${CCSU_SUP_DIR:-$CCSU_HOME/supervisor}"
+  [[ -d "$sup_dir" ]] || { printf '0'; return; }
+  local f pid n=0
+  for f in "$sup_dir"/*.json; do
+    [[ -f "$f" ]] || continue
+    [[ "$(json_get "$f" '.status' '')" == "running" ]] || continue
+    pid="$(json_get "$f" '.pid' '0')"
+    [[ "$pid" != "0" ]] && kill -0 "$pid" 2>/dev/null && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+session__running_foreground_count() {
+  local fg_dir; fg_dir="$(session__foreground_dir)"
+  [[ -d "$fg_dir" ]] || { printf '0'; return; }
+  local f pid n=0
+  for f in "$fg_dir"/*.json; do
+    [[ -f "$f" ]] || continue
+    [[ "$(json_get "$f" '.status' '')" == "running" ]] || continue
+    pid="$(json_get "$f" '.pid' '0')"
+    [[ "$pid" != "0" ]] && kill -0 "$pid" 2>/dev/null && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+session__running_tmux_count() {
+  has_cmd "$TMUX_BIN" || { printf '0'; return; }
+  "$TMUX_BIN" ls 2>/dev/null | grep -c '^claudeos-' || true
+}
+
+session__running_count() {
+  local a b c
+  a="$(session__running_supervisor_count)"
+  b="$(session__running_foreground_count)"
+  c="$(session__running_tmux_count)"
+  printf '%s' "$((a + b + c))"
+}
+
+session__enforce_launch_limits() {
+  local duration="$1"
+  local max_sessions="${CCSU_MAX_SESSIONS:-2}"
+  local max_minutes="${CCSU_MAX_SESSION_MINUTES:-180}"
+
+  [[ "$max_minutes" =~ ^[0-9]+$ ]] || max_minutes=180
+  [[ "$max_sessions" =~ ^[0-9]+$ ]] || max_sessions=2
+
+  if (( max_minutes > 0 && duration > max_minutes )); then
+    log_error "duration=${duration}m は上限 ${max_minutes}m を超えています"
+    return 1
+  fi
+
+  local running; running="$(session__running_count)"
+  if (( max_sessions > 0 && running >= max_sessions )); then
+    log_error "同時実行セッション上限に達しています: ${running}/${max_sessions}"
+    log_info "  15 セッション状態監視から不要なセッションを停止してから起動してください"
+    return 1
+  fi
+}
+
+direct__run_tui_foreground() {
+  local project="$1" duration="$2" dur_sec project_dir safe stamp wrapper title
+  dur_sec=$((duration * 60))
+  project_dir="$(launcher__project_dir "$project")"
+  safe="$(ccsu_safe_name "$project")"
+  mkdir -p "$CCSU_HOME/logs" "$(session__foreground_dir)"
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  wrapper="$CCSU_HOME/logs/manual-tui-${stamp}-${safe}.sh"
+  title="Claude: $project"
+  local state_file; state_file="$(session__foreground_dir)/${safe}.json"
+
+  template_sync__apply "$project_dir"
+  cat > "$wrapper" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"
+started="$(date -Iseconds)"
+mkdir -p "$(dirname "$state_file")"
+printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
+  "$project" "$$" "$started" > "$state_file"
+printf '\033]0;%s\007' "$title"
+cd "$project_dir" || exit 1
+set +e
+timeout --foreground "$dur" "$claude_bin"
+rc=$?
+ended="$(date -Iseconds)"
+printf '{"project":"%s","status":"completed","pid":0,"started_at":"%s","ended_at":"%s","mode":"foreground-tui","exit_code":%s}\n' \
+  "$project" "$started" "$ended" "$rc" > "$state_file"
+printf '\nClaude exited (code=%s). Enter で閉じます: ' "$rc"
+read -r _ || true
+exit "$rc"
+EOF
+  chmod +x "$wrapper"
+
+  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project"; then
+    log_ok "🖥️  Claude プロンプトを新規端末タブで起動しました: $project"
+    log_info "  duration=${duration}m / tmux なし"
+    return 0
+  fi
+
+  log_warn "新規端末タブを開けませんでした: $(terminal__unavailable_hint)"
+  log_warn "現在の端末で Claude プロンプトを起動します。"
+  log_info "🖥️  Claude プロンプト起動: $project (tmux なし / Ctrl+C 可)"
+  (
+    started="$(date -Iseconds)"
+    printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
+      "$project" "$$" "$started" > "$state_file"
+    cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN"
+    rc=$?
+    ended="$(date -Iseconds)"
+    printf '{"project":"%s","status":"completed","pid":0,"started_at":"%s","ended_at":"%s","mode":"foreground-tui","exit_code":%s}\n' \
+      "$project" "$started" "$ended" "$rc" > "$state_file"
+    exit "$rc"
+  )
+}
 
 direct__run_safe_mode() {
   local project="$1" duration="$2" mode="$3" dur_sec log_file stamp safe runner
@@ -94,7 +276,7 @@ EOF
 }
 
 main() {
-  local project="" mode="foreground" duration=300 safe_mode=0 use_tmux=0
+  local project="" mode="foreground" duration="" safe_mode=0 use_tmux=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)    project="$2"; shift 2 ;;
@@ -107,6 +289,12 @@ main() {
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
   done
+
+  if [[ -z "$duration" ]]; then
+    duration="$(config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '180')")"
+  fi
+  [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください: $duration"; exit 1; }
+  session__enforce_launch_limits "$duration" || exit 1
 
   require_cmd claude "npm i -g @anthropic-ai/claude-code"
 
@@ -138,9 +326,19 @@ main() {
     return 0
   fi
 
-  local safe session
+  # L1 foreground はプロンプト操作用。S1/cron の自律 headless とは分離し、
+  # 新規端末タブで通常の Claude TUI を開く。
+  if [[ "$mode" == "foreground" ]]; then
+    if (( use_tmux )); then
+      tmux_run "$project" "$duration" "$mode"
+    else
+      direct__run_tui_foreground "$project" "$duration"
+    fi
+    return 0
+  fi
+
+  local safe
   safe="$(ccsu_safe_name "$project")"
-  session="claudeos-$safe"
 
   # supervisor state ファイル: start 前の mtime を baseline として記録する。
   # start 後に mtime が前進する (= supervisor が今回 state を書き換えた) のを
@@ -227,71 +425,6 @@ main() {
     return 0
   fi
 
-  if [[ "$mode" == "foreground" ]]; then
-    if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
-      # headless 既定: cron-launcher は `claude -p` を回すだけで対話 tmux セッション
-      # (claudeos-<safe>) を生成しない。よって tmux を待つのは構造的に空振りする。
-      # 代わりに supervisor が setsid 経由で書き出す per-project ログを追尾し、
-      # foreground らしい「進捗が見える」体験を提供する (Ctrl-C で tail 終了・
-      # supervisor は独立プロセスのため停止しない)。
-      local _suplog="${_sup_state%.json}.log"
-      log_info "🚀 headless モードで起動中: $project"
-      log_info "  💡 対話 tmux セッションは生成されません (headless: claude -p)"
-      log_info "  📡 supervisor は独立プロセスで継続します (Ctrl-C で追尾終了・supervisor は停止しません)"
-      log_info "  📊 状態: bash bin/autonomy.sh status $project"
-      log_info "  🛑 停止: bash bin/autonomy.sh stop $project    (--now で即停止)"
-      # ログが書き出されるまで軽く待機 (最大 ~5 秒)
-      local _t
-      for ((_t = 0; _t < 25; _t++)); do
-        [[ -f "$_suplog" ]] && break
-        sleep 0.2
-      done
-      if [[ -f "$_suplog" ]]; then
-        if (( use_tmux )) && [[ -n "${TMUX:-}" ]] && command -v "$TMUX_BIN" >/dev/null 2>&1; then
-          # tmux 内: 追尾ログを別ウィンドウ(別タブ)で開き、メニュー端末は即解放する。
-          # new-window は本スクリプトのプロセスから独立するため、戻っても supervisor は継続。
-          local _q
-          printf -v _q '%q' "$_suplog"
-          # shellcheck disable=SC2086  # _q は printf %q で安全に pre-quote 済み
-          if "$TMUX_BIN" new-window -n "follow:$(basename "$project")" "tail -n 20 -f $_q" 2>/dev/null; then
-            log_ok "  🪟 追尾ログを tmux 別ウィンドウ(別タブ)で開きました: $_suplog"
-            log_info "     Ctrl-b n / Ctrl-b w で切替・閉じても supervisor は継続します"
-          else
-            log_warn "  ⚠️  tmux 別ウィンドウ生成に失敗 — 手動で追尾してください"
-            log_info "  📜 別タブで追尾: tail -f $_suplog"
-          fi
-        else
-          # tmux 外: メニュー端末をブロックせず即復帰し、別端末での追尾手順を案内する。
-          log_info "  📜 別タブ/別端末で追尾するには: tail -f $_suplog"
-          log_info "     (この端末はメニュー操作へ戻ります・supervisor は独立継続)"
-        fi
-      else
-        log_warn "  ⏳ ログ未生成: $_suplog"
-        log_info "  🔍 確認: bash bin/autonomy.sh status $project"
-      fi
-    else
-      if (( use_tmux )); then
-        # TUI + tmux 明示時のみ従来どおり tmux セッションへ attach。
-        local i
-        for ((i = 0; i < 60; i++)); do
-          "$TMUX_BIN" has-session -t "$session" 2>/dev/null && break
-          sleep 0.5
-        done
-        if "$TMUX_BIN" has-session -t "$session" 2>/dev/null; then
-          log_info "🔗 セッションへ接続: $session"
-          "$TMUX_BIN" attach-session -t "$session"
-        else
-          log_warn "⏱️  tmux セッション起動待ちタイムアウト: $session"
-          log_info "  🔍 確認: tmux ls  /  bash bin/autonomy.sh status $project"
-        fi
-      else
-        local _suplog="${_sup_state%.json}.log"
-        log_info "🚀 TUI fallback を tmux なしで起動しました: $project"
-        log_info "  📜 ログ: $_suplog"
-        log_info "  📊 状態: bash bin/autonomy.sh status $project"
-      fi
-    fi
-  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

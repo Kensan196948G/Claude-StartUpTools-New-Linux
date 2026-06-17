@@ -46,6 +46,17 @@ _mk_supervisor() {
   cat >"$CCSU_SUP_DIR/${safe}.json" <<EOF
 {"project":"$proj","status":"$status","pid":$pid,"started_at":"2026-06-17T19:25:21+09:00","month_spent_usd":65.254}
 EOF
+  printf 'log line\n' > "$CCSU_SUP_DIR/${safe}.log"
+}
+
+_mk_foreground() {
+  # _mk_foreground <project> <pid>
+  local proj="$1" pid="$2"
+  local safe; safe="$(printf '%s' "$proj" | tr -c 'A-Za-z0-9_-' '_')"
+  mkdir -p "$CLAUDEOS_HOME/foreground"
+  cat >"$CLAUDEOS_HOME/foreground/${safe}.json" <<EOF
+{"project":"$proj","status":"running","pid":$pid,"started_at":"2026-06-17T20:00:00+09:00","mode":"foreground-tui"}
+EOF
 }
 
 _stub_tmux() {
@@ -75,6 +86,14 @@ EOF
   run bash "$WATCH_SH" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"🤖 TestProject"* ]]
+}
+
+@test "foreground running + PID 生存 → foreground 表示に現れる" {
+  _mk_foreground "ForegroundProject" "$$"
+  _stub_tmux
+  run bash "$WATCH_SH" --once
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"🖥  ForegroundProject"* ]]
 }
 
 @test "supervisor status=stopped → headless 表示に現れない" {
@@ -142,10 +161,50 @@ EOF
   run bash "$WATCH_SH" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"🤖 HeadlessProj"* ]]
-  [[ "$output" != *"🖥"* ]]
+  [[ "$output" != *"claudeos-tmuxproj"* ]]
 
   run bash "$WATCH_SH" --once --tmux
   [ "$status" -eq 0 ]
   [[ "$output" == *"🤖 HeadlessProj"* ]]
   [[ "$output" == *"🖥"* ]]
+}
+
+@test "headless 選択後の接続は新規端末タブでログ追尾を開く" {
+  _mk_session "HeadlessProj" "running"
+  _mk_supervisor "HeadlessProj" "running" "$$"
+  _stub_tmux
+  cat >"$STUB_BIN/gnome-terminal" <<'EOF'
+#!/usr/bin/env bash
+printf "%s\n" "$*" >> "$TEST_TEMP/terminal.log"
+exit 0
+EOF
+  chmod +x "$STUB_BIN/gnome-terminal"
+  export DISPLAY=":99"
+
+  run bash -c 'printf "1\na\n0\n" | bash "$0"' "$WATCH_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"新規端末タブで接続しました"* ]]
+  [ -f "$TEST_TEMP/terminal.log" ]
+  grep -q "tail -n 80 -f" "$TEST_TEMP/terminal.log"
+}
+
+@test "headless 接続は DISPLAY なしでも wt.exe があれば Windows Terminal タブを使う" {
+  _mk_session "HeadlessProj" "running"
+  _mk_supervisor "HeadlessProj" "running" "$$"
+  _stub_tmux
+  cat >"$STUB_BIN/wt.exe" <<'EOF'
+#!/usr/bin/env bash
+printf "%s\n" "$*" >> "$TEST_TEMP/wt.log"
+exit 0
+EOF
+  chmod +x "$STUB_BIN/wt.exe"
+  unset DISPLAY
+  unset WAYLAND_DISPLAY
+
+  run bash -c 'printf "1\na\n0\n" | bash "$0"' "$WATCH_SH"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"新規端末タブで接続しました"* ]]
+  [ -f "$TEST_TEMP/wt.log" ]
+  grep -q "new-tab" "$TEST_TEMP/wt.log"
+  grep -q "tail -n 80 -f" "$TEST_TEMP/wt.log"
 }
