@@ -108,7 +108,7 @@
   "cron": {
     "_comment": "v3.1.0 新設。Linux 側 crontab で ClaudeCode を週次自動起動する機能の設定。",
     "enabled": true,
-    "defaultDurationMinutes": 300,
+    "defaultDurationMinutes": 180,
     "launcherPath": "/home/kensan/.claudeos/cron-launcher.sh",
     "sessionsDir": "/home/kensan/.claudeos/sessions",
     "logsDir": "/home/kensan/.claudeos/logs",
@@ -116,9 +116,20 @@
     "_headlessDefault_comment": "PR-G で既定反転。true = cron 起動は claude -p ヘッドレス既定 (CLAUDEOS_HEADLESS 未設定=1 と整合)。false で従来 tmux TUI 既定へ戻す (CLAUDEOS_HEADLESS=0 相当の退避経路)。",
     "headlessDefault": true
   },
+  "supervisor": {
+    "_comment": "省クレジット運用の全体デフォルト。project/state.json の supervisor ブロックでプロジェクト別に上書き可能。",
+    "defaults": {
+      "dailyMaxMinutes": 180,
+      "maxRestartsPerDay": 1,
+      "sessionMinutes": 180,
+      "cooldownSeconds": 30,
+      "crashLoopThreshold": 3,
+      "crashLoopMinSeconds": 120
+    }
+  },
   "agentSdk": {
-    "_comment": "PR-E 新設。claude -p / Agent SDK headless の月次クレジット可視化・上限ガード設定 (2026-06-15 課金変更対応)。monthlyBudgetUsd=0 は無制限 (ガード無効)。warn/verifyOnly/stop は消費率(%)の段階閾値で CLAUDE.md §9 と同型。ledgerPath は credits__record の追記先 (~ 展開は credits.sh が CCSU_HOME 基準で解決)。",
-    "monthlyBudgetUsd": 0,
+    "_comment": "PR-E 新設。claude -p / Agent SDK headless の月次クレジット可視化・上限ガード設定 (2026-06-15 課金変更対応)。monthlyBudgetUsd=0 は無制限 (ガード無効)。Supervisor は project/state.json に個別予算が無い場合、この値を停止ガードに使う。warn/verifyOnly/stop は消費率(%)の段階閾値で CLAUDE.md §9 と同型。ledgerPath は credits__record の追記先 (~ 展開は credits.sh が CCSU_HOME 基準で解決)。",
+    "monthlyBudgetUsd": 300,
     "warnPct": 70,
     "verifyOnlyPct": 85,
     "stopPct": 95,

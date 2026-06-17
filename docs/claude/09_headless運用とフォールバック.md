@@ -16,6 +16,8 @@ TUI（tmux 対話）経路は「退避フォールバック」として残して
 
 `★ ポイント` headless 既定化は **Agent SDK 月次クレジット**（対話枠とは別枠、2026-06-15 課金変更）を消費します。
 消費は `lib/credits.sh` が ledger 追記 → `agentSdk` ブロックの warn/verifyOnly/stop 閾値で段階ガードします。
+省クレジット運用では、既定セッション長を 180 分にし、Supervisor の全体デフォルトも
+`dailyMaxMinutes=180` / `maxRestartsPerDay=1` / `sessionMinutes=180` に絞ります。
 
 ## 2. TUI 退避への切替（課金枯渇・障害時）
 
@@ -65,14 +67,18 @@ claude --resume <session_id>
 
 枯渇時の退避先（優先順）:
 
-1. 🟨 **並列ロール本数を 1 へ縮退** — `bin/autonomy.sh start --roles cto`（QA 等を外す）。
-2. 🟨 **TUI 対話枠へ手動切替** — `CLAUDEOS_HEADLESS=0`（本書 §2）。対話枠は Agent SDK 枠と別計上。
-3. 🟦 **Anthropic Managed Agents で補完** — `docs/claude/07_ManagedAgents_PoC手順書.md` 参照。
+1. 🟨 **新規 headless 起動を止める** — cron 登録を増やさず、`launch --all` は使わない。
+2. 🟨 **単発・短時間だけ実行** — `bash bin/cron-schedule.sh run-now --project <name> --duration 60` のように対象と時間を明示する。
+3. 🟨 **並列ロール本数を 1 へ縮退** — `bin/autonomy.sh start --roles cto`（QA 等を外す）。
+4. 🟨 **TUI 対話枠へ手動切替** — `CLAUDEOS_HEADLESS=0`（本書 §2）。対話枠は Agent SDK 枠と別計上。
+5. 🟦 **Anthropic Managed Agents で補完** — `docs/claude/07_ManagedAgents_PoC手順書.md` 参照。
    本リポジトリへのコード追加は禁止（Console + CLI スキル経由の管理のみ）。位置づけは
    「ローカル cron 主・Managed Agents 補完」(`docs/claude/06_ManagedAgents調査メモ.md`)。
 
 `★ 設計原則` supervisor は枯渇を **crash 扱いにせず正常停止** します（誤った全停止連鎖を避ける）。
 月次境界は実課金サイクルと厳密一致しない概算であり、あくまで**予防ガード**として機能します。
+Claude Web の利用クレジット画面が正本であり、ローカル ledger が少なく見える場合は画面側を優先して
+手動で起動を止めてください。
 
 ## 5. 関連ファイル
 

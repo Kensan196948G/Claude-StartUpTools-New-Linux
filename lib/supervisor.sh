@@ -15,7 +15,8 @@
 #   - crash-loop: 極端に短いセッションが crash_loop_threshold 連続
 #   - 手動      : stop フラグ / プロセス kill
 #
-# ガードレール既定値 (project state.json の "supervisor" ブロックで上書き可):
+# ガードレール既定値 (config.json の "supervisor.defaults" で全体設定、
+# project state.json の "supervisor" ブロックでプロジェクト別に上書き可):
 #   daily_max_minutes=600 / max_restarts_per_day=6 / session_minutes=300
 #   cooldown_seconds=30 / crash_loop_threshold=3 / crash_loop_min_seconds=120
 #
@@ -38,13 +39,28 @@ SUP_DIR="${CCSU_SUP_DIR:-$CCSU_HOME/supervisor}"
 SUP_CRON_LAUNCHER="${CCSU_SUP_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
 SUP_TMUX_BIN="${CCSU_TMUX_BIN:-tmux}"
 
+sup__config_default() {
+  local key="$1" def="$2" json_key v
+  case "$key" in
+    daily_max_minutes)      json_key="dailyMaxMinutes" ;;
+    max_restarts_per_day)   json_key="maxRestartsPerDay" ;;
+    session_minutes)        json_key="sessionMinutes" ;;
+    cooldown_seconds)       json_key="cooldownSeconds" ;;
+    crash_loop_threshold)   json_key="crashLoopThreshold" ;;
+    crash_loop_min_seconds) json_key="crashLoopMinSeconds" ;;
+    *)                      json_key="$key" ;;
+  esac
+  v="$(json_get "$CCSU_CONFIG_PATH" ".supervisor.defaults.$json_key" "")"
+  [[ "$v" =~ ^[0-9]+$ ]] && printf '%s' "$v" || printf '%s' "$def"
+}
+
 # ガードレール既定値
-SUP_DEF_DAILY_MAX_MIN=600
-SUP_DEF_MAX_RESTARTS=6
-SUP_DEF_SESSION_MIN=300
-SUP_DEF_COOLDOWN=30
-SUP_DEF_CRASH_THRESHOLD=3
-SUP_DEF_CRASH_MIN_SEC=120
+SUP_DEF_DAILY_MAX_MIN="$(sup__config_default daily_max_minutes 600)"
+SUP_DEF_MAX_RESTARTS="$(sup__config_default max_restarts_per_day 6)"
+SUP_DEF_SESSION_MIN="$(sup__config_default session_minutes 300)"
+SUP_DEF_COOLDOWN="$(sup__config_default cooldown_seconds 30)"
+SUP_DEF_CRASH_THRESHOLD="$(sup__config_default crash_loop_threshold 3)"
+SUP_DEF_CRASH_MIN_SEC="$(sup__config_default crash_loop_min_seconds 120)"
 
 # ------------------------------------------------------------
 # パス/基本ヘルパ
@@ -282,7 +298,8 @@ sup__loop() {
   # cron-launcher へ安定パス CLAUDEOS_SESSION_COST_FILE を渡し、当該セッションの
   # total_cost_usd を鏡写しさせて回収 → ledger 追記 → 当月合計で credits__guard 判定する。
   local credit_budget session_cost_file
-  credit_budget="$(json_get "$pstate" '.supervisor.credit_monthly_budget_usd' '0')"
+  credit_budget="$(json_get "$pstate" '.supervisor.credit_monthly_budget_usd' '')"
+  [[ "$credit_budget" =~ ^[0-9]+(\.[0-9]+)?$ ]] || credit_budget="$(json_get "$CCSU_CONFIG_PATH" '.agentSdk.monthlyBudgetUsd' '0')"
   session_cost_file="$SUP_DIR/${safe}.session-cost"
 
   # 作業変数 (SUP_* グローバル: sup__persist が書き出す)

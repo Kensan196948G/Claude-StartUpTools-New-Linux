@@ -322,6 +322,22 @@ EOF
   [ "$(sup__get Demo restarts_today 0)" = "1" ]
 }
 
+@test "sup__loop: project 個別予算が無い場合は config agentSdk.monthlyBudgetUsd を使う" {
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "$TEST_TEMP/projects", "agentSdk": { "monthlyBudgetUsd": 100 } }
+JSON
+  cat > "$CCSU_SUP_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+echo 100 > "$CLAUDEOS_SESSION_COST_FILE"
+exit 0
+EOF
+  chmod +x "$CCSU_SUP_CRON_LAUNCHER"
+  echo '{ "deploy": {"ready": false}, "supervisor": {"max_restarts_per_day": 100, "crash_loop_min_seconds": 0} }' > "$TEST_TEMP/projects/Demo/state.json"
+  run sup__loop Demo 5
+  [ "$(sup__get Demo status '')" = "credit-cap" ]
+  [ "$(sup__get Demo month_spent_usd 0)" = "100" ]
+}
+
 # プラン検証項目5 忠実版: 「ledger に閾値超を事前投入」した状態で、当月既存累積に
 #   小さなセッション消費が積み増さって 95% を踏み越え credit-cap:stop する経路を検証。
 #   単発 100% ではなく「前月までの累積 + 小セッション = 閾値超」という現実的枯渇形。
