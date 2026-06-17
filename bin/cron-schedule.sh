@@ -334,7 +334,7 @@ cs__menu() {
          fi
          read -rp "  Enter で戻る " _ ;;
       7) cs__launch || true
-         read -rp "  Enter で戻る " _ ;;
+         bash "$SCRIPT_DIR/../libexec/watch-session.sh" || true ;;
       0) return 0 ;;
       *) log_warn "無効な入力"; sleep 1 ;;
     esac
