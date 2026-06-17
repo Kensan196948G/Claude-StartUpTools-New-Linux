@@ -3,6 +3,7 @@
   "version": "4.0.0-linux",
   "projects": "/home/kensan/Projects",
   "projectsDir": "/home/kensan/Projects",
+  "_localExcludes_comment": "config_project_list の除外正本 (L1メニュー/cron/autonomy/docker 全4経路に効く)。製品でないツール repo・バックアップ・アーカイブ・純インフラ等の git フォルダをここへ列挙して自動開発対象から外す。worktree (.git がファイル) と本ツール repo 自身 (CCSU_ROOT) は config-loader が自動除外するため記載不要。新規プロジェクトの cron 登録手順は docs/claude/11_新規プロジェクトのcron登録とオンボーディング.md を参照。",
   "localExcludes": [],
   "tools": {
     "defaultTool": "claude",
