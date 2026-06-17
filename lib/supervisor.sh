@@ -291,7 +291,7 @@ sup__loop() {
   # 注: stop フラグのクリアは呼び出し側 (au__start) が起動前に行う。
   #     ここでクリアしないことで、起動前/実行中に立てたフラグを確実に拾える。
   sup__persist "$project"
-  log_info "🤖 [supervisor] 🚀 start: $project (daily_max=${daily_max}m restarts=${max_restarts} session=${session_min}m)"
+  log_info "🤖 [supervisor] 🚀 start: $project @ $SUP_STARTED_AT (daily_max=${daily_max}m restarts=${max_restarts} session=${session_min}m)"
 
   local stop_reason="" sess_start sess_end sess_secs
   while true; do
@@ -383,5 +383,5 @@ sup__loop() {
   SUP_LAST_REASON="$stop_reason"; SUP_ENDED_AT="$(sup__now_iso)"
   sup__persist "$project"
   rm -f "$(sup__stop_file "$project")"
-  log_info "🤖 [supervisor] 🛑 stop: $project → status=$SUP_STATUS reason=$stop_reason restarts=$SUP_RESTARTS minutes=$SUP_MINUTES"
+  log_info "🤖 [supervisor] 🛑 stop: $project @ $SUP_ENDED_AT → status=$SUP_STATUS reason=$stop_reason restarts=$SUP_RESTARTS minutes=$SUP_MINUTES"
 }
