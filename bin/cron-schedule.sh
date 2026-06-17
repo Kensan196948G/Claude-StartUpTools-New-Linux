@@ -196,11 +196,10 @@ cs__run_now() {
     # headless 経路では全出力が LOG_FILE へ流れ端末には何も出ない。
     # BG 起動後にログファイルを tail -f してライブ表示する。
     cs__launch_bg "$project" "$duration"
-    local safe logdir logf waited=0
+    local safe logf waited=0
     safe="$(ccsu_safe_name "$project")"
-    logdir="${CLAUDEOS_HOME:-$HOME/.claudeos}/logs"
     while (( waited < 8 )); do
-      logf="$(ls -t "$logdir"/cron-*-"${safe}".log 2>/dev/null | head -1)"
+      logf="$(ls -t "$CRON_LOGS_DIR"/cron-*-"${safe}".log 2>/dev/null | head -1)"
       [[ -n "$logf" ]] && break
       sleep 1; waited=$(( waited + 1 ))
     done

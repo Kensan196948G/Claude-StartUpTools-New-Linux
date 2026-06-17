@@ -90,14 +90,21 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"ありません"* ]]
 }
 
-@test "run-now --foreground: cron-launcher.sh を同期で project/duration 付きで呼ぶ" {
+@test "run-now --foreground: BG 起動 + ログ監視メッセージを出力する" {
+  # headless 経路: FG = BG起動 + tail -f。
+  # tail をスタブ化して tail -f のブロックを回避し、ログ監視案内メッセージを確認する。
+  make_stub_bin tail 'echo "tail-stub: $*"; exit 0'
   cat > "$CCSU_CRON_LAUNCHER" <<'EOF'
 #!/usr/bin/env bash
-echo "launcher called: $1 $2"
+echo "launched: $1 $2"
 EOF
   chmod +x "$CCSU_CRON_LAUNCHER"
   run bash "$SCRIPT" run-now --project MyProj --duration 5 --foreground
-  [[ "$output" == *"launcher called: MyProj 5"* ]]
+  [ "$status" -eq 0 ]
+  # BG 起動メッセージが出力される
+  [[ "$output" == *"BG 起動: MyProj"* ]]
+  # ログ監視案内か watch-session 案内のどちらかが出力される
+  [[ "$output" == *"ログ監視"* || "$output" == *"watch-session"* ]]
 }
 
 @test "run-now: 既定は BG (メニューをブロックせず BG 起動メッセージ)" {
