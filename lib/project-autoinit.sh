@@ -8,12 +8,12 @@
 #       autonomy / docker の全 4 経路へ「登録プロジェクト」として自然に載る。
 #
 # 設計:
-#   - 冪等: .git 保有フォルダは skip。再実行で副作用なし。
+#   - 冪等: .git 保有フォルダは skip。worktree/submodule の .git ファイルも skip。
 #   - 非破壊: 既存 CLAUDE.md は上書きしない (copy-if-missing)。
 #   - ローカル限定: git init / commit のみ。GitHub repo 作成等の外部操作はしない
 #     (外部サービス操作は人間最終決断のため、ここでは触れない)。
 #   - 除外: リポジトリ自身 / config.localExcludes は config_project_excluded で skip。
-#   - kill switch: config の .autoInitProjects=false で無効化。
+#   - opt-in: config の .autoInitProjects=true で有効化。通常 start.sh は軽量起動を優先。
 #
 # 前提: common.sh + config-loader.sh が source 済み。
 # ============================================================
@@ -24,7 +24,7 @@ _CCSU_PROJECT_AUTOINIT_LOADED=1
 # project_autoinit_scan — 非 Git フォルダを自動初期化して登録対象へ昇格する。
 #   set -e 環境でもループを止めないよう、各 git 操作は失敗許容で扱う。
 project_autoinit_scan() {
-  [[ "$(config_get '.autoInitProjects' 'true')" == 'true' ]] || return 0
+  [[ "$(config_get '.autoInitProjects' 'false')" == 'true' ]] || return 0
 
   local base; base="$(config_projects_dir)"
   [[ -d "$base" ]] || return 0
@@ -34,7 +34,7 @@ project_autoinit_scan() {
 
   for d in "$base"/*/; do
     [[ -d "$d" ]] || continue          # マッチ無し時の literal "*/" 対策
-    [[ -d "${d}.git" ]] && continue    # 既に Git → skip (冪等)
+    [[ -e "${d}.git" ]] && continue    # 既に Git/worktree/submodule → skip (冪等)
     name="$(basename "$d")"
     config_project_excluded "$name" "$d" && continue   # リポジトリ自身 / localExcludes
 

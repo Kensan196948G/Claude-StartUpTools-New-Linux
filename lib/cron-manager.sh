@@ -20,11 +20,14 @@
 _CCSU_CRON_LOADED=1
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/json.sh"
 
 CRON_ENTRY_PREFIX="${CCSU_CRON_PREFIX:-CLAUDEOS}"
 CRON_LAUNCHER_PATH="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
 CRON_LOGS_DIR="${CCSU_CRON_LOGS_DIR:-$HOME/.claudeos/logs}"
 CRONTAB_BIN="${CCSU_CRONTAB_BIN:-crontab}"
+CRON_MAX_DURATION_MIN="${CCSU_CRON_MAX_DURATION_MIN:-$(json_get "$CCSU_CONFIG_PATH" '.cron.maxDurationMinutes' '180')}"
+CRON_MAX_PROJECTS_PER_DAY="${CCSU_CRON_MAX_PROJECTS_PER_DAY:-$(json_get "$CCSU_CONFIG_PATH" '.cron.maxProjectsPerDay' '2')}"
 
 # ------------------------------------------------------------
 # cron__read — crontab -l (空でもエラーにしない)
@@ -78,6 +81,49 @@ cron__dow_label() {
   if [[ "$d" =~ ^[0-9]+$ ]] && (( d >= 0 && d <= 6 )); then printf '%s' "${labels[$d]}"; else printf '?'; fi
 }
 
+cron__entry_has_dow() {
+  local expr="$1" target="$2" dow
+  dow="$(awk '{print $5}' <<< "$expr")"
+  [[ "$dow" == "*" ]] && return 0
+  local -a parts; local part
+  IFS=',' read -ra parts <<< "$dow"
+  for part in "${parts[@]}"; do
+    [[ "$part" == "$target" ]] && return 0
+  done
+  return 1
+}
+
+cron__count_projects_for_dow() {
+  local target="$1" extra_project="${2:-}" id project duration created expr
+  {
+    while IFS='|' read -r id project duration created expr; do
+      [[ -z "$project" ]] && continue
+      cron__entry_has_dow "$expr" "$target" && printf '%s\n' "$project"
+    done < <(cron__list)
+    [[ -n "$extra_project" ]] && printf '%s\n' "$extra_project"
+  } | awk 'NF && !seen[$0]++ { n++ } END { print n+0 }'
+}
+
+cron__validate_limits() {
+  local project="$1" duration="$2"; shift 2
+  local -a dows=("$@")
+  [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください"; return 1; }
+  if [[ "$CRON_MAX_DURATION_MIN" =~ ^[0-9]+$ ]] && (( CRON_MAX_DURATION_MIN > 0 && duration > CRON_MAX_DURATION_MIN )); then
+    log_error "duration=${duration}m は上限 ${CRON_MAX_DURATION_MIN}m を超えています"
+    return 1
+  fi
+  [[ "$CRON_MAX_PROJECTS_PER_DAY" =~ ^[0-9]+$ ]] || return 0
+  (( CRON_MAX_PROJECTS_PER_DAY > 0 )) || return 0
+  local d count
+  for d in "${dows[@]}"; do
+    count="$(cron__count_projects_for_dow "$d" "$project")"
+    if (( count > CRON_MAX_PROJECTS_PER_DAY )); then
+      log_error "$(cron__dow_label "$d")曜は登録上限 ${CRON_MAX_PROJECTS_PER_DAY} プロジェクト/日を超えます"
+      return 1
+    fi
+  done
+}
+
 # ------------------------------------------------------------
 # cron__list — CLAUDEOS エントリを「id|project|duration|created|cronexpr」で列挙
 #   PowerShell: Get-ClaudeOSCronEntry
@@ -93,7 +139,7 @@ cron__list() {
     line="${lines[$i]}"
     if [[ "$line" =~ ^[[:space:]]*#[[:space:]]*${CRON_ENTRY_PREFIX}:([A-Za-z0-9_-]+)[[:space:]]*(.*)$ ]]; then
       id="${BASH_REMATCH[1]}"; meta="${BASH_REMATCH[2]}"
-      project=""; duration="300"; created=""
+      project=""; duration="180"; created=""
       [[ "$meta" =~ project=([^[:space:]]+) ]]  && project="${BASH_REMATCH[1]}"
       [[ "$meta" =~ duration=([0-9]+) ]]        && duration="${BASH_REMATCH[1]}"
       [[ "$meta" =~ created=([^[:space:]]+) ]]  && created="${BASH_REMATCH[1]}"
@@ -113,6 +159,7 @@ cron__add() {
   local -a dows=("$@")
   local expr id created logp cmd comment cronline cur new
   expr="$(cron__format_expr "$time" "${dows[@]}")" || return 1
+  cron__validate_limits "$project" "$duration" "${dows[@]}" || return 1
   id="$(cron__new_id)"
   created="$(date +%Y-%m-%dT%H:%M:%S)"
   # crontab の % は改行扱いのため \% でエスケープ ($ もリテラルにして cron 実行時に展開)

@@ -49,10 +49,10 @@ teardown() { _bats_common_teardown; }
   [ "$status" -ne 0 ]
 }
 
-@test "add: デフォルト duration は 300" {
+@test "add: デフォルト duration は 180" {
   bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1
   run cat "$CRON_STORE"
-  [[ "$output" == *"duration=300"* ]]
+  [[ "$output" == *"duration=180"* ]]
 }
 
 @test "list: 登録済みを曜日ラベル付きで表示" {
@@ -99,6 +99,7 @@ teardown() { _bats_common_teardown; }
 echo "launched: $1 $2"
 EOF
   chmod +x "$CCSU_CRON_LAUNCHER"
+  bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1 >/dev/null
   run bash "$SCRIPT" run-now --project MyProj --duration 5 --foreground
   [ "$status" -eq 0 ]
   # BG 起動メッセージが出力される
@@ -113,13 +114,26 @@ EOF
 sleep 5; echo "should-not-block"
 EOF
   chmod +x "$CCSU_CRON_LAUNCHER"
-  run bash "$SCRIPT" run-now --project MyProj --duration 5
+  bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1 >/dev/null
+  run bash "$SCRIPT" run-now --project MyProj
   [ "$status" -eq 0 ]
   [[ "$output" == *"BG 起動: MyProj"* ]]
-  [[ "$output" == *"claudeos-MyProj"* ]]
+  [[ "$output" == *"mode=headless"* ]]
+  [[ "$output" == *"tail -f"* ]]
   # BG 用ログファイルが生成される
   run bash -c "ls '$CCSU_CRON_LOGS_DIR'/cron-*-MyProj.log 2>/dev/null | head -1"
   [ -n "$output" ]
+}
+
+@test "run-now: cron 未登録プロジェクトは拒否" {
+  cat > "$CCSU_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+true
+EOF
+  chmod +x "$CCSU_CRON_LAUNCHER"
+  run bash "$SCRIPT" run-now --project MyProj
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"未登録プロジェクトは実行できません"* ]]
 }
 
 @test "launch --project: 明示指定で BG 起動" {
@@ -128,10 +142,22 @@ EOF
 true
 EOF
   chmod +x "$CCSU_CRON_LAUNCHER"
+  bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1 >/dev/null
   run bash "$SCRIPT" launch --project MyProj
   [ "$status" -eq 0 ]
   [[ "$output" == *"BG 起動: MyProj"* ]]
   [[ "$output" == *"1 件を BG 起動"* ]]
+}
+
+@test "launch --project: cron 未登録プロジェクトは拒否" {
+  cat > "$CCSU_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+true
+EOF
+  chmod +x "$CCSU_CRON_LAUNCHER"
+  run bash "$SCRIPT" launch --project MyProj
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"未登録プロジェクトは実行できません"* ]]
 }
 
 @test "launch --all: 登録済みを全件 BG 起動" {
@@ -147,6 +173,21 @@ EOF
   [[ "$output" == *"BG 起動: MyProj"* ]]
   [[ "$output" == *"BG 起動: Other"* ]]
   [[ "$output" == *"2 件を BG 起動"* ]]
+}
+
+@test "launch --all: 登録済みが3件以上なら一括起動を拒否" {
+  cat > "$CCSU_CRON_LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
+true
+EOF
+  chmod +x "$CCSU_CRON_LAUNCHER"
+  bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1 >/dev/null
+  bash "$SCRIPT" add --project Other --time 11:00 --dow 1 >/dev/null
+  bash "$SCRIPT" add --project Third --time 08:00 --dow 2 >/dev/null
+  run bash "$SCRIPT" launch --all --yes
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"一括起動は最大 2 プロジェクト"* ]]
+  [[ "$output" != *"BG 起動:"* ]]
 }
 
 @test "launch --all: 非対話では --yes 必須" {
@@ -188,6 +229,17 @@ EOF
   run cat "$CRON_STORE"
   [[ "$output" == *"project=MyProj"* ]]
   [[ "$output" == *"project=Other"* ]]
+}
+
+@test "bulk-register --apply: 1日2プロジェクト上限で週容量を超えた候補を skip" {
+  mkdir -p "$TEST_TEMP/projects/P3/.git" "$TEST_TEMP/projects/P4/.git" "$TEST_TEMP/projects/P5/.git"
+  run bash "$SCRIPT" bulk-register --dow 1,2 --start 6 --spacing 3 --apply
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"容量超過(4件/週)"* ]]
+  run bash -c "grep -c '^# CLAUDEOS:' '$CRON_STORE'"
+  [ "$output" = "4" ]
+  run cat "$CRON_STORE"
+  [[ "$output" != *"project=P5"* ]]
 }
 
 @test "bulk-register --unmanaged-only: cron 登録済みを除外" {

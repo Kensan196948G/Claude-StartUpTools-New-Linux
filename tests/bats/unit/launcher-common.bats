@@ -12,7 +12,8 @@ setup() {
   cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
 { "projects": "$TEST_TEMP/projects", "projectsDir": "$TEST_TEMP/projects" }
 JSON
-  mkdir -p "$TEST_TEMP/projects/Alpha/.git" "$TEST_TEMP/projects/Beta/.git"
+  mkdir -p "$TEST_TEMP/projects/Alpha/.git" "$TEST_TEMP/projects/Beta/.git" "$TEST_TEMP/projects/Worktree"
+  printf 'gitdir: /tmp/main/.git/worktrees/Worktree\n' > "$TEST_TEMP/projects/Worktree/.git"
   mkdir -p "$TEST_TEMP/projects/NotGit"   # 非Gitディレクトリ (除外対象)
   touch "$TEST_TEMP/projects/.hidden" "$TEST_TEMP/projects/notes.md"  # 隠し/ファイル (除外対象)
 
@@ -38,11 +39,12 @@ teardown() { _bats_common_teardown; }
   [[ "$output" != *".hidden"* ]]
 }
 
-@test "launcher__project_list: 非Gitディレクトリとファイルを除外 (dir+.git のみ)" {
+@test "launcher__project_list: 非Gitディレクトリとファイルを除外 (.git dir/file のみ)" {
   run launcher__project_list
   [[ "$output" != *"NotGit"* ]]
   [[ "$output" != *"notes.md"* ]]
   [[ "$output" == *"Alpha"* ]]
+  [[ "$output" == *"Worktree"* ]]
 }
 
 # ─── launcher__project_dir / exists ──────────────────────────
@@ -206,9 +208,9 @@ EOF
   [ "$output" = "Alpha" ]
 }
 
-@test "launcher__select_project: goal-reached は background で選択不可" {
+@test "launcher__select_project: goal-reached は background でも選択可" {
   _mk_sup_json "Alpha" "goal-reached" "0"
-  # Alpha=goal-reached(不可), Beta=ok(可) → 1番=Beta
+  # Alpha=goal-reached(選択可), Beta=ok(選択可) → 1番=Alpha
   run bash -c "
     export AI_STARTUP_CONFIG_PATH='$AI_STARTUP_CONFIG_PATH'
     export CCSU_SUP_DIR='$CCSU_SUP_DIR'
@@ -216,14 +218,14 @@ EOF
     printf '1\n' | launcher__select_project background 2>/dev/null
   "
   [ "$status" -eq 0 ]
-  [ "$output" = "Beta" ]
+  [ "$output" = "Alpha" ]
 }
 
-@test "launcher__select_project: blocked(halt=true) は background で選択不可" {
+@test "launcher__select_project: blocked(halt=true) は background でも選択可" {
   _mk_sup_json "Alpha" "blocked" "0"
   mkdir -p "$TEST_TEMP/projects/Alpha"
   printf '{"supervisor":{"halt_on_blocked":true}}' >"$TEST_TEMP/projects/Alpha/state.json"
-  # Alpha=blocked(不可), Beta=ok(可) → 1番=Beta
+  # Alpha=blocked(選択可), Beta=ok(選択可) → 1番=Alpha
   run bash -c "
     export AI_STARTUP_CONFIG_PATH='$AI_STARTUP_CONFIG_PATH'
     export CCSU_SUP_DIR='$CCSU_SUP_DIR'
@@ -231,12 +233,13 @@ EOF
     printf '1\n' | launcher__select_project background 2>/dev/null
   "
   [ "$status" -eq 0 ]
-  [ "$output" = "Beta" ]
+  [ "$output" = "Alpha" ]
 }
 
 @test "launcher__select_project: 全選択不可なら空を返す" {
   _mk_sup_json "Alpha" "running" "$$"
   _mk_sup_json "Beta"  "running" "$$"
+  _mk_sup_json "Worktree" "running" "$$"
   run bash -c "
     export AI_STARTUP_CONFIG_PATH='$AI_STARTUP_CONFIG_PATH'
     export CCSU_SUP_DIR='$CCSU_SUP_DIR'

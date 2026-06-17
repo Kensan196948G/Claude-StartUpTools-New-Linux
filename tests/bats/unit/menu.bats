@@ -51,7 +51,7 @@ teardown() { _bats_common_teardown; }
   run bash "$SCRIPT" --render
   [[ "$output" == *"ツール確認・診断"* ]]
   [[ "$output" == *"マウント / ネットワーク疎通診断"* ]]
-  [[ "$output" == *"tmux / 端末セットアップ"* ]]
+  [[ "$output" == *"端末 / tmux fallback セットアップ"* ]]
   [[ "$output" == *"MCP ヘルスチェック"* ]]
   [[ "$output" == *"Worktree Manager"* ]]
   [[ "$output" == *"Mission Control"* ]]

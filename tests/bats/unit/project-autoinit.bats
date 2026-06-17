@@ -8,6 +8,7 @@
 #   - リポジトリ自身 (CCSU_ROOT) は除外
 #   - localExcludes 記載フォルダは除外
 #   - .autoInitProjects=false で無効化
+#   - worktree/submodule 形式の .git ファイルは既存 Git として扱う
 # ============================================================
 
 load '../helpers/common-setup'
@@ -62,6 +63,26 @@ teardown() { _bats_common_teardown; }
   # 既存 CLAUDE.md は上書きされない
   run cat "$PROJECTS/Existing/CLAUDE.md"
   [ "$output" = "ORIGINAL" ]
+}
+
+@test "既存 .git ファイルは触らない (worktree/submodule)" {
+  mkdir -p "$PROJECTS/Worktree"
+  printf 'gitdir: /tmp/main/.git/worktrees/Worktree\n' > "$PROJECTS/Worktree/.git"
+  run project_autoinit_scan
+  [ "$status" -eq 0 ]
+  [ ! -f "$PROJECTS/Worktree/CLAUDE.md" ]
+  run cat "$PROJECTS/Worktree/.git"
+  [ "$output" = "gitdir: /tmp/main/.git/worktrees/Worktree" ]
+}
+
+@test ".autoInitProjects 未定義なら無効化される" {
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "$PROJECTS" }
+JSON
+  mkdir -p "$PROJECTS/DefaultOff"
+  run project_autoinit_scan
+  [ "$status" -eq 0 ]
+  [ ! -e "$PROJECTS/DefaultOff/.git" ]
 }
 
 @test "localExcludes 記載フォルダは初期化しない" {

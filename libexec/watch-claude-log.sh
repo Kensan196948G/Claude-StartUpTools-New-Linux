@@ -2,7 +2,7 @@
 # ============================================================
 # watch-claude-log.sh — Claude ログ監視 (メニュー項13)
 # 移植元: scripts/tools/Watch-ClaudeLog.ps1
-#   ~/.claudeos/logs の最新ログを tail (cron/手動 tmux 両方のログ)
+#   ~/.claudeos/logs の最新ログを tail (cron/手動 headless のログ)
 #   --once: 直近20行を1回表示 (bats用) / 既定: tail -f (Ctrl-C で戻る)
 # ============================================================
 

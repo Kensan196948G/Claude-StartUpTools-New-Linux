@@ -99,15 +99,17 @@ teardown() { _bats_common_teardown; }
   [ "$status" -ne 0 ]
 }
 
-@test "config_project_list: dir+.git のみ列挙 (ファイル/非Git/隠し除外)" {
+@test "config_project_list: .git dir/file を列挙 (ファイル/非Git/隠し除外)" {
   local base="$TEST_TEMP/pl"
-  mkdir -p "$base/RepoA/.git" "$base/RepoB/.git" "$base/PlainDir"
+  mkdir -p "$base/RepoA/.git" "$base/RepoB/.git" "$base/Worktree" "$base/PlainDir"
+  printf 'gitdir: /tmp/main/.git/worktrees/Worktree\n' > "$base/Worktree/.git"
   touch "$base/file.md" "$base/.hidden"
   printf '{ "projects": "%s" }\n' "$base" > "$TEST_TEMP/pl-config.json"
   CCSU_CONFIG_PATH="$TEST_TEMP/pl-config.json"
   run config_project_list
   [[ "$output" == *"RepoA"* ]]
   [[ "$output" == *"RepoB"* ]]
+  [[ "$output" == *"Worktree"* ]]
   [[ "$output" != *"PlainDir"* ]]
   [[ "$output" != *"file.md"* ]]
   [[ "$output" != *".hidden"* ]]
