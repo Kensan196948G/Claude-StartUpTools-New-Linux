@@ -17,7 +17,7 @@
 #
 # ガードレール既定値 (config.json の "supervisor.defaults" で全体設定、
 # project state.json の "supervisor" ブロックでプロジェクト別に上書き可):
-#   daily_max_minutes=600 / max_restarts_per_day=6 / session_minutes=300
+#   daily_max_minutes=180 / max_restarts_per_day=1 / session_minutes=180
 #   cooldown_seconds=30 / crash_loop_threshold=3 / crash_loop_min_seconds=120
 #
 # テスト用 env 上書き:

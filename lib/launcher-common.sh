@@ -58,7 +58,7 @@ launcher__project_run_status() {
 
 # launcher__select_project [mode] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
 #   mode: foreground (既定) | background
-#   実行可 = 番号付き色分け表示 / 実行不可 = 番号なし (選択不可)
+#   全プロジェクトを番号付きで表示する。running は選択後に menu 側で接続/停止へ分岐する。
 launcher__select_project() {
   local mode="${1:-foreground}"
   local mode_label
@@ -76,53 +76,45 @@ launcher__select_project() {
   local display_num=0
 
   printf '\n  %s📋 プロジェクト一覧 [%s起動]%s\n' "$C_CYAN" "$mode_label" "$C_RESET" >&2
-  printf '     %s番号付き = 選択可  ── = 選択不可%s\n\n' "$C_WHITE" "$C_RESET" >&2
+  printf '     %s番号付き = 選択可 / 0・q・exit・/exit = 戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
 
-  local i proj run_status is_selectable
+  local i proj run_status
   for i in "${!projs[@]}"; do
     proj="${projs[$i]}"
     run_status="$(launcher__project_run_status "$proj")"
 
-    is_selectable=1
-    [[ "$run_status" == "running" ]] && is_selectable=0
-
-    if (( is_selectable )); then
-      display_num=$(( display_num + 1 ))
-      selectable_idxs+=("$i")
-      case "$run_status" in
-        goal-reached)
-          printf '  %s[%2d]%s %s🟡 %-40s%s %s(目標達成済)%s\n' \
-            "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
-            "$C_DKGREEN" "$C_RESET" >&2 ;;
-        crash-loop)
-          printf '  %s[%2d]%s %s🟡 %-40s%s %s(クラッシュ)%s\n' \
-            "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
-            "$C_YELLOW" "$C_RESET" >&2 ;;
-        blocked)
-          printf '  %s[%2d]%s %s🟡 %-40s%s %s(ブロック中)%s\n' \
-            "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
-            "$C_RED" "$C_RESET" >&2 ;;
-        *)
-          printf '  %s[%2d]%s %s🟢 %s%s\n' \
-            "$C_GREEN" "$display_num" "$C_RESET" "$C_GREEN" "$proj" "$C_RESET" >&2 ;;
-      esac
-    else
-      case "$run_status" in
-        running)
-          printf '       %s🔴 %-42s%s %s(実行中・選択不可)%s\n' \
-            "$C_RED" "$proj" "$C_RESET" "$C_WHITE" "$C_RESET" >&2 ;;
-      esac
-    fi
+    display_num=$(( display_num + 1 ))
+    selectable_idxs+=("$i")
+    case "$run_status" in
+      running)
+        printf '  %s[%2d]%s %s🔴 %-40s%s %s(実行中)%s\n' \
+          "$C_RED" "$display_num" "$C_RESET" "$C_RED" "$proj" "$C_RESET" \
+          "$C_WHITE" "$C_RESET" >&2 ;;
+      goal-reached)
+        printf '  %s[%2d]%s %s🟡 %-40s%s %s(目標達成済)%s\n' \
+          "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
+          "$C_DKGREEN" "$C_RESET" >&2 ;;
+      crash-loop)
+        printf '  %s[%2d]%s %s🟡 %-40s%s %s(クラッシュ)%s\n' \
+          "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
+          "$C_YELLOW" "$C_RESET" >&2 ;;
+      blocked)
+        printf '  %s[%2d]%s %s🟡 %-40s%s %s(ブロック中)%s\n' \
+          "$C_YELLOW" "$display_num" "$C_RESET" "$C_YELLOW" "$proj" "$C_RESET" \
+          "$C_RED" "$C_RESET" >&2 ;;
+      *)
+        printf '  %s[%2d]%s %s🟢 %s%s\n' \
+          "$C_GREEN" "$display_num" "$C_RESET" "$C_GREEN" "$proj" "$C_RESET" >&2 ;;
+    esac
   done
 
   printf '\n' >&2
-  if (( ${#selectable_idxs[@]} == 0 )); then
-    printf '  %s選択可能なプロジェクトがありません%s\n' "$C_RED" "$C_RESET" >&2
-    return 0
-  fi
 
   local idx
-  read -rp "  番号 (1-${display_num}): " idx
+  read -rp "  番号 (1-${display_num}, 0=戻る): " idx
+  case "${idx,,}" in
+    0|q|quit|exit|/exit|"") return 0 ;;
+  esac
   if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#selectable_idxs[@]} )); then
     printf '%s' "${projs[${selectable_idxs[$((idx - 1))]}]}"
   fi
