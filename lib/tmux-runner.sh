@@ -23,6 +23,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/config-loader.sh"
 # shellcheck source=lib/template-sync.sh
 source "$(dirname "${BASH_SOURCE[0]}")/template-sync.sh"
+# shellcheck source=lib/model-router.sh
+source "$(dirname "${BASH_SOURCE[0]}")/model-router.sh"
 
 # tmux/claude コマンド (テストでスタブ差し替え可)
 TMUX_BIN="${CCSU_TMUX_BIN:-tmux}"
@@ -140,11 +142,19 @@ tmux_run() {
   export CLAUDE_PROJECT="$project"
 
   local claude_cmd
+  local model_args=""
+  if model_router__select "${CLAUDEOS_MODEL_TASK:-normal}"; then
+    if [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]]; then
+      model_args="$(model_router__shell_args)"
+      model_router__record_selection "$project" tmux-runner "${CLAUDEOS_MODEL_TASK:-normal}" || true
+      log_info "🧠 model=$MODEL_ROUTER_MODEL effort=$MODEL_ROUTER_EFFORT reason=$MODEL_ROUTER_REASON"
+    fi
+  fi
   if [[ "${CCSU_CLAUDE_SAFE_MODE:-0}" == "1" ]]; then
     # safe-mode 診断起動 (claude 2.1.169+): hooks/MCP/カスタム設定を無効化した
     # 素の Claude Code で起動する。テンプレート配布・START_PROMPT 注入・
     # --dangerously-skip-permissions は意図的にスキップ (環境起因の問題切り分け用)。
-    claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN --safe-mode"
+    claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }--safe-mode"
     log_info "🩺 safe-mode 診断起動: テンプレート配布/START_PROMPT/権限スキップなし"
   else
     # 最新テンプレート (START_PROMPT.md / CLAUDE.md) をプロジェクトへ配布
@@ -152,9 +162,9 @@ tmux_run() {
 
     # START_PROMPT.md があれば claude に渡す (cat 展開を tmux コマンド内で実行)
     if [[ -f "$project_dir/.claude/START_PROMPT.md" ]]; then
-      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN --dangerously-skip-permissions \"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
+      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }--dangerously-skip-permissions \"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
     else
-      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN --dangerously-skip-permissions"
+      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }--dangerously-skip-permissions"
     fi
   fi
 

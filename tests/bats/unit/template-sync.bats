@@ -11,6 +11,7 @@ setup() {
   # CCSU_ROOT → テスト用に差し替え
   export CCSU_ROOT="$TEST_TEMP/ccsu"
   mkdir -p "$CCSU_ROOT/Claude/templates/claude"
+  mkdir -p "$CCSU_ROOT/Claude/templates/claudeos/commands"
 
   # バックアップ日付スタンプを固定 (冪等テスト)
   export CCSU_TEMPLATE_SYNC_DATE="20991231-000000"
@@ -174,4 +175,45 @@ teardown() { _bats_common_teardown; }
   run template_sync__apply "$proj"
   [ "$status" -eq 0 ]
   [ ! -f "$proj/.coderabbit.yaml" ]
+}
+
+# ---- slash commands --------------------------------------------
+@test "template_sync__apply: safe-auto-merge command を初回配布する" {
+  printf '# /safe-auto-merge\n' > "$CCSU_ROOT/Claude/templates/claudeos/commands/safe-auto-merge.md"
+  local proj="$TEST_TEMP/proj15"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ -f "$proj/.claude/commands/safe-auto-merge.md" ]
+  grep -q '/safe-auto-merge' "$proj/.claude/commands/safe-auto-merge.md"
+}
+
+@test "template_sync__apply: 既存 safe-auto-merge command は上書きしない" {
+  printf '# /safe-auto-merge template\n' > "$CCSU_ROOT/Claude/templates/claudeos/commands/safe-auto-merge.md"
+  local proj="$TEST_TEMP/proj16"
+  mkdir -p "$proj/.claude/commands"
+  printf '# project local command\n' > "$proj/.claude/commands/safe-auto-merge.md"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  grep -q 'project local command' "$proj/.claude/commands/safe-auto-merge.md"
+}
+
+@test "template_sync__apply: design-sync-check command を初回配布する" {
+  printf '# /design-sync-check\n' > "$CCSU_ROOT/Claude/templates/claudeos/commands/design-sync-check.md"
+  local proj="$TEST_TEMP/proj17"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ -f "$proj/.claude/commands/design-sync-check.md" ]
+  grep -q '/design-sync-check' "$proj/.claude/commands/design-sync-check.md"
+}
+
+@test "template_sync__apply: 既存 design-sync-check command は上書きしない" {
+  printf '# /design-sync-check template\n' > "$CCSU_ROOT/Claude/templates/claudeos/commands/design-sync-check.md"
+  local proj="$TEST_TEMP/proj18"
+  mkdir -p "$proj/.claude/commands"
+  printf '# project local design command\n' > "$proj/.claude/commands/design-sync-check.md"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  grep -q 'project local design command' "$proj/.claude/commands/design-sync-check.md"
 }

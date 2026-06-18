@@ -80,7 +80,8 @@ gh pr list --state open
 
 **人間の最終決断が必要な境界:**
 - 本番公開、外部公開URLの切替、課金が発生する操作、秘密情報の登録・削除は自動実行しない
-- データ削除、履歴改変、force push、main 直push、PR merge は人間の明示承認を待つ
+- データ削除、履歴改変、force push、main 直pushは人間の明示承認を待つ
+- PR merge は `claudeos/docs/auto-merge-protocol.md` に従う。main/default branch 宛は必ず人間の選択式、main 以外は CI・review・mergeability・危険ファイル gate 全通過時のみ自動 merge 可
 - 全プロジェクトへの Supervisor 適用は計画表示後、人間の選択で実行する
 - CTO は判断材料、手順、リスク、推奨案を提示し、選択後の実作業は自律継続する
 
@@ -819,6 +820,9 @@ Agent Teams で並列に動き、Agent View で監視する。
 | Haiku 4.5 | `claude-haiku-4-5-20251001` | 軽量・高速（/goal 達成判定用） |
 
 > **Lean System Prompt**: Opus 4.8 / Sonnet 4.6 でデフォルト有効。コンテキスト効率向上。
+
+ClaudeOS 起動経路では `lib/model-router.sh` により Opus 4.8=`xhigh`、Sonnet 4.6=`max` を自動指定する。
+利用差が 5% 以上になった場合は、次回起動で利用が少ないモデルへ寄せる。
 
 ## 24. 参照先
 

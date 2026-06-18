@@ -119,6 +119,14 @@ second
   run goal_extract__resolve hotfix "$GOALS"
   [ "$output" = "$GOALS/hotfix.md" ]
 }
+@test "goal_extract__build: safe-auto-merge テンプレートを抽出できる" {
+  run goal_extract__build safe-auto-merge "$REPO_ROOT/Claude/templates/claudeos/goals" 12
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == '/goal "' ]]
+  [[ "$output" == *"main/default branch"* ]]
+  [[ "$output" == *"Non-main Auto Merge Gates"* ]]
+  [[ "$output" == *"or stop after 12 turns"* ]]
+}
 @test "goal_extract__resolve: 不在は mvp-release へフォールバック" {
   _mkgoal mvp-release 'x'
   run goal_extract__resolve nonexistent "$GOALS"

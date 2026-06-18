@@ -22,6 +22,18 @@
         "title": { "type": "string" }
       }
     },
+    "goal_type": {
+      "type": "string",
+      "description": "ClaudeOS goal prompt selector. cron-launcher reads this value and injects Claude/templates/claudeos/goals/<goal_type>.md.",
+      "enum": [
+        "mvp-release",
+        "production-release",
+        "hotfix",
+        "security-emergency",
+        "refactoring",
+        "safe-auto-merge"
+      ]
+    },
     "project": {
       "type": "object",
       "description": "Project timeline constraints. Release timing is determined by CTO judgment (deploy.ready=true). 6 months is a default guideline only, not a hard constraint.",

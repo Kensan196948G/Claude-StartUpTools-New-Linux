@@ -6,6 +6,7 @@
 # 配布対象:
 #   START_PROMPT.md  : 毎回上書き (セッション開始プロンプト)
 #   CLAUDE.md        : 存在しない場合のみ配布 (プロジェクト固有設定を保護)
+#   selected commands : 存在しない場合のみ .claude/commands へ配布
 #   .coderabbit.yaml : 差分ありのみバックアップ→上書き (リポジトリルートへ配布)
 #
 # テスト用 env 上書き:
@@ -69,4 +70,18 @@ template_sync__apply() {
       log_info "📄 .coderabbit.yaml 配布済み: $project_dir/"
     fi
   fi
+
+  # ClaudeCode slash commands: 既存プロジェクトにも運用入口を補完する。
+  # 既存同名コマンドはプロジェクト固有設定として保護し、上書きしない。
+  local cmd src_cmd dst_cmd
+  for cmd in safe-auto-merge design-sync-check; do
+    src_cmd="$CCSU_ROOT/Claude/templates/claudeos/commands/${cmd}.md"
+    [[ -f "$src_cmd" ]] || continue
+    dst_cmd="$project_dir/.claude/commands/${cmd}.md"
+    mkdir -p "$project_dir/.claude/commands"
+    if [[ ! -f "$dst_cmd" ]]; then
+      cp "$src_cmd" "$dst_cmd"
+      log_info "📄 /${cmd} command 配布: $dst_cmd"
+    fi
+  done
 }

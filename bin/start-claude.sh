@@ -6,9 +6,9 @@
 #   多重起動防止: supervisor/flock。tmux は --tmux 明示時のみ fallback として使う。
 #
 # 使い方 (menu.sh から):
-#   start-claude.sh --project P --foreground [--duration 180]          # L1: 新規端末タブで Claude TUI
-#   start-claude.sh --project P --background [--duration 180]          # S1: supervisor BG
-#   start-claude.sh --project P --safe-mode  [--duration 180] [--tmux] # 診断: hooks/MCP 無効の素起動
+#   start-claude.sh --project P --foreground [--duration 180] [--dry-run]          # L1: 新規端末タブで Claude TUI
+#   start-claude.sh --project P --background [--duration 180] [--dry-run]          # S1: supervisor BG
+#   start-claude.sh --project P --safe-mode  [--duration 180] [--tmux] [--dry-run] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
 # ============================================================
 
@@ -25,6 +25,20 @@ source "$SCRIPT_DIR/../lib/launcher-common.sh"
 source "$SCRIPT_DIR/../lib/tmux-runner.sh"
 # shellcheck source=lib/notify.sh
 source "$SCRIPT_DIR/../lib/notify.sh"
+# shellcheck source=lib/model-router.sh
+source "$SCRIPT_DIR/../lib/model-router.sh"
+
+claude__select_model() {
+  local project="$1" task="$2" source="$3" record="${4:-0}"
+  unset CLAUDEOS_SELECTED_MODEL CLAUDEOS_SELECTED_EFFORT CLAUDEOS_SELECTED_MODEL_KEY CLAUDEOS_SELECTED_MODEL_REASON
+  model_router__select "$task" || return 0
+  [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]] || return 0
+  export CLAUDEOS_SELECTED_MODEL="$MODEL_ROUTER_MODEL"
+  export CLAUDEOS_SELECTED_EFFORT="$MODEL_ROUTER_EFFORT"
+  export CLAUDEOS_SELECTED_MODEL_KEY="$MODEL_ROUTER_KEY"
+  export CLAUDEOS_SELECTED_MODEL_REASON="$MODEL_ROUTER_REASON"
+  (( record )) && model_router__record_selection "$project" "$source" "$task"
+}
 
 terminal__open_tab() {
   local title="$1" wrapper="$2"
@@ -165,10 +179,14 @@ direct__run_tui_foreground() {
 
   template_sync__apply "$project_dir"
   prompt_file="$project_dir/.claude/START_PROMPT.md"
+  local -a model_args=()
+  [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"; prompt_file="$7"
+project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"; prompt_file="$7"; model="$8"; effort="$9"
+model_args=()
+[[ -n "$model" ]] && model_args=(--model "$model" --effort "$effort")
 started="$(date -Iseconds)"
 mkdir -p "$(dirname "$state_file")"
 printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
@@ -177,9 +195,9 @@ printf '\033]0;%s\007' "$title"
 cd "$project_dir" || exit 1
 set +e
 if [[ -f "$prompt_file" ]] && [[ -s "$prompt_file" ]]; then
-  timeout --foreground "$dur" "$claude_bin" "$(cat "$prompt_file")"
+  timeout --foreground "$dur" "$claude_bin" "${model_args[@]}" "$(cat "$prompt_file")"
 else
-  timeout --foreground "$dur" "$claude_bin"
+  timeout --foreground "$dur" "$claude_bin" "${model_args[@]}"
 fi
 rc=$?
 ended="$(date -Iseconds)"
@@ -191,7 +209,7 @@ exit "$rc"
 EOF
   chmod +x "$wrapper"
 
-  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project" "$prompt_file"; then
+  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project" "$prompt_file" "${CLAUDEOS_SELECTED_MODEL:-}" "${CLAUDEOS_SELECTED_EFFORT:-}"; then
     log_ok "🖥️  Claude プロンプトを新規端末タブで起動しました: $project"
     log_info "  duration=${duration}m / tmux なし"
     log_info "  START_PROMPT.md を初期プロンプトとして渡します"
@@ -207,9 +225,9 @@ EOF
     printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
       "$project" "$$" "$started" > "$state_file"
     if [[ -f "$prompt_file" ]] && [[ -s "$prompt_file" ]]; then
-      cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" "$(cat "$prompt_file")"
+      cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" "${model_args[@]}" "$(cat "$prompt_file")"
     else
-      cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN"
+      cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" "${model_args[@]}"
     fi
     rc=$?
     ended="$(date -Iseconds)"
@@ -226,14 +244,16 @@ direct__run_safe_mode() {
   mkdir -p "$CCSU_HOME/logs"
   stamp="$(date +%Y%m%d-%H%M%S)"
   log_file="$CCSU_HOME/logs/manual-safe-${stamp}-${safe}.log"
+  local -a model_args=()
+  [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
 
   if [[ "$mode" == "foreground" ]]; then
     log_info "🩺 safe-mode 直接起動: $project (tmux なし / Ctrl+C 可)"
-    ( cd "$(launcher__project_dir "$project")" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" --safe-mode )
+    ( cd "$(launcher__project_dir "$project")" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" "${model_args[@]}" --safe-mode )
   else
     if has_cmd setsid; then runner=setsid; else runner=nohup; fi
-    "$runner" bash -c 'cd "$1" && timeout --foreground "$2" "$3" --safe-mode' \
-      _ "$(launcher__project_dir "$project")" "${dur_sec}s" "$CLAUDE_BIN" >>"$log_file" 2>&1 < /dev/null &
+    "$runner" bash -c 'cd "$1" && shift; timeout --foreground "$1" "$2" "${@:3}" --safe-mode' \
+      _ "$(launcher__project_dir "$project")" "${dur_sec}s" "$CLAUDE_BIN" "${model_args[@]}" >>"$log_file" 2>&1 < /dev/null &
     disown 2>/dev/null || true
     log_ok "safe-mode BG 起動: $project (tmux なし)"
     log_info "  ログ: $log_file"
@@ -251,19 +271,21 @@ direct__run_headless_once() {
 
   template_sync__apply "$project_dir"
   [[ -f "$project_dir/.claude/START_PROMPT.md" ]] && prompt="$(cat "$project_dir/.claude/START_PROMPT.md")"
+  local -a model_args=()
+  [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
 
   if [[ "$mode" == "foreground" ]]; then
     log_info "🔧 直接 headless 起動: $project (tmux なし / Ctrl+C 可)"
     if [[ -f "$SCRIPT_DIR/../libexec/stream-json-tail.sh" ]]; then
       local rc
       set +e
-      ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto ) \
+      ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "${model_args[@]}" ) \
         | bash "$SCRIPT_DIR/../libexec/stream-json-tail.sh"
       rc="${PIPESTATUS[0]}"
       set -e
       return "$rc"
     fi
-    ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto )
+    ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "${model_args[@]}" )
   else
     local prompt_file wrapper
     prompt_file="$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.prompt"
@@ -273,13 +295,14 @@ direct__run_headless_once() {
 #!/usr/bin/env bash
 set -euo pipefail
 project_dir="$1"; dur="$2"; claude_bin="$3"; prompt_file="$4"
+shift 4
 prompt="$(cat "$prompt_file" 2>/dev/null || true)"
 cd "$project_dir"
-timeout --foreground "$dur" "$claude_bin" -p "$prompt" --output-format stream-json --verbose --permission-mode auto
+timeout --foreground "$dur" "$claude_bin" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "$@"
 EOF
     chmod +x "$wrapper"
     if has_cmd setsid; then runner=setsid; else runner=nohup; fi
-    "$runner" bash "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$prompt_file" >>"$log_file" 2>&1 < /dev/null &
+    "$runner" bash "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$prompt_file" "${model_args[@]}" >>"$log_file" 2>&1 < /dev/null &
     disown 2>/dev/null || true
     log_ok "直接 headless BG 起動: $project (tmux なし)"
     log_info "  ログ: $log_file"
@@ -287,7 +310,7 @@ EOF
 }
 
 main() {
-  local project="" mode="foreground" duration="" safe_mode=0 use_tmux=0
+  local project="" mode="foreground" duration="" safe_mode=0 use_tmux=0 dry_run=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)    project="$2"; shift 2 ;;
@@ -296,6 +319,7 @@ main() {
       --duration)   duration="$2"; shift 2 ;;
       --safe-mode)  safe_mode=1; shift ;;
       --tmux)       use_tmux=1; shift ;;
+      --dry-run)    dry_run=1; shift ;;
       --local)      shift ;;   # 互換: ローカル一本化のため無視
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
@@ -307,7 +331,13 @@ main() {
   [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください: $duration"; exit 1; }
   session__enforce_launch_limits "$duration" || exit 1
 
-  require_cmd claude "npm i -g @anthropic-ai/claude-code"
+  if (( dry_run )); then
+    if ! has_cmd claude; then
+      log_warn "dry-run: claude CLI が見つかりません (実起動時は npm i -g @anthropic-ai/claude-code が必要)"
+    fi
+  else
+    require_cmd claude "npm i -g @anthropic-ai/claude-code"
+  fi
 
   # メール送信用に ~/.env-claudeos を読み込む (SMTP creds / CLAUDEOS_EMAIL_ENABLED)。
   # cron-launcher.sh と同様。set -a で sourced 変数を確実に export し、
@@ -321,6 +351,41 @@ main() {
   [[ -z "$project" ]] && project="$(launcher__select_project)"
   [[ -n "$project" ]] || { log_error "プロジェクトが選択されていません"; exit 1; }
   launcher__project_exists "$project" || { log_error "プロジェクトが存在しません: $(launcher__project_dir "$project")"; exit 1; }
+
+  local model_task="${CLAUDEOS_MODEL_TASK:-normal}"
+  local record_model=0
+  if (( dry_run )); then
+    record_model=0
+  elif (( safe_mode )); then
+    record_model=1
+  elif [[ "$mode" == "foreground" ]]; then
+    record_model=1
+  fi
+  claude__select_model "$project" "$model_task" "start-claude" "$record_model" || true
+
+  if (( dry_run )); then
+    log_info "dry-run: Claude 起動計画"
+    log_info "  project=$project"
+    log_info "  project_dir=$(launcher__project_dir "$project")"
+    log_info "  mode=$mode"
+    log_info "  duration=${duration}m"
+    log_info "  safe_mode=$safe_mode"
+    log_info "  tmux=$use_tmux"
+    if [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]]; then
+      log_info "  model=$CLAUDEOS_SELECTED_MODEL"
+      log_info "  effort=$CLAUDEOS_SELECTED_EFFORT"
+      log_info "  model_reason=$CLAUDEOS_SELECTED_MODEL_REASON"
+    fi
+    if (( safe_mode )); then
+      log_info "  route=$([[ "$use_tmux" == "1" ]] && printf 'tmux safe-mode' || printf 'direct safe-mode')"
+    elif [[ "$mode" == "foreground" ]]; then
+      log_info "  route=$([[ "$use_tmux" == "1" ]] && printf 'tmux foreground' || printf 'terminal/direct TUI')"
+    else
+      log_info "  route=autonomy supervisor background"
+    fi
+    log_info "dry-run: Claude 起動・template sync・通知・supervisor 起動は行いません"
+    return 0
+  fi
 
   notify__play claude   # 起動通知音 (非ブロッキング・失敗無害)
 

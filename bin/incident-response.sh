@@ -15,24 +15,31 @@ source "$SCRIPT_DIR/../lib/json.sh"
 STATE="${CCSU_STATE_FILE:-$CCSU_ROOT/state.json}"
 
 main() {
-  local prio=""
+  local prio="" dry_run=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --priority) prio="$2"; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
   done
-  [[ -z "$prio" ]] && read -rp "  優先度 (P1/P2/P3): " prio
+  [[ -z "$prio" && "$dry_run" == "0" ]] && read -rp "  優先度 (P1/P2/P3): " prio
+  [[ -z "$prio" && "$dry_run" == "1" ]] && prio="P3"
   prio="${prio^^}"
   [[ "$prio" =~ ^P[123]$ ]] || { log_error "P1 / P2 / P3 のいずれかを指定してください"; exit 1; }
 
   local id now
   id="inc-$(date +%Y%m%d-%H%M%S)"
   now="$(date -Iseconds)"
+  if (( dry_run )); then
+    log_info "dry-run: インシデント $id ($prio) を state.maintenance.open_incidents へ追加予定"
+    log_info "dry-run: 書き込みは行いません: $STATE"
+  else
   json_set "$STATE" \
     '.maintenance.open_incidents = ((.maintenance.open_incidents // []) + [{id:$id, priority:$p, opened_at:$t}]) | .maintenance.last_incident_id = $id | .maintenance.incident_count_30d = ((.maintenance.incident_count_30d // 0) + 1)' \
     --arg id "$id" --arg p "$prio" --arg t "$now"
   log_ok "インシデント記録: $id ($prio)"
+  fi
 
   case "$prio" in
     P1) log_warn "P1 即時対応: Debugger → Developer → QA → DevOps → CTO (最終承認)" ;;

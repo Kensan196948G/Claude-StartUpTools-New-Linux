@@ -35,6 +35,7 @@ setup() {
   export LP_LOGS_DIR="$TEST_TEMP/logs"
   export LP_PROJECTS_BASE="$TEST_TEMP/projects"
   export LP_SJT="$REPO_ROOT/libexec/stream-json-tail.sh"
+  export CLAUDEOS_MODEL_USAGE_FILE="$TEST_TEMP/model-usage.jsonl"
 
   # 偽プロジェクト Demo
   PROJECT_DIR="$LP_PROJECTS_BASE/Demo"
@@ -125,6 +126,8 @@ _all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
   [[ "$output" == *"stream-json"* ]]
   [[ "$output" == *"--permission-mode"* ]]
   [[ "$output" == *"auto"* ]]
+  [[ "$output" == *"--model"* ]]
+  [[ "$output" == *"--effort"* ]]
   [[ "$output" != *"bypassPermissions"* ]]
   [[ "$output" != *"dontAsk"* ]]
   # --print + stream-json は --verbose 必須 (claude CLI 契約・ライブスモーク回帰)

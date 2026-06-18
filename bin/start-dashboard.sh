@@ -9,7 +9,7 @@
 #   LAN IP を自動検出して別端末からアクセスできる URL を案内する。
 #   ポート使用中なら「既に起動中」として URL 案内のみ (二重起動防止)。
 #
-# 使い方: start-dashboard.sh [--no-browser] [--port N]
+# 使い方: start-dashboard.sh [--no-browser] [--port N] [--dry-run]
 # ============================================================
 
 set -euo pipefail
@@ -21,11 +21,12 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/config-loader.sh"
 
 main() {
-  local no_browser=0 port=3737
+  local no_browser=0 port=3737 dry_run=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-browser) no_browser=1; shift ;;
       --port) port="$2"; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
   done
@@ -37,6 +38,15 @@ main() {
   local ip url
   ip="$(ccsu_lan_ip)"
   url="http://$ip:$port/mission-control"
+
+  if (( dry_run )); then
+    log_info "dry-run: Dashboard 起動計画"
+    log_info "  script=$dash"
+    log_info "  port=$port"
+    log_info "  url=$url"
+    log_info "dry-run: node サーバー起動・ブラウザ起動は行いません"
+    return 0
+  fi
 
   # 既存起動チェック: ポート使用中なら起動済みとみなし URL を案内 (二重起動防止)
   if ss -ltn 2>/dev/null | grep -q ":$port "; then

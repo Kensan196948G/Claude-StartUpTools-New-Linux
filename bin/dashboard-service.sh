@@ -17,17 +17,26 @@ UNIT="claudeos-dashboard.service"
 UNIT_PATH="${CCSU_SYSTEMD_UNIT_PATH:-$HOME/.config/systemd/user/$UNIT}"
 SYSTEMCTL="${CCSU_SYSTEMCTL_BIN:-systemctl}"
 CRONTAB_BIN="${CCSU_CRONTAB_BIN:-crontab}"
+DS_DRY_RUN=0
 
 ds__register() {
+  local node dash pdir
+  node="$(command -v node || echo /usr/bin/node)"
+  dash="$CCSU_ROOT/scripts/dashboards/serve-dashboard.js"
+  pdir="$(config_projects_dir)"
+  if (( DS_DRY_RUN )); then
+    log_info "dry-run: Dashboard 自動起動登録計画"
+    log_info "  unit=$UNIT_PATH"
+    log_info "  ExecStart=$node $dash 3737"
+    log_info "  AI_STARTUP_PROJECTS_DIR=$pdir"
+    log_info "dry-run: systemd/crontab への書き込みは行いません"
+    return 0
+  fi
   if ! has_cmd "$SYSTEMCTL"; then
     log_warn "systemd (systemctl) が無いため crontab @reboot を使用します"
     ds__register_cron; return
   fi
   mkdir -p "$(dirname "$UNIT_PATH")"
-  local node dash pdir
-  node="$(command -v node || echo /usr/bin/node)"
-  dash="$CCSU_ROOT/scripts/dashboards/serve-dashboard.js"
-  pdir="$(config_projects_dir)"
   cat > "$UNIT_PATH" <<EOF
 [Unit]
 Description=ClaudeOS Dashboard (Mission Control)
@@ -53,11 +62,25 @@ ds__register_cron() {
   local pdir cmd
   pdir="$(config_projects_dir)"
   cmd="@reboot cd $CCSU_ROOT && AI_STARTUP_PROJECTS_DIR=$pdir node scripts/dashboards/serve-dashboard.js 3737 >> $HOME/.claudeos/logs/dashboard.log 2>&1"
+  if (( DS_DRY_RUN )); then
+    log_info "dry-run: crontab @reboot 登録予定"
+    log_info "  $cmd"
+    log_info "dry-run: crontab は変更しません"
+    return 0
+  fi
   ( "$CRONTAB_BIN" -l 2>/dev/null | grep -v 'serve-dashboard.js' || true; printf '%s\n' "$cmd" ) | "$CRONTAB_BIN" -
   log_ok "crontab @reboot 登録 (systemd 代替)"
 }
 
 ds__unregister() {
+  if (( DS_DRY_RUN )); then
+    log_info "dry-run: Dashboard 自動起動解除予定"
+    log_info "  systemd unit=$UNIT"
+    log_info "  unit path=$UNIT_PATH"
+    log_info "  crontab pattern=serve-dashboard.js"
+    log_info "dry-run: systemd/crontab は変更しません"
+    return 0
+  fi
   if has_cmd "$SYSTEMCTL"; then
     "$SYSTEMCTL" --user disable --now "$UNIT" 2>/dev/null || true
     rm -f "$UNIT_PATH"
@@ -77,6 +100,7 @@ main() {
       --unregister) action="unregister"; shift ;;
       --run-now)    shift ;;   # systemd enable --now で兼ねる
       --status)     action="status"; shift ;;
+      --dry-run)    DS_DRY_RUN=1; shift ;;
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
   done

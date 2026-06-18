@@ -3,6 +3,12 @@
 Linux ローカルで Claude Code を起動し、`/home/kensan/Projects` 配下の Git リポジトリを自律開発対象として管理するスタートアップツールです。
 SSH 接続や Windows/PowerShell 経路は持たず、`tmux`、Supervisor、cron、GitHub Actions を Linux 上で扱います。
 
+| 項目 | 値 |
+|---|---|
+| バージョン | **4.0.0-linux** |
+| Agents | **43体** |
+| ClaudeOS カーネル | **43体+44コマンド** |
+
 ```text
 🎛️ Menu       🧠 CTO Claude       🔁 Supervisor       🧪 CI
    │              │                    │                │
