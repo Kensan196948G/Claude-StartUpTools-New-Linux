@@ -16,8 +16,24 @@ source "$SCRIPT_DIR/../lib/json.sh"
 SETTINGS="${CCSU_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 
 main() {
+  local dry_run=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run=1; shift ;;
+      *) log_error "不明な引数: $1"; exit 1 ;;
+    esac
+  done
   log_info "Statusline 設定 (settings.json)"
   local sl_cmd="${CCSU_STATUSLINE_CMD:-node $CCSU_ROOT/scripts/dashboards/statusline.js}"
+
+  if (( dry_run )); then
+    if [[ -f "$SETTINGS" ]]; then
+      json_valid "$SETTINGS" || { log_error "settings.json が不正な JSON です: $SETTINGS"; exit 1; }
+    fi
+    log_info "dry-run: statusLine.command を設定予定: $sl_cmd"
+    log_info "dry-run: 書き込みは行いません: $SETTINGS"
+    return 0
+  fi
 
   mkdir -p "$(dirname "$SETTINGS")"
   [[ -f "$SETTINGS" ]] || echo '{}' > "$SETTINGS"

@@ -153,6 +153,14 @@ function main() {
     process.exit(0);
   }
 
+  if (DRY_RUN) {
+    console.log("認証スコープ: dry-run のため gh API 確認をスキップ");
+    console.log("\n[Mode B] ラベルベース同期の予定を表示...");
+    const r = syncLabels(state);
+    console.log(`\n結果(dry-run): synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`);
+    process.exit(0);
+  }
+
   // スコープ検出と動作モード選択
   const hasProjectScope = detectProjectScope();
   console.log(`認証スコープ: ${hasProjectScope ? "✅ project スコープあり (Mode A)" : "⚠️ project スコープなし → Mode B (ラベルベース)"}`);

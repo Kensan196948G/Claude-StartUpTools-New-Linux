@@ -55,7 +55,7 @@
 
 ## 6. 利用可能なスラッシュコマンド
 
-`.claude/claudeos/commands/` 直下に **42 個** のコマンドが配置されています。
+`.claude/claudeos/commands/` 直下に **44 個** のコマンドが配置されています。
 
 | カテゴリ | Command |
 |---|---|

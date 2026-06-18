@@ -59,4 +59,4 @@ Claude テンプレートを変更
 
 - SSH 接続、リモート配布、Windows Terminal、PowerShell/Pester は本Linux版の対象外です。
 - Supervisor の全プロジェクト適用は、実行直前に人間の最終選択を必要とします。
-- CTO Claude は実装、検証、レビュー、PR準備まで自律実行できますが、公開、削除、課金、Secrets、merge などの最終判断は人間が行います。
+- CTO Claude は実装、検証、レビュー、PR準備まで自律実行できます。merge は `Claude/templates/claudeos/docs/auto-merge-protocol.md` に従い、main/default branch は人間の最終判断、main 以外は gate 全通過時のみ自動実行できます。公開、削除、課金、Secrets は人間が最終判断します。

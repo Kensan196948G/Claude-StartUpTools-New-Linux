@@ -29,6 +29,7 @@ source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
 CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
 DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '180')"
+CS_DRY_RUN=0
 
 # --- 自動配備: launcher 起動の直前にテンプレ → ~/.claudeos を同期 (恒久ドリフト対策) ---
 #   cron が実走するのは配備済み実行体のため、PR merge 後の runtime ズレをここで吸収する。
@@ -64,11 +65,23 @@ cs__add() {
       --duration) duration="$2"; shift 2 ;;
       --time)     time="$2"; shift 2 ;;
       --dow)      dow="$2"; shift 2 ;;
+      --dry-run)  CS_DRY_RUN=1; shift ;;
       *) log_error "add: 不明な引数: $1"; return 1 ;;
     esac
   done
   [[ -n "$project" && -n "$time" && -n "$dow" ]] || { log_error "add: --project / --time / --dow は必須"; return 1; }
   local -a dows; IFS=',' read -ra dows <<< "$dow"
+  if (( CS_DRY_RUN )); then
+    local expr
+    expr="$(cron__format_expr "$time" "${dows[@]}")" || return 1
+    cron__validate_limits "$project" "$duration" "${dows[@]}" || return 1
+    log_info "dry-run: cron 登録予定"
+    log_info "  project=$project"
+    log_info "  expr=$expr"
+    log_info "  duration=${duration}m"
+    log_info "dry-run: crontab は変更しません"
+    return 0
+  fi
   local id
   id="$(cron__add "$project" "$duration" "$time" "${dows[@]}")" || return 1
   log_ok "登録: id=$id project=$project time=$time dow=$dow duration=${duration}m"
@@ -80,10 +93,16 @@ cs__remove() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --id) id="$2"; shift 2 ;;
+      --dry-run) CS_DRY_RUN=1; shift ;;
       *) log_error "remove: 不明な引数: $1"; return 1 ;;
     esac
   done
   [[ -n "$id" ]] || { log_error "remove: --id は必須"; return 1; }
+  if (( CS_DRY_RUN )); then
+    log_info "dry-run: cron 削除予定: id=$id"
+    log_info "dry-run: crontab は変更しません"
+    return 0
+  fi
   local n; n="$(cron__remove "$id")"
   if [[ "$n" -gt 0 ]]; then log_ok "削除: id=$id ($n 件)"; else log_warn "該当エントリなし: id=$id"; fi
 }
@@ -93,6 +112,15 @@ cs__remove() {
 cs__launch_bg() {
   local project="$1" duration="${2:-$DEFAULT_DURATION}" use_tmux="${3:-0}" safe logp runner
   [[ -n "$project" ]] || { log_error "BG 起動: project が空です"; return 1; }
+  if (( CS_DRY_RUN )); then
+    log_info "dry-run: cron launcher BG 起動予定"
+    log_info "  project=$project"
+    log_info "  duration=${duration}m"
+    log_info "  mode=$([[ "$use_tmux" == "1" ]] && printf 'tmux' || printf 'headless')"
+    log_info "  launcher=$CRON_LAUNCHER"
+    log_info "dry-run: launcher 起動・ログ作成は行いません"
+    return 0
+  fi
   _cs__auto_deploy
   [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
   safe="$(ccsu_safe_name "$project")"
@@ -233,7 +261,9 @@ cs__run_now() {
     esac
   done
   [[ -n "$project" ]] || { log_error "run-now: --project は必須"; return 1; }
-  [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
+  if (( CS_DRY_RUN == 0 )); then
+    [[ -f "$CRON_LAUNCHER" ]] || { log_error "cron-launcher.sh が見つかりません: $CRON_LAUNCHER"; return 1; }
+  fi
   local registered_duration
   if ! registered_duration="$(cs__registered_duration "$project")"; then
     log_error "未登録プロジェクトは実行できません: $project"
@@ -415,11 +445,27 @@ cs__menu() {
 }
 
 main() {
+  local -a args=()
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--dry-run" ]]; then
+      CS_DRY_RUN=1
+    else
+      args+=("$arg")
+    fi
+  done
+  set -- "${args[@]}"
   case "${1:-menu}" in
     list)       cs__list_display ;;
     add)        shift; cs__add "$@" ;;
     remove)     shift; cs__remove "$@" ;;
-    remove-all) cron__remove_all; printf '\n' ;;
+    remove-all)
+      if (( CS_DRY_RUN )); then
+        log_info "dry-run: CLAUDEOS cron 全解除予定: $(cron__list | grep -c . || true) 件"
+        log_info "dry-run: crontab は変更しません"
+      else
+        cron__remove_all; printf '\n'
+      fi ;;
     run-now)    shift; cs__run_now "$@" ;;
     launch)     shift; cs__launch "$@" ;;
     bulk-register) shift; cs__bulk_register "$@" ;;

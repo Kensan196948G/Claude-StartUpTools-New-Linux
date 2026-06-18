@@ -80,6 +80,7 @@ STABLE 未達は merge / deploy 禁止。
 - branch または WorkTree 必須
 - PR 必須
 - CI 成功のみ merge 許可
+- PR merge は `claudeos/docs/auto-merge-protocol.md` に従う。main/default branch 宛は必ず人間の選択式、main 以外は CI・review・mergeability・危険ファイル gate 全通過時のみ自動 merge 可
 - Issue 駆動開発を推奨
 
 ### GitHub Projects 状態遷移

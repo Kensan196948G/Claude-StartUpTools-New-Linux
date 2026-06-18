@@ -33,6 +33,8 @@ source "$SCRIPT_DIR/../lib/supervisor.sh"
 source "$SCRIPT_DIR/../lib/queue.sh"
 # shellcheck source=lib/deploy-launcher.sh
 source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
+# shellcheck source=lib/model-router.sh
+source "$SCRIPT_DIR/../lib/model-router.sh"
 
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
@@ -95,6 +97,36 @@ au__start() {
   fi
 
   launcher__project_exists "$project" || { log_error "プロジェクトが存在しません: $(launcher__project_dir "$project")"; return 1; }
+
+  if (( dry_run )); then
+    if au__has_cron "$project" && (( force == 0 )); then
+      log_error "dry-run: cron 登録が残っています: $project (--force なしでは起動不可)"
+      return 1
+    fi
+    local _dry_pstate _dry_reason
+    _dry_pstate="$(launcher__project_dir "$project")/state.json"
+    if [[ -f "$_dry_pstate" ]]; then
+      _dry_reason="$(sup__project_stop_reason "$_dry_pstate")"
+      if [[ -n "$_dry_reason" && "$force" == "0" ]]; then
+        log_error "dry-run: $project は停止条件を満たしています: $_dry_reason"
+        return 1
+      fi
+    fi
+    log_info "dry-run: supervisor 起動計画"
+    log_info "  project=$project"
+    log_info "  project_dir=$(launcher__project_dir "$project")"
+    log_info "  duration=${duration:-default}"
+    log_info "  force=$force"
+    log_info "  cron_launcher=$SUP_CRON_LAUNCHER"
+    if model_router__select "${CLAUDEOS_MODEL_TASK:-normal}" \
+       && [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]]; then
+      log_info "  model=$MODEL_ROUTER_MODEL"
+      log_info "  effort=$MODEL_ROUTER_EFFORT"
+      log_info "  model_reason=$MODEL_ROUTER_REASON"
+    fi
+    log_info "dry-run: 配備同期・supervisor 起動・state 書き込みは行いません"
+    return 0
+  fi
 
   # 🚀 配備ドリフト自動同期: cron が実走する ~/.claudeos/cron-launcher.sh は
   # リポジトリ template の配備済みコピーであり、PR merge だけでは更新されない。

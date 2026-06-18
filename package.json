@@ -13,6 +13,7 @@
     "test": "npm run test:bats && npm run test:node",
     "test:bats": "bats tests/bats/unit/",
     "test:node": "node --test scripts/**/*.test.js 2>/dev/null || echo 'No Node test files found'",
+    "test:dry-run": "node scripts/test/dry-run-execution-matrix.js",
     "lint": "shellcheck -S error start.sh lib/*.sh bin/*.sh libexec/*.sh Claude/templates/linux/*.sh scripts/setup/*.sh scripts/tools/*.sh",
     "audit:scan": "node scripts/tools/run-audit-scan.js",
     "cmdb:scan": "node scripts/tools/run-cmdb-scan.js"

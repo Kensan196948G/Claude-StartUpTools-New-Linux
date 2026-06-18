@@ -40,6 +40,7 @@ production-release → .claude/claudeos/goals/production-release.md
 hotfix             → .claude/claudeos/goals/hotfix.md
 security-emergency → .claude/claudeos/goals/security-emergency.md
 refactoring        → .claude/claudeos/goals/refactoring.md
+safe-auto-merge    → .claude/claudeos/goals/safe-auto-merge.md
 ```
 
 ## ⚡ 起動後必須実行

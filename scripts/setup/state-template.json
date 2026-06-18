@@ -5,6 +5,7 @@
     "release_deadline": "2026-07-01",
     "phase_mode": "development"
   },
+  "goal_type": "mvp-release",
   "goal": "",
   "phase": "Monitor",
   "kpi": {

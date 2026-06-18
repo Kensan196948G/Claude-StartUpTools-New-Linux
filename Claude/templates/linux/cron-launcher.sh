@@ -31,6 +31,11 @@ LOGS_DIR="$CLAUDEOS_HOME/logs"
 PROJECTS_BASE="${PROJECTS_BASE:-$HOME/Projects}"
 PROJECT_DIR="$PROJECTS_BASE/$PROJECT"
 REPORT_SCRIPT="${CLAUDEOS_REPORT_SCRIPT:-$CLAUDEOS_HOME/report-and-mail.py}"
+MODEL_ROUTER_LIB="${MODEL_ROUTER_LIB:-$PROJECTS_BASE/Claude-StartUpTools-New-Linux/lib/model-router.sh}"
+if [[ -f "$MODEL_ROUTER_LIB" ]]; then
+  # shellcheck source=lib/model-router.sh
+  source "$MODEL_ROUTER_LIB"
+fi
 
 # ClaudeOS goals/ の共通テンプレートパス（全プロジェクトから参照）
 CLAUDEOS_GOALS_DIR="${CLAUDEOS_GOALS_DIR:-$PROJECTS_BASE/Claude-StartUpTools-New-Linux/Claude/templates/claudeos/goals}"
@@ -397,8 +402,21 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   else
     _HL_PERM=( --permission-mode auto )
   fi
+
+  # モデルルーティング: Opus 4.8=xhigh / Sonnet 4.6=max。task/usage balance で自動選択。
+  _HL_MODEL=()
+  _HL_TASK="${CLAUDEOS_MODEL_TASK:-$RESUME_GOAL_TYPE}"
+  if declare -F model_router__select >/dev/null 2>&1; then
+    model_router__select "$_HL_TASK"
+    if [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]]; then
+      _HL_MODEL=( --model "$MODEL_ROUTER_MODEL" --effort "$MODEL_ROUTER_EFFORT" )
+      model_router__record_selection "$PROJECT" cron-launcher "$_HL_TASK" || true
+      echo "🧠 [cron-launcher] model=$MODEL_ROUTER_MODEL effort=$MODEL_ROUTER_EFFORT reason=$MODEL_ROUTER_REASON" >> "$LOG_FILE"
+    fi
+  fi
+
   _HL_CMD=( timeout --foreground "${DURATION_SEC}s" "${_HL_AUTH[@]}" claude -p "$PROMPT_ARG"
-            --output-format stream-json --verbose "${_HL_PERM[@]}" )
+            --output-format stream-json --verbose "${_HL_PERM[@]}" "${_HL_MODEL[@]}" )
   # proactive output style があれば append (env 指定時のみ・既定は未使用)
   if [[ -n "${CLAUDEOS_PROACTIVE_STYLE_FILE:-}" ]] && [[ -f "$CLAUDEOS_PROACTIVE_STYLE_FILE" ]]; then
     _HL_CMD+=( --append-system-prompt-file "$CLAUDEOS_PROACTIVE_STYLE_FILE" )
@@ -455,17 +473,31 @@ PYEOF
 
 # ---- 従来の対話 TUI 経路 (明示フォールバック) ----
 else
+_TUI_MODEL_ARGS=""
+if declare -F model_router__select >/dev/null 2>&1; then
+  _TUI_TASK="${CLAUDEOS_MODEL_TASK:-$RESUME_GOAL_TYPE}"
+  model_router__select "$_TUI_TASK"
+  if [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]]; then
+    _TUI_MODEL_ARGS="$(model_router__shell_args)"
+    model_router__record_selection "$PROJECT" cron-launcher-tui "$_TUI_TASK" || true
+    echo "🧠 [cron-launcher] TUI model=$MODEL_ROUTER_MODEL effort=$MODEL_ROUTER_EFFORT reason=$MODEL_ROUTER_REASON" >> "$LOG_FILE"
+  fi
+fi
+
 # wrapper script: -e フラグ経由で env var を渡す（tmux サーバーのグローバル環境に依存しない）
 # set -e を使わず claude_exit に明示的に格納する（非0終了でも wait-for -S を必ず実行するため）
 cat > "$CLAUDE_WRAPPER" <<'WRAPPER_EOF'
 #!/usr/bin/env bash
 claude_exit=0
 _prompt_file="${_CLAUDEOS_PROMPT_FILE:-}"
+_model_args="${_CLAUDEOS_MODEL_ARGS:-}"
 if [[ -f "$_prompt_file" ]] && [[ -s "$_prompt_file" ]]; then
   _prompt_content="$(cat "$_prompt_file")"
-  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude --dangerously-skip-permissions "$_prompt_content" || claude_exit=$?
+  # shellcheck disable=SC2086 # _model_args is generated with shell quoting.
+  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args --dangerously-skip-permissions "$_prompt_content" || claude_exit=$?
 else
-  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude --dangerously-skip-permissions || claude_exit=$?
+  # shellcheck disable=SC2086 # _model_args is generated with shell quoting.
+  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args --dangerously-skip-permissions || claude_exit=$?
 fi
 echo "$claude_exit" > "${_CLAUDEOS_EXIT_FILE}"
 # 終了コード書き込み後に親 shell へ通知（失敗時もここまで必ず到達する）
@@ -499,6 +531,7 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
     -e "_CLAUDEOS_EXIT_FILE=$CLAUDE_EXIT_FILE" \
     -e "_CLAUDEOS_TMUX_DONE=$_TMUX_DONE" \
     -e "_CLAUDEOS_PROMPT_FILE=$PROMPT_FILE" \
+    -e "_CLAUDEOS_MODEL_ARGS=$_TUI_MODEL_ARGS" \
     "$CLAUDE_WRAPPER" 2>>"$LOG_FILE"
   # セッション監視用メタデータ (best-effort)。
   #   安定したウィンドウ名 (= SAFE_PROJECT) を付与し、
@@ -523,7 +556,8 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
   tmux kill-session -t "$_KEEPER_SESSION" 2>/dev/null || true
 else
   # tmux 無効時は TTY なし直実行。既定ではここも tmux を使わない。
-  timeout --foreground "${DURATION_SEC}s" claude --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
+  # shellcheck disable=SC2086 # _TUI_MODEL_ARGS is generated with shell quoting.
+  timeout --foreground "${DURATION_SEC}s" claude $_TUI_MODEL_ARGS --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
 fi
 fi  # CLAUDEOS_HEADLESS 分岐の終端
 

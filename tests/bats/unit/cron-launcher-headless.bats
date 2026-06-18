@@ -30,6 +30,7 @@ setup() {
   # 隔離: HOME を TEST_TEMP に向け、実環境の ~/.local/bin の本物 claude を拾わせない
   export HOME="$TEST_TEMP/home"; mkdir -p "$HOME"
   export CLAUDEOS_HOME="$TEST_TEMP/claudeos"
+  export CLAUDEOS_MODEL_USAGE_FILE="$TEST_TEMP/model-usage.jsonl"
   export PROJECTS_BASE="$TEST_TEMP/projects"
 
   # 偽プロジェクト Demo を用意
@@ -39,8 +40,10 @@ setup() {
 
   # canonical libexec へ実体の stream-json-tail.sh を配置 (cron-launcher が参照するパス)
   CANON_LIBEXEC="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/libexec"
-  mkdir -p "$CANON_LIBEXEC"
+  CANON_LIB="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/lib"
+  mkdir -p "$CANON_LIBEXEC" "$CANON_LIB"
   cp "$SJT" "$CANON_LIBEXEC/stream-json-tail.sh"
+  cp "$REPO_ROOT/lib/model-router.sh" "$CANON_LIB/model-router.sh"
 
   # 偽 claude: 各 argv を 1 行ずつ記録 + 固定 stream-json を stdout へ
   #   加えて ANTHROPIC_API_KEY の「存在のみ」を CLAUDE_ENV_KEY へ記録する (値は書かない)。
@@ -94,6 +97,10 @@ _seed_state() {
   [[ "$output" == *"--permission-mode"* ]]
   [[ "$output" == *"auto"* ]]
   [[ "$output" == *"--verbose"* ]]
+  [[ "$output" == *"--model"* ]]
+  [[ "$output" == *"claude-opus-4-8"* ]]
+  [[ "$output" == *"--effort"* ]]
+  [[ "$output" == *"xhigh"* ]]
   [[ "$output" != *"dontAsk"* ]]
   [[ "$output" != *"bypassPermissions"* ]]
   [[ "$output" != *"--dangerously-skip-permissions"* ]]

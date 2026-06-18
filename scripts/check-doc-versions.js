@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { parseLatestVersion } = require('./update-readme-stats');
 
 const root = path.resolve(__dirname, '..');
 let errors = 0;
@@ -22,17 +23,16 @@ function info(msg) {
 
 // --- 1. CHANGELOG latest version ---
 const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-const changelogMatch = changelog.match(/^## \[?(v[\d.]+)\]?/m);
-if (!changelogMatch) {
+const latestVersion = parseLatestVersion(changelog);
+if (!latestVersion) {
   fail('CHANGELOG.md: latest version line not found');
   process.exit(1);
 }
-const latestVersion = changelogMatch[1];
 info(`CHANGELOG latest: ${latestVersion}`);
 
 // --- 2. README バージョン行 ---
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-const readmeVersionMatch = readme.match(/\| バージョン \| \*\*(v[\d.]+)\*\*/);
+const readmeVersionMatch = readme.match(/\| バージョン \| \*\*v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\*\*/);
 if (!readmeVersionMatch) {
   fail('README.md: バージョン行が見つかりません');
   process.exit(1);

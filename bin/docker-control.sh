@@ -42,6 +42,7 @@ source "$SCRIPT_DIR/../lib/docker-manager.sh"
 # 表示ヘルパ
 # ------------------------------------------------------------
 _mark() { [[ "$1" -eq 0 ]] && printf '%s✅%s' "$C_GREEN" "$C_RESET" || printf '%s❌%s' "$C_RED" "$C_RESET"; }
+DC_DRY_RUN=0
 
 # ------------------------------------------------------------
 # status — Docker 環境の総合診断 (read-only)
@@ -139,6 +140,21 @@ dc__register() {
     esac
   done
   [[ -n "$name" ]] || { log_error "register: <name> は必須"; return 1; }
+  if (( DC_DRY_RUN )); then
+    local dir stack detected
+    dir="$(docker_project_dir "$name")"
+    [[ -d "$dir" ]] || { log_error "プロジェクトが見つかりません: $dir"; return 1; }
+    [[ -z "$compose" ]] && detected="$(docker_find_compose "$dir")" || detected="$compose"
+    stack="$(docker_detect_stack "$dir")"
+    log_info "dry-run: Docker 台帳登録予定"
+    log_info "  project=$name"
+    log_info "  dir=$dir"
+    log_info "  compose=${detected:-未検出}"
+    log_info "  stack=$stack"
+    log_info "  autostart=$autostart"
+    log_info "dry-run: 台帳は変更しません: $DOCKER_REGISTRY_PATH"
+    return 0
+  fi
   docker_registry_register "$name" "$compose" "$autostart" || return 1
   local c; c="$(docker_registry_get "$name" 'compose' '')"
   if [[ -z "$c" || "$c" == "null" ]]; then
@@ -151,6 +167,11 @@ dc__register() {
 dc__unregister() {
   local name="${1:-}"
   [[ -n "$name" ]] || { log_error "unregister: <name> は必須"; return 1; }
+  if (( DC_DRY_RUN )); then
+    log_info "dry-run: Docker 台帳登録解除予定: $name"
+    log_info "dry-run: 台帳は変更しません: $DOCKER_REGISTRY_PATH"
+    return 0
+  fi
   docker_registry_has "$name" || { log_warn "未登録: $name"; return 0; }
   docker_registry_unregister "$name"
   log_ok "登録解除: $name"
@@ -171,6 +192,7 @@ dc__register_all() {
     esac
   done
   local added=0 skipped=0 scaffoldable=0 name dir compose
+  (( DC_DRY_RUN )) && log_info "dry-run: register-all 計画のみ表示 (台帳は変更しません)"
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     if docker_registry_has "$name"; then
@@ -183,7 +205,10 @@ dc__register_all() {
       log_info "  scaffold 候補: $name (compose 不在 — scaffold $name で雛形生成可)"
       continue
     fi
-    if docker_registry_register "$name" "$compose" "$autostart"; then
+    if (( DC_DRY_RUN )); then
+      log_info "登録予定: $name (compose=$compose, autostart=$autostart)"
+      added=$((added + 1))
+    elif docker_registry_register "$name" "$compose" "$autostart"; then
       added=$((added + 1))
       log_ok "登録: $name (compose=$compose, autostart=$autostart)"
     else
@@ -207,6 +232,10 @@ dc__require_docker() {
 
 dc__up() {
   local name="${1:-}"; [[ -n "$name" ]] || { log_error "up: <name> は必須"; return 1; }
+  if (( DC_DRY_RUN )); then
+    log_info "dry-run: docker compose up -d を実行予定: $name"
+    return 0
+  fi
   dc__require_docker || return 1
   log_info "🚀 起動: $name"
   docker_up "$name"
@@ -214,6 +243,10 @@ dc__up() {
 
 dc__down() {
   local name="${1:-}"; [[ -n "$name" ]] || { log_error "down: <name> は必須"; return 1; }
+  if (( DC_DRY_RUN )); then
+    log_info "dry-run: docker compose down を実行予定: $name"
+    return 0
+  fi
   dc__require_docker || return 1
   log_info "🛑 停止: $name"
   docker_down "$name"
@@ -221,6 +254,10 @@ dc__down() {
 
 dc__ps() {
   local name="${1:-}"; [[ -n "$name" ]] || { log_error "ps: <name> は必須"; return 1; }
+  if (( DC_DRY_RUN )); then
+    log_info "dry-run: docker compose ps を実行予定: $name"
+    return 0
+  fi
   dc__require_docker || return 1
   docker_ps "$name"
 }
@@ -228,11 +265,25 @@ dc__ps() {
 dc__logs() {
   local name="${1:-}"; [[ -n "$name" ]] || { log_error "logs: <name> は必須"; return 1; }
   shift
+  if (( DC_DRY_RUN )); then
+    log_info "dry-run: docker compose logs を実行予定: $name ${*:-"--tail=100"}"
+    return 0
+  fi
   dc__require_docker || return 1
   docker_logs "$name" "$@"
 }
 
 dc__up_all() {
+  if (( DC_DRY_RUN )); then
+    local any=0 name
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      any=1
+      log_info "dry-run: autostart 起動予定: $name"
+    done < <(docker_registry_autostart_list)
+    (( any == 0 )) && log_info "dry-run: autostart=true のプロジェクトはありません"
+    return 0
+  fi
   dc__require_docker || return 1
   local any=0 name
   while IFS= read -r name; do
@@ -283,6 +334,10 @@ dc__hub_images() {
 dc__hub_pull() {
   local image="${1:-}"
   [[ -n "$image" ]] || { log_error "hub-pull: <image> は必須 (例: user/repo:tag)"; return 1; }
+  if (( DC_DRY_RUN )); then
+    log_info "dry-run: docker pull を実行予定: $image"
+    return 0
+  fi
   dc__require_docker || return 1
   log_info "⬇️  pull: $image"
   if ! docker_hub_pull "$image"; then
@@ -299,6 +354,11 @@ dc__hub_pull() {
 # _scaffold_write <path> <force> — heredoc を受けてファイルを書く (非破壊)
 _scaffold_write() {
   local path="$1" force="$2"
+  if (( DC_DRY_RUN )); then
+    log_info "  dry-run: 生成予定: ${path#"$(config_projects_dir)"/}"
+    cat >/dev/null
+    return 0
+  fi
   if [[ -f "$path" && "$force" != "1" ]]; then
     log_info "  skip (既存): ${path#"$(config_projects_dir)"/}"
     return 1
@@ -519,6 +579,8 @@ dc__help() {
   hub-pull <image>                イメージ取得
   help                            このヘルプ
 
+  --dry-run                       書き込み・Docker 実行を行わず計画のみ表示
+
   ⚠️ docker のインストールと `docker login` は自動化しません。
      未ログイン時は `! docker login` を手動実行してください。
 EOF
@@ -528,6 +590,16 @@ EOF
 # dispatch
 # ------------------------------------------------------------
 main() {
+  local -a args=()
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--dry-run" ]]; then
+      DC_DRY_RUN=1
+    else
+      args+=("$arg")
+    fi
+  done
+  set -- "${args[@]}"
   case "${1:-help}" in
     status)       dc__status ;;
     scan)         dc__scan ;;

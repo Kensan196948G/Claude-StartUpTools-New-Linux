@@ -174,5 +174,8 @@ bash bin/cron-schedule.sh run-now --project <NAME>
 
 - `docs/claude/09_headless運用とフォールバック.md` — cron-launcher の headless 実行とフォールバック
 - `docs/claude/08_heartbeat-watchdog-cron設定手順.md` — cron 起動の死活監視
+- `docs/claude/12_Claude_Design連携.md` — Claude Design / Claude Code 双方向同期と `/design-sync-check` 手順
+- `docs/claude/13_Claudeモデルルーティング.md` — Opus 4.8 / Sonnet 4.6 の自動使い分け
 - `Claude/templates/claudeos/docs/auto-merge-protocol.md` — 条件付き自動 merge の正本手順
+- `Claude/templates/claudeos/goals/safe-auto-merge.md` — `goal_type=safe-auto-merge` で選択する安全自動 merge プロンプト
 - `CLAUDE.md`（リポジトリ直下）— プロジェクト方針・自動 merge 条件・CTO 自律開発境界

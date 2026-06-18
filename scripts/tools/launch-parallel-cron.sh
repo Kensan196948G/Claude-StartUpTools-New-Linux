@@ -34,8 +34,14 @@ LP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${LP_RUNTIME_DIR:=$HOME/.claudeos}"
 : "${LP_PROJECTS_BASE:=$HOME/Projects}"
 : "${LP_SJT:=$LP_SCRIPT_DIR/../../libexec/stream-json-tail.sh}"
+: "${LP_MODEL_ROUTER_LIB:=$LP_SCRIPT_DIR/../../lib/model-router.sh}"
 : "${LP_STAGGER_DEFAULT:=60}"
 : "${LP_DURATION_MIN:=300}"
+
+if [[ -f "$LP_MODEL_ROUTER_LIB" ]]; then
+  # shellcheck source=lib/model-router.sh
+  source "$LP_MODEL_ROUTER_LIB"
+fi
 
 # 二重起動ロックのパス (lp__main で設定)。EXIT トラップから参照するためグローバル。
 LP_LOCK_FILE=""
@@ -147,19 +153,31 @@ lp__launch_role() {
     perm=( --permission-mode auto )
   fi
 
+  # モデルルーティング: role を task として渡す。cto/security は Opus、qa/dev は Sonnet 寄り。
+  local -a model=()
+  if declare -F model_router__select >/dev/null 2>&1; then
+    model_router__select "${CLAUDEOS_MODEL_TASK:-$role}"
+    if [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]]; then
+      model=( --model "$MODEL_ROUTER_MODEL" --effort "$MODEL_ROUTER_EFFORT" )
+      model_router__record_selection "$project" "parallel:$role" "${CLAUDEOS_MODEL_TASK:-$role}" || true
+      printf '[model-router] role=%s model=%s effort=%s reason=%s\n' \
+        "$role" "$MODEL_ROUTER_MODEL" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON" >> "$log"
+    fi
+  fi
+
   if [[ -f "$LP_SJT" ]]; then
     (
       cd "$proj_dir" || exit 1
       export SJT_SESSION_ID_FILE="$sid_file" SJT_COST_FILE="$cost_file"
       timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
-        --output-format stream-json --verbose "${perm[@]}" 2>&1 \
+        --output-format stream-json --verbose "${perm[@]}" "${model[@]}" 2>&1 \
         | bash "$LP_SJT"
     ) > "$log" 2>&1 &
   else
     (
       cd "$proj_dir" || exit 1
       timeout --foreground "${dur_sec}s" "${auth[@]}" claude -p "$prompt" \
-        --output-format stream-json --verbose "${perm[@]}"
+        --output-format stream-json --verbose "${perm[@]}" "${model[@]}"
     ) > "$log" 2>&1 &
   fi
   printf '%s\n' "$!"
@@ -234,8 +252,15 @@ lp__main() {
     [[ "${CLAUDEOS_HEADLESS_SKIP_PERMS:-0}" == "1" ]] && _perm_disp="--dangerously-skip-permissions"
     local idx
     for idx in "${!roles[@]}"; do
-      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose %s &\n' \
-        "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "$((duration_min * 60))" "$_auth_disp" "${files[$idx]}" "$_perm_disp"
+      local _model_disp=""
+      if declare -F model_router__select >/dev/null 2>&1; then
+        model_router__select "${CLAUDEOS_MODEL_TASK:-${roles[$idx]}}"
+        if [[ "${MODEL_ROUTER_ENABLED:-1}" == "1" && -n "${MODEL_ROUTER_MODEL:-}" ]]; then
+          _model_disp=" --model $MODEL_ROUTER_MODEL --effort $MODEL_ROUTER_EFFORT"
+        fi
+      fi
+      printf '  %s▶ [%d] %s%s : timeout --foreground %ss %sclaude -p "$(cat %s)" --output-format stream-json --verbose %s%s &\n' \
+        "$C_GREEN" "$((idx + 1))" "${roles[$idx]}" "$C_RESET" "$((duration_min * 60))" "$_auth_disp" "${files[$idx]}" "$_perm_disp" "$_model_disp"
     done
     printf '  %s⏳ ロール間隔: %ss (--stagger)%s\n' "$C_YELLOW" "$stagger" "$C_RESET"
     printf '%s✅ DRY-RUN 完了 — セットアップに問題はありません (実起動なし)%s\n' "$C_GREEN" "$C_RESET"
