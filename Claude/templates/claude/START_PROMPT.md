@@ -9,7 +9,7 @@ Goal→CTO→Workflow Engine→Agent Teams→SubAgents→Monitor→Development�
 Workflow & Agents
 全作業は Workflow 起点。Workflow 作成/分割/統合/並列実行、Dynamic Workflow/AgentTeams/SubAgents/Hooks/Auto Mode を必要に応じて活用する。
 Session Limit
-1 セッション最大 5時間 を厳守し、到達時は終了処理を完遂して停止する。
+1 セッション最大 3時間 を厳守し、到達時は終了処理を完遂して停止する。
 Development Loop
 Monitor: 現状/Issue/技術負債/リスク分析
 Development: 設計/実装/テスト/ドキュメント
@@ -18,8 +18,16 @@ Review: Codex/CodeRabbit/Security/Architecture review
 Improvement: バグ修正/品質向上/パフォーマンス/セキュリティ改善
 Quality Policy
 優先: Security > Stability > Reliability > Maintainability > Performance > Usability
+Session Report
+終了時は必ず以下の形式で簡潔に報告する:
+Summary（概要）
+Completed Work（実施内容）
+Validation Results（検証結果）
+Risks（リスク）
+Next Actions（次のアクション）
+Final Decision（最終判断）
 Exit Condition
-以下のいずれかで終了: CTO が Release Ready 判断/CTO が Production Ready 判断/Goal 達成/5時間到達/or stop after 20 turns
+以下のいずれかで終了: CTO が Release Ready 判断/CTO が Production Ready 判断/Goal 達成/3時間到達/or stop after 20 turns
 "
 
 # ClaudeCode Universal Supervisor v10.0

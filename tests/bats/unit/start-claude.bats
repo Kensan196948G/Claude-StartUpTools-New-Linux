@@ -146,11 +146,15 @@ exit 0
   unset TMUX
   unset DISPLAY
   unset WAYLAND_DISPLAY
+  export CCSU_ROOT="$TEST_TEMP/ccsu-root"
+  mkdir -p "$CCSU_ROOT/Claude/templates/claude"
+  printf '%s\n' 'TEST START PROMPT CONTENT' > "$CCSU_ROOT/Claude/templates/claude/START_PROMPT.md"
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"Claude プロンプト起動"* ]]
   [ -f "$TEST_TEMP/claude.log" ]
   ! grep -q -- "-p" "$TEST_TEMP/claude.log"
+  grep -q -- "TEST START PROMPT CONTENT" "$TEST_TEMP/claude.log"
   [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
   [ ! -f "$TMUX_STATE/new-window.log" ]
 }

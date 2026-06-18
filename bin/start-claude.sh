@@ -153,7 +153,7 @@ session__enforce_launch_limits() {
 }
 
 direct__run_tui_foreground() {
-  local project="$1" duration="$2" dur_sec project_dir safe stamp wrapper title
+  local project="$1" duration="$2" dur_sec project_dir safe stamp wrapper title prompt_file
   dur_sec=$((duration * 60))
   project_dir="$(launcher__project_dir "$project")"
   safe="$(ccsu_safe_name "$project")"
@@ -164,10 +164,11 @@ direct__run_tui_foreground() {
   local state_file; state_file="$(session__foreground_dir)/${safe}.json"
 
   template_sync__apply "$project_dir"
+  prompt_file="$project_dir/.claude/START_PROMPT.md"
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"
+project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"; prompt_file="$7"
 started="$(date -Iseconds)"
 mkdir -p "$(dirname "$state_file")"
 printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
@@ -175,7 +176,11 @@ printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"fo
 printf '\033]0;%s\007' "$title"
 cd "$project_dir" || exit 1
 set +e
-timeout --foreground "$dur" "$claude_bin"
+if [[ -f "$prompt_file" ]] && [[ -s "$prompt_file" ]]; then
+  timeout --foreground "$dur" "$claude_bin" "$(cat "$prompt_file")"
+else
+  timeout --foreground "$dur" "$claude_bin"
+fi
 rc=$?
 ended="$(date -Iseconds)"
 printf '{"project":"%s","status":"completed","pid":0,"started_at":"%s","ended_at":"%s","mode":"foreground-tui","exit_code":%s}\n' \
@@ -186,20 +191,26 @@ exit "$rc"
 EOF
   chmod +x "$wrapper"
 
-  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project"; then
+  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project" "$prompt_file"; then
     log_ok "🖥️  Claude プロンプトを新規端末タブで起動しました: $project"
     log_info "  duration=${duration}m / tmux なし"
+    log_info "  START_PROMPT.md を初期プロンプトとして渡します"
     return 0
   fi
 
   log_warn "新規端末タブを開けませんでした: $(terminal__unavailable_hint)"
   log_warn "現在の端末で Claude プロンプトを起動します。"
   log_info "🖥️  Claude プロンプト起動: $project (tmux なし / Ctrl+C 可)"
+  log_info "  START_PROMPT.md を初期プロンプトとして渡します"
   (
     started="$(date -Iseconds)"
     printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
       "$project" "$$" "$started" > "$state_file"
-    cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN"
+    if [[ -f "$prompt_file" ]] && [[ -s "$prompt_file" ]]; then
+      cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" "$(cat "$prompt_file")"
+    else
+      cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN"
+    fi
     rc=$?
     ended="$(date -Iseconds)"
     printf '{"project":"%s","status":"completed","pid":0,"started_at":"%s","ended_at":"%s","mode":"foreground-tui","exit_code":%s}\n' \
