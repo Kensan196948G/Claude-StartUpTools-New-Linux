@@ -19,11 +19,21 @@
 
 ## 1. このプロジェクトの Goal
 
-*未取得 — state.json 未配置のため Goal 未設定。セッション開始時に /goal で設定される*
+`state.json` から取得した現在値:
+
+| 項目 | 現在値 |
+|---|---|
+| Goal Title | Claude-StartUpTools-New-Linux を AI 開発組織運用プラットフォームとして Release Ready へ到達させる |
+| Goal Description | （説明なし） |
+| 運用モード | Auto Mode + Agent Teams |
+| 最大作業時間 | 300 分 |
+| 現在フェーズ | Idle |
 
 ## 2. 現在の KPI 状態
 
-*未取得 — state.json 未配置のため KPI 未計測*
+| KPI | 目標値 | 現在値 |
+|---|---|---|
+| success_rate_target | 0.9 | 未計測 |
 
 ## 3. よくハマるポイント（実履歴からの抽出）
 
@@ -55,7 +65,7 @@
 
 ## 6. 利用可能なスラッシュコマンド
 
-`.claude/claudeos/commands/` 直下に **44 個** のコマンドが配置されています。
+`.claude/claudeos/commands/` 直下に **45 個** のコマンドが配置されています。
 
 | カテゴリ | Command |
 |---|---|
@@ -96,18 +106,18 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 | Hash | 概要 |
 |---|---|
-| c4c3e5a | fix(scripts): Codex 指摘を解消 — state 値の境界注入防止・件数置換のセクション局所化・git ハッシュ決定論化 |
-| fccbdb5 | fix(scripts): gitActivity を最小形へ簡約し JSDoc を実態に整合 (PR #19 Verify 指摘対応) |
-| 07140f3 | feat: ONBOARDING.md 決定論再生成器を実装し Verify 連動フックの実体化 (Closes #17) |
-| a9b5e82 | docs(onboarding): 存在しない Issue #100 参照を実在の #17 へ貼り替え (#18) |
-| 3c8de06 | fix(scripts): CHANGELOG 正規表現を v無し/後置詞付き版に対応 (Closes #14) (#16) |
-| 7479b34 | docs(onboarding): 実ソースから Agent/Command/Git 各セクションを再生成 (Closes #13) (#15) |
-| fa82dec | feat(subagents): 言語別 reviewer/build-resolver 11体を正本テンプレートへ昇格 (#12) |
-| fd889cb | refactor: 廃止済み security サブエージェントスタブを削除 (#11) |
-| dfcff5a | feat: Claude Code docs 4件の適合適用と運用整備 (#10) |
-| e08ac94 | docs: Add heartbeat-watchdog cron setup guide and README watchdog section (Closes #8) (#9) |
-| 7ccdedf | Add heartbeat watchdog for silent type3 detection (SIGKILL/OOM/restart) (#7) |
-| 1901947 | Merge pull request #1 from Kensan196948G/feature/changelog-features-managed-agents-poc |
+| 775d96f | docs: AI組織設計・進歩測定・自己改善ガードを追加し /measure コマンドを新設 (#58) |
+| eeda6fb | Merge pull request #57 from Kensan196948G/codex/automation-safety-design-dryrun-model-routing |
+| d59df27 | Add automation safety dry-run and model routing |
+| c74a4f5 | feat(launcher): improve terminal launch and start prompt handling |
+| 88756ca | Merge pull request #55 from Kensan196948G/codex/headless-fallback-cron-limits |
+| bb7c157 | feat(launcher): default to headless cron limits |
+| e68ec92 | chore(ops): reduce claudeos background usage (#54) |
+| 6f2a6c6 | feat(launcher): L1/S1 実行状態カラー表示と cron [7] ライブ監視接続 (#53) |
+| c700754 | fix(supervisor): コスト有り短命セッションを crash-loop から除外 (#52) |
+| 9c09150 | fix(supervisor): release-ready フェーズを goal-reached として正しく検出 (#51) |
+| c9b0d0a | fix(watch-session): headless セッションの接続・停止をサポート (#50) |
+| 0a64a8f | feat(start-claude): foreground 追尾ログを tmux 別窓へ逃がしメニュー端末を即解放 (#49) |
 
 ## 9. 未解決の Codex 指摘
 
