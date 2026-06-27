@@ -7,9 +7,11 @@
 // - TemplateSyncManager の Initialize-ProjectTemplate は init-only のため、
 //   既存登録プロジェクトには変更が永遠に届かない。
 //
-// 配布対象 (3 ファイル):
+// 配布対象 (5 ファイル):
 // - .claude/claudeos/scripts/hooks/agent-teams-tracker.js (新規ファイル)
-// - .claude/claudeos/scripts/hooks/session-start.js       (推奨パターン提示拡張)
+// - .claude/claudeos/scripts/hooks/session-start.js       (推奨パターン提示拡張 + KPI 収集)
+// - .claude/claudeos/scripts/hooks/session-end.js         (セッション終了時 KPI 収集)
+// - .claude/claudeos/scripts/tools/measure-kpi.js         (KPI 自動収集スクリプト)
 // - .claude/settings.json                                  (PostToolUse matcher 追加)
 //
 // 安全性:
@@ -34,6 +36,8 @@ const BACKUP_SUFFIX = ".bak-agent-teams";
 const SOURCE_FILES = {
   "agent-teams-tracker.js": path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "hooks", "agent-teams-tracker.js"),
   "session-start.js":       path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "hooks", "session-start.js"),
+  "session-end.js":         path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "hooks", "session-end.js"),
+  "measure-kpi.js":         path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "tools", "measure-kpi.js"),
 };
 
 // settings.json に追加する PostToolUse matcher エントリ
@@ -189,6 +193,7 @@ function computePlan(project) {
   };
 
   const hooksDir   = path.join(project.path, ".claude", "claudeos", "scripts", "hooks");
+  const toolsDir   = path.join(project.path, ".claude", "claudeos", "scripts", "tools");
   const settingsFn = path.join(project.path, ".claude", "settings.json");
 
   if (!fs.existsSync(hooksDir)) {
@@ -218,7 +223,25 @@ function computePlan(project) {
     plan.files.push({ action: "replace", path: sessDest, src: sessSrc, reason: "content differs (will be overwritten)" });
   }
 
-  // 3. settings.json (PostToolUse matcher 差分マージ)
+  // 3. session-end.js (KPI 収集付き最新版)
+  const sessEndSrc  = SOURCE_FILES["session-end.js"];
+  const sessEndDest = path.join(hooksDir, "session-end.js");
+  if (!fs.existsSync(sessEndDest)) {
+    plan.files.push({ action: "copy", path: sessEndDest, src: sessEndSrc, reason: "new file" });
+  } else if (fs.readFileSync(sessEndDest, "utf8") !== fs.readFileSync(sessEndSrc, "utf8")) {
+    plan.files.push({ action: "replace", path: sessEndDest, src: sessEndSrc, reason: "content differs (will be overwritten)" });
+  }
+
+  // 4. measure-kpi.js (tools ディレクトリへ配布)
+  const kpiSrc  = SOURCE_FILES["measure-kpi.js"];
+  const kpiDest = path.join(toolsDir, "measure-kpi.js");
+  if (!fs.existsSync(kpiDest)) {
+    plan.files.push({ action: "copy", path: kpiDest, src: kpiSrc, reason: "new file" });
+  } else if (fs.readFileSync(kpiDest, "utf8") !== fs.readFileSync(kpiSrc, "utf8")) {
+    plan.files.push({ action: "replace", path: kpiDest, src: kpiSrc, reason: "content differs (will be overwritten)" });
+  }
+
+  // 5. settings.json (PostToolUse matcher 差分マージ)
   let settings;
   try { settings = JSON.parse(fs.readFileSync(settingsFn, "utf8")); }
   catch (e) {
@@ -286,10 +309,13 @@ function applyPlan(plan, dryRun) {
 function rollback(project) {
   const log = msg => console.log(`  [${project.name}] ${msg}`);
   const hooksDir   = path.join(project.path, ".claude", "claudeos", "scripts", "hooks");
+  const toolsDir   = path.join(project.path, ".claude", "claudeos", "scripts", "tools");
   const settingsFn = path.join(project.path, ".claude", "settings.json");
   const targets = [
     path.join(hooksDir, "agent-teams-tracker.js"),
     path.join(hooksDir, "session-start.js"),
+    path.join(hooksDir, "session-end.js"),
+    path.join(toolsDir, "measure-kpi.js"),
     settingsFn,
   ];
   let restored = 0;
