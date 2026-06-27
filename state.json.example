@@ -57,6 +57,35 @@
     "auto_issue_generation": true,
     "self_evolution": true
   },
+  "mcp": {
+    "enabled": [
+      "github", "brv"
+    ],
+    "memory_scope_policy": {
+      "user_scope_server": "memory",
+      "user_scope_config": "Claude Code user scope",
+      "user_memory_file": "~/.claudeos/memory/user-memory.jsonl",
+      "project_scope_server": "brv",
+      "optional_project_assist": [
+        "serena"
+      ],
+      "write_policy": "curated_only",
+      "precedence": [
+        "current_user_instruction",
+        "AGENTS.md/CLAUDE.md/repo_docs",
+        "project_memory",
+        "user_memory",
+        "model_inference"
+      ],
+      "never_store": [
+        "tokens",
+        "secrets",
+        "credentials",
+        "full_ci_logs",
+        "branch_transient_notes"
+      ]
+    }
+  },
   "improvement": {
     "stop_doing_review_date": null,
     "stop_doing_review_interval_days": 90,
@@ -220,5 +249,18 @@
     "cooldown_seconds": 30,
     "crash_loop_threshold": 3,
     "crash_loop_min_seconds": 120
+  },
+  "metrics": {
+    "_note": "KPI snapshot updated by /measure. null = not yet measured. See docs/claude/15_AI進歩測定とKPI.md",
+    "session_completed_tasks": 0,
+    "session_prs_created": 0,
+    "ci_success_rate": null,
+    "test_success_rate": null,
+    "issue_completion_rate": null,
+    "improvement_adoption_rate": null,
+    "human_approval_pending": 0,
+    "same_error_recurrence_count": 0,
+    "agent_scorecard": {},
+    "last_measured_at": null
   }
 }
