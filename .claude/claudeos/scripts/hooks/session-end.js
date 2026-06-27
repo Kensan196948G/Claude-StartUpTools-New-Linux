@@ -230,8 +230,12 @@ try {
     // measure-kpi: セッション終了前に KPI を同期収集して state.json.metrics を更新。
     // GitHub CLI (gh) が利用可能な場合のみ実行し、失敗してもブロックしない。
     try {
-      const kpiScript = path.join(process.cwd(), "scripts", "tools", "measure-kpi.js");
-      if (fs.existsSync(kpiScript)) {
+      // このプロジェクト: scripts/tools/、他プロジェクト（テンプレ展開後）: .claude/claudeos/scripts/tools/
+      const kpiScript = [
+        path.join(process.cwd(), "scripts", "tools", "measure-kpi.js"),
+        path.join(__dirname, "..", "tools", "measure-kpi.js"),
+      ].find(p => fs.existsSync(p));
+      if (kpiScript) {
         const { spawnSync } = require("child_process");
         const r = spawnSync(process.execPath, [kpiScript], { cwd: process.cwd(), encoding: "utf8", timeout: 30000 });
         if (r.stdout && r.stdout.trim()) console.log(r.stdout.trim());
