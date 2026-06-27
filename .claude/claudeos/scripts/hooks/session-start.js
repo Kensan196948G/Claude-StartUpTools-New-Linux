@@ -175,8 +175,12 @@ try {
   // バックグラウンドで KPI を収集（非ブロッキング）
   try {
     const { spawn } = require("child_process");
-    const kpiScript = path.join(process.cwd(), "scripts", "tools", "measure-kpi.js");
-    if (fs.existsSync(kpiScript)) {
+    // このプロジェクト: scripts/tools/、他プロジェクト（テンプレ展開後）: .claude/claudeos/scripts/tools/
+    const kpiScript = [
+      path.join(process.cwd(), "scripts", "tools", "measure-kpi.js"),
+      path.join(__dirname, "..", "tools", "measure-kpi.js"),
+    ].find(p => fs.existsSync(p));
+    if (kpiScript) {
       const child = spawn(process.execPath, [kpiScript, "--background"], {
         detached: true,
         stdio: "ignore",

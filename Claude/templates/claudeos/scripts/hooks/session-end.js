@@ -159,6 +159,27 @@ try {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] learning-record skipped: ${learnErr.message}`);
     }
 
+    // measure-kpi: セッション終了前に KPI を同期収集して state.json.metrics を更新。
+    // GitHub CLI (gh) が利用可能な場合のみ実行し、失敗してもブロックしない。
+    try {
+      // このプロジェクト: scripts/tools/、他プロジェクト（テンプレ展開後）: .claude/claudeos/scripts/tools/
+      const kpiScript = [
+        path.join(process.cwd(), "scripts", "tools", "measure-kpi.js"),
+        path.join(__dirname, "..", "tools", "measure-kpi.js"),
+      ].find(p => fs.existsSync(p));
+      if (kpiScript) {
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, [kpiScript], { cwd: process.cwd(), encoding: "utf8", timeout: 30000 });
+        if (r.stdout && r.stdout.trim()) log(r.stdout.trim());
+        // measure-kpi は独自に state.json を atomic 更新するため、
+        // ここでは最新の metrics だけ再取得してマージする
+        const refreshed = readJson(STATE_FILE);
+        if (refreshed && refreshed.metrics) state.metrics = refreshed.metrics;
+      }
+    } catch (kpiErr) {
+      if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] measure-kpi skipped: ${kpiErr.message}`);
+    }
+
     writeJsonAtomic(STATE_FILE, state);
     log("[SessionEnd] state.json updated (last_stop_at + learning recorded)");
 
