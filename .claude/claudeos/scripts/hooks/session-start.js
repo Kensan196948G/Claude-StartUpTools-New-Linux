@@ -78,6 +78,15 @@ if (kpi.ci_success_rate !== undefined || kpi.blocker_count !== undefined) {
   );
 }
 
+// metrics スナップショット（前回セッションの KPI を表示）
+const prevMetrics = state.metrics || {};
+if (prevMetrics.last_measured_at) {
+  const pct = v => (v === null || v === undefined ? "n/a" : `${Math.round(v * 100)}%`);
+  lines.push(
+    `  metrics[prev]: CI=${pct(prevMetrics.ci_success_rate)} test=${pct(prevMetrics.test_success_rate)} issues=${pct(prevMetrics.issue_completion_rate)} tasks=${prevMetrics.session_completed_tasks ?? 0} PRs=${prevMetrics.session_prs_created ?? 0} @ ${prevMetrics.last_measured_at}`
+  );
+}
+
 // v9.0: blocked_issues サマリー
 const blocked = state.blocked_issues || [];
 if (blocked.length > 0) {
@@ -154,9 +163,28 @@ try {
     state.execution.last_trigger = "manual";
   }
 
+  // セッション開始時にセッション内カウンターをリセット
+  state.metrics = state.metrics || {};
+  state.metrics.session_completed_tasks = 0;
+  state.metrics.session_prs_created     = 0;
+
   writeJsonAtomic(STATE_FILE, state);
   lines.push(`  session_start_at: ${now}`);
   lines.push(`  trigger: ${state.execution.last_trigger}`);
+
+  // バックグラウンドで KPI を収集（非ブロッキング）
+  try {
+    const { spawn } = require("child_process");
+    const kpiScript = path.join(process.cwd(), "scripts", "tools", "measure-kpi.js");
+    if (fs.existsSync(kpiScript)) {
+      const child = spawn(process.execPath, [kpiScript, "--background"], {
+        detached: true,
+        stdio: "ignore",
+        cwd: process.cwd(),
+      });
+      child.unref();
+    }
+  } catch { /* fail-soft: KPI 収集失敗はセッション起動をブロックしない */ }
 } catch (err) {
   // 書き込み失敗は無視（resume 情報の提示は継続する）
   console.error(`[SessionStart] state.json write failed: ${err.message}`);

@@ -41,7 +41,8 @@
 
 ## 4. 過去の成功パターン
 
-*未取得 — state.json.learning.success_patterns 未記録*
+1. {"at":"2026-06-27T01:05:47.497Z","summary":"PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。"}
+2. {"at":"2026-06-27T00:34:05.360Z","summary":"PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。"}
 
 ## 5. 利用可能な Agent Teams
 
@@ -65,7 +66,7 @@
 
 ## 6. 利用可能なスラッシュコマンド
 
-`.claude/claudeos/commands/` 直下に **45 個** のコマンドが配置されています。
+`.claude/claudeos/commands/` 直下に **46 個** のコマンドが配置されています。
 
 | カテゴリ | Command |
 |---|---|
@@ -106,6 +107,7 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 
 | Hash | 概要 |
 |---|---|
+| cdaeb19 | fix: sync /measure command to .claude/claudeos/commands and update ONBOARDING (#59) |
 | 775d96f | docs: AI組織設計・進歩測定・自己改善ガードを追加し /measure コマンドを新設 (#58) |
 | eeda6fb | Merge pull request #57 from Kensan196948G/codex/automation-safety-design-dryrun-model-routing |
 | d59df27 | Add automation safety dry-run and model routing |
@@ -117,7 +119,6 @@ CLAUDE.md §18 から抽出した **全 8 項目**:
 | c700754 | fix(supervisor): コスト有り短命セッションを crash-loop から除外 (#52) |
 | 9c09150 | fix(supervisor): release-ready フェーズを goal-reached として正しく検出 (#51) |
 | c9b0d0a | fix(watch-session): headless セッションの接続・停止をサポート (#50) |
-| 0a64a8f | feat(start-claude): foreground 追尾ログを tmux 別窓へ逃がしメニュー端末を即解放 (#49) |
 
 ## 9. 未解決の Codex 指摘
 
