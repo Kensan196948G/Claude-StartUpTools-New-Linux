@@ -361,7 +361,10 @@ sup__loop() {
     _sess_cost=""
     [[ -f "$session_cost_file" ]] && [[ -s "$session_cost_file" ]] && _sess_cost="$(cat "$session_cost_file")"
     if [[ -n "$_sess_cost" ]]; then
-      credits__record "$_sess_cost" 0 0 "$project" || true
+      # ts は sup__today 基準で記録する。実運用では sup__today=実日付のため挙動不変だが、
+      # CCSU_SUP_TODAY で日付をシミュレートする場合に「記録月」と直後の当月合計判定の
+      # 月がずれない (実 date を使うと月境界越えで当月ガードが取りこぼす)。
+      credits__record "$_sess_cost" 0 0 "$project" "$(sup__today)T$(date +%H:%M:%S%:z)" || true
       SUP_LAST_SESSION_COST="$_sess_cost"
     fi
     _month="$(sup__today)"; _month="${_month:0:7}"
