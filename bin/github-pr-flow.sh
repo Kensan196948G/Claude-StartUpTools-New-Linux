@@ -21,7 +21,17 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=lib/github-pr-flow.sh
 source "$SCRIPT_DIR/../lib/github-pr-flow.sh"
 
-PRFLOW_PR_FIELDS="number,title,url,isDraft,state,mergeable,baseRefName,reviewDecision,statusCheckRollup"
+PRFLOW_PR_FIELDS="number,title,url,isDraft,state,mergeable,mergeStateStatus,baseRefName,reviewDecision,statusCheckRollup"
+
+# prf__register_default_branch — リポジトリ実際のデフォルトブランチを保護集合へ追加
+#   trunk/production 等の非標準命名でも「デフォルトブランチ宛=人間最終決断」を保証する。
+#   gh 失敗時は無視 (既定の main/master/develop はそのまま有効)。
+prf__register_default_branch() {
+  local def
+  def="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+  [[ -n "$def" ]] && prflow__add_protected "$def"
+  return 0
+}
 
 # prf__current_branch — カレントブランチ
 prf__current_branch() { git branch --show-current 2>/dev/null || true; }
@@ -47,7 +57,11 @@ prf__check() {
   if (( pr_ok )); then
     local rollup; rollup="$(prflow__rollup_summary "$(printf '%s' "$pr_raw" | jq -c '.statusCheckRollup // []')")"
     ci="$rollup"
-    { [[ "$rollup" == *"failure=0"* && "$rollup" == *"pending=0"* ]]; } || ci_ok=0
+    # failure=0 かつ pending=0 かつ success>0 の三条件が揃って初めて緑。成功チェック 0 件は緑にしない。
+    { [[ "$rollup" == *"failure=0"* && "$rollup" == *"pending=0"* && "$rollup" != *"success=0"* ]]; } || ci_ok=0
+  else
+    # PR 未検出時は CI を評価できていないので緑表示にしない (初期値 1 のままにしない)。
+    ci_ok=0
   fi
 
   if (( json )); then
@@ -81,6 +95,7 @@ prf__gate() {
   local json=0; [[ "${1:-}" == "--json" ]] && json=1
   has_cmd gh || { log_error "gh CLI が見つかりません"; return 1; }
   gh auth status >/dev/null 2>&1 || { log_error "gh 未認証です (gh auth login)"; return 1; }
+  prf__register_default_branch   # 実デフォルトブランチ (trunk 等) も保護集合へ
   local pr_raw; pr_raw="$(prf__pr_json)"
   [[ -n "$pr_raw" ]] || { log_error "現ブランチに PR が見つかりません"; return 1; }
 
@@ -94,14 +109,20 @@ prf__gate() {
     [[ -n "$reasons" ]] && reasons_json="$(printf '%s\n' "$reasons" | jq -R -s 'split("\n")|map(select(length>0))')"
     jq -n --arg decision "$decision" --argjson reasons "$reasons_json" \
       --argjson pr "$pr_raw" \
-      '{decision:$decision, reasons:$reasons, pr:{number:$pr.number, base:$pr.baseRefName, mergeable:$pr.mergeable, isDraft:$pr.isDraft}}'
+      '{decision:$decision,
+        reasons:$reasons,
+        checked:["draft","mergeable","mergeStateStatus","ci","review","baseBranch"],
+        unverified:["trustLevel","codexReview","codeRabbitReview","changeType(auth/authz/db/prod)"],
+        note:"decision=ALLOW は構造ゲート通過であり全自動 merge 条件充足ではない。unverified は別途人手確認が必要。",
+        pr:{number:$pr.number, base:$pr.baseRefName, mergeable:$pr.mergeable, mergeStateStatus:($pr.mergeStateStatus // null), isDraft:$pr.isDraft, reviewDecision:($pr.reviewDecision // null)}}'
     [[ "$decision" == "ALLOW" ]] && return 0 || return 1
   fi
 
   printf '\n  %s🛂 Auto-merge Gate%s  (%s)\n' "$C_CYAN" "$C_RESET" "$(printf '%s' "$pr_raw" | jq -r '"#\(.number) → \(.baseRefName)"')"
   if [[ "$decision" == "ALLOW" ]]; then
-    printf '  %s✅ ALLOW%s — 自動 merge 条件を満たします\n' "$C_GREEN" "$C_RESET"
-    printf '     %s運用者/CTO が明示実行: gh pr merge --auto --squash%s\n\n' "$C_WHITE" "$C_RESET"
+    printf '  %s✅ ALLOW%s — 構造ゲート通過 (CI/mergeable/review/base)\n' "$C_GREEN" "$C_RESET"
+    printf '     %s⚠️ 未検証 (別途人手確認要): Trust Level・Codex/CodeRabbit の Critical/High・変更種別(認証/認可/DB/本番)%s\n' "$C_YELLOW" "$C_RESET"
+    printf '     %s上記を人手確認後に運用者/CTO が明示実行: gh pr merge --auto --squash%s\n\n' "$C_WHITE" "$C_RESET"
     return 0
   else
     printf '  %s⛔ BLOCK%s — 以下により自動 merge 不可:\n' "$C_RED" "$C_RESET"

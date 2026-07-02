@@ -184,3 +184,23 @@ teardown() { _bats_common_teardown; }
   run config_verify_command build "$d"
   [ "$output" = "npm run build" ]
 }
+
+@test "config_verify_command: 不正 JSON config は警告し推定へフォールバック (上書き無言破棄しない)" {
+  local d="$TEST_TEMP/vc-bad"; mkdir -p "$d"
+  printf '{ "scripts": { "test": "bats" } }\n' > "$d/package.json"
+  printf '{ broken json' > "$TEST_TEMP/vc-bad.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-bad.json"
+  run config_verify_command test "$d"
+  # stderr の警告 + stdout に推定結果 (npm test) が出る
+  [[ "$output" == *"npm test"* ]]
+  [[ "$output" == *"不正 JSON"* ]]
+}
+
+@test "config_verify_command: .verify が非オブジェクトなら警告し推定へフォールバック" {
+  local d="$TEST_TEMP/vc-nonobj"; mkdir -p "$d"
+  printf '{ "scripts": { "lint": "eslint" } }\n' > "$d/package.json"
+  printf '{ "verify": "oops" }\n' > "$TEST_TEMP/vc-nonobj.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-nonobj.json"
+  run config_verify_command lint "$d"
+  [[ "$output" == *"npm run lint"* ]]
+}

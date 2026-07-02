@@ -103,3 +103,43 @@ teardown() { _bats_common_teardown; }
   [ "${lines[0]}" = "decision=BLOCK" ]
   [[ "$output" == *"CHANGES_REQUESTED"* ]]
 }
+
+@test "prflow__gate_eval: review=REVIEW_REQUIRED (必須レビュー未承認) は BLOCK" {
+  local pr='{"isDraft":false,"mergeable":"MERGEABLE","baseRefName":"feat-base","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[{"conclusion":"SUCCESS"}]}'
+  run prflow__gate_eval "$pr"
+  [ "${lines[0]}" = "decision=BLOCK" ]
+  [[ "$output" == *"REVIEW_REQUIRED"* ]]
+}
+
+@test "prflow__gate_eval: mergeStateStatus != CLEAN (BLOCKED) は BLOCK" {
+  local pr='{"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED","baseRefName":"feat-base","reviewDecision":"APPROVED","statusCheckRollup":[{"conclusion":"SUCCESS"}]}'
+  run prflow__gate_eval "$pr"
+  [ "${lines[0]}" = "decision=BLOCK" ]
+  [[ "$output" == *"mergeStateStatus"* ]]
+}
+
+@test "prflow__gate_eval: mergeStateStatus=CLEAN + 全条件良好は ALLOW" {
+  local pr='{"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","baseRefName":"feat-base","reviewDecision":"APPROVED","statusCheckRollup":[{"conclusion":"SUCCESS"}]}'
+  run prflow__gate_eval "$pr"
+  [ "${lines[0]}" = "decision=ALLOW" ]
+}
+
+@test "prflow__gate_eval: mergeStateStatus 欠落は後方互換で mergeable 判定に委ねる (ALLOW)" {
+  local pr='{"isDraft":false,"mergeable":"MERGEABLE","baseRefName":"feat-base","reviewDecision":"APPROVED","statusCheckRollup":[{"conclusion":"SUCCESS"}]}'
+  run prflow__gate_eval "$pr"
+  [ "${lines[0]}" = "decision=ALLOW" ]
+}
+
+@test "prflow__add_protected: 追加ブランチ (trunk 等) を保護集合へ動的追加" {
+  run prflow__is_protected_branch trunk; [ "$status" -ne 0 ]   # 既定では非保護
+  prflow__add_protected trunk
+  run prflow__is_protected_branch trunk; [ "$status" -eq 0 ]   # 追加後は保護
+}
+
+@test "prflow__gate_eval: 動的追加した保護ブランチ宛は BLOCK" {
+  prflow__add_protected trunk
+  local pr='{"isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","baseRefName":"trunk","reviewDecision":"APPROVED","statusCheckRollup":[{"conclusion":"SUCCESS"}]}'
+  run prflow__gate_eval "$pr"
+  [ "${lines[0]}" = "decision=BLOCK" ]
+  [[ "$output" == *"保護ブランチ"* ]]
+}

@@ -146,10 +146,17 @@ config_infer_build_command() {
 #   json_get は空文字と未定義を区別できないため、キー存在は jq has() で直接判定する。
 config_verify_command() {
   local kind="$1" dir="$2" key="${1}Command"
-  if [[ -f "$CCSU_CONFIG_PATH" ]] \
-     && jq -e --arg k "$key" '(.verify // {}) | has($k)' "$CCSU_CONFIG_PATH" >/dev/null 2>&1; then
-    jq -r --arg k "$key" '.verify[$k] // ""' "$CCSU_CONFIG_PATH" 2>/dev/null || true
-    return 0
+  if [[ -f "$CCSU_CONFIG_PATH" ]]; then
+    # config が壊れた JSON / .verify が非オブジェクトだと has() が失敗し推定へ落ちる。
+    # 明示上書きが無言で捨てられるのを防ぐため、その場合は警告を出す (握り潰さない)。
+    if ! json_valid "$CCSU_CONFIG_PATH"; then
+      log_warn "config が不正 JSON のため .verify 上書きを無視し推定にフォールバック: $CCSU_CONFIG_PATH"
+    elif jq -e --arg k "$key" '(.verify // {}) | has($k)' "$CCSU_CONFIG_PATH" >/dev/null 2>&1; then
+      jq -r --arg k "$key" '.verify[$k] // ""' "$CCSU_CONFIG_PATH" 2>/dev/null || true
+      return 0
+    elif jq -e 'has("verify") and (.verify | type != "object")' "$CCSU_CONFIG_PATH" >/dev/null 2>&1; then
+      log_warn ".verify がオブジェクトでないため上書きを無視し推定にフォールバック: $CCSU_CONFIG_PATH"
+    fi
   fi
   case "$kind" in
     test)  config_infer_test_command  "$dir" ;;

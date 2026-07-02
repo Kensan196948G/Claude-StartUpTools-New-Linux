@@ -28,8 +28,13 @@ relchk__git_state() {
   if ! git -C "$dir" rev-parse --show-toplevel >/dev/null 2>&1; then
     printf 'Git repository|NG|git リポジトリが検出できません\n'; return 0
   fi
-  local count
-  count="$(git -C "$dir" status --porcelain 2>/dev/null | grep -c . || true)"
+  # git status の終了コードを検査し、失敗 (index 破損・権限等) を clean と誤報しない。
+  local porcelain rc count
+  porcelain="$(git -C "$dir" status --porcelain 2>/dev/null)" && rc=0 || rc=$?
+  if (( rc != 0 )); then
+    printf 'Git worktree|NG|git status 失敗 (rc=%s: リポジトリ破損/権限の可能性)\n' "$rc"; return 0
+  fi
+  count="$(printf '%s' "$porcelain" | grep -c . || true)"
   if [[ "$count" -eq 0 ]]; then
     printf 'Git worktree|OK|clean\n'
   elif [[ "$allow_dirty" == "1" ]]; then
@@ -91,6 +96,15 @@ relchk__gitignore() {
 
 # relchk__verify <dir> <kind> — test|lint|build を解決し実行 (SKIP: 未定義, dry-run)
 #   実行コマンドは config_verify_command で解決。CCSU_RELCHK_DRYRUN=1 で実行せず表示のみ。
+#
+#   ⚠️ 信頼境界: cmd は「解決コマンド」を bash -c で実行する。値の出所は
+#     (1) config.json の .verify.<kind>Command = 運用者所有の設定ファイル、
+#     (2) 推定 = リポジトリ内容から選ぶ固定リテラル ("npm test" 等。ファイル内容を
+#         コマンド文字列へ差し込まない)。
+#   いずれも「信頼された運用者の設定/コード」であり、package.json scripts や Makefile を
+#   実行するのと同じ信頼レベル (タスクランナーは本質的に任意コード実行)。"npm run lint" や
+#   "a && b" のような正当なシェル構文を許すため bash -c を用いる。信頼できない第三者由来の
+#   config を読ませない運用が前提 (config は release-check の実行者が管理する)。
 relchk__verify() {
   local dir="$1" kind="$2" cmd label
   case "$kind" in

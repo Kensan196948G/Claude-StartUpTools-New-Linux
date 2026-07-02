@@ -45,6 +45,44 @@ _write_manifest() {
   [ "$output" = "Foreign" ]
 }
 
+@test "supman__classify: 空ファイルは Invalid (Foreign 誤分類でロックしない)" {
+  mkdir -p "$PROJ/Gamma/.claude/claudeos"
+  : > "$PROJ/Gamma/.claude/claudeos/supervisor-manifest.json"
+  run supman__classify "$PROJ/Gamma"
+  [ "$output" = "Invalid" ]
+}
+
+@test "supman__classify: managedBy 欠落 ({} や他キーのみ) は Invalid" {
+  _write_manifest "$PROJ/Gamma" '{}'
+  run supman__classify "$PROJ/Gamma"; [ "$output" = "Invalid" ]
+  _write_manifest "$PROJ/Gamma" '{"foo":1}'
+  run supman__classify "$PROJ/Gamma"; [ "$output" = "Invalid" ]
+}
+
+@test "supman__classify: managedBy を持つ Foreign は schemaVersion 無しでも Foreign 維持" {
+  _write_manifest "$PROJ/Gamma" '{"managedBy":"OtherTool"}'
+  run supman__classify "$PROJ/Gamma"
+  [ "$output" = "Foreign" ]
+}
+
+@test "supman__apply: Invalid 置換時は原本を .invalid.bak にバックアップ" {
+  mkdir -p "$PROJ/Delta/.claude/claudeos"
+  local m="$PROJ/Delta/.claude/claudeos/supervisor-manifest.json"
+  printf '{ broken' > "$m"
+  supman__apply "$PROJ/Delta" >/dev/null 2>&1
+  [ -f "${m}.invalid.bak" ]
+  run supman__classify "$PROJ/Delta"
+  [ "$output" = "Managed" ]
+}
+
+@test "supman__apply: 書込先が読取専用なら失敗を検知し return 1 (silent 成功にしない)" {
+  mkdir -p "$PROJ/Alpha/.claude/claudeos"
+  chmod 500 "$PROJ/Alpha/.claude/claudeos"
+  run supman__apply "$PROJ/Alpha"
+  chmod 700 "$PROJ/Alpha/.claude/claudeos"   # cleanup for teardown
+  [ "$status" -ne 0 ]
+}
+
 @test "supman__apply → supman__classify: 適用後は Managed" {
   supman__apply "$PROJ/Alpha" >/dev/null
   run supman__classify "$PROJ/Alpha"

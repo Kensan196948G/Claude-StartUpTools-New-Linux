@@ -63,9 +63,10 @@ main() {
   local results
   results="$(relchk__collect "$dir" "${passthru[@]+"${passthru[@]}"}")"
 
-  local total failed
+  local total failed skipped
   total="$(grep -c . <<<"$results" || true)"
   failed="$(grep -c '|NG|' <<<"$results" || true)"
+  skipped="$(grep -c '|SKIP|' <<<"$results" || true)"
   local passed="false"
   relchk__passed "$results" && passed="true"
 
@@ -81,8 +82,9 @@ main() {
       --argjson passed "$passed" \
       --argjson total "$total" \
       --argjson failed "$failed" \
+      --argjson skipped "$skipped" \
       --argjson checks "$checks_json" \
-      '{ project: $project, passed: $passed, total: $total, failed: $failed, checks: $checks }'
+      '{ project: $project, passed: $passed, total: $total, failed: $failed, skipped: $skipped, checks: $checks }'
     [[ "$passed" == "true" ]] && return 0 || return 1
   fi
 
@@ -90,9 +92,11 @@ main() {
   printf '\n  %s🚦 Release Readiness Check%s\n' "$C_CYAN" "$C_RESET"
   printf '  📦 Project : %s\n' "$label"
   if [[ "$passed" == "true" ]]; then
-    printf '  %s✅ Result  : PASS%s  (%s checks / %s failed)\n\n' "$C_GREEN" "$C_RESET" "$total" "$failed"
+    printf '  %s✅ Result  : PASS%s  (%s checks / %s failed / %s skipped)\n' "$C_GREEN" "$C_RESET" "$total" "$failed" "$skipped"
+    (( skipped > 0 )) && printf '  %s⚠️ 注意: %s 項目が SKIP (未検証)。PASS は実行された検査に限る%s\n' "$C_YELLOW" "$skipped" "$C_RESET"
+    printf '\n'
   else
-    printf '  %s❌ Result  : FAIL%s  (%s checks / %s failed)\n\n' "$C_RED" "$C_RESET" "$total" "$failed"
+    printf '  %s❌ Result  : FAIL%s  (%s checks / %s failed / %s skipped)\n\n' "$C_RED" "$C_RESET" "$total" "$failed" "$skipped"
   fi
 
   local name status detail color mark

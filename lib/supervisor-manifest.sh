@@ -75,10 +75,19 @@ supman__desired() {
 }
 
 # supman__classify <project_dir> — stdout: Managed|Missing|Foreign|Invalid
+#   空ファイル・非オブジェクト・managedBy 欠落は Invalid とみなす。
+#   jq empty は 0 バイト空ファイルや {} を exit 0 と判定するため、これらを Foreign と
+#   誤分類して Foreign 保護でロックしないよう、存在と managedBy キーを明示検査する。
+#   ※ schemaVersion は要求しない: 他ツールの Foreign manifest は当方の schemaVersion を
+#     持たないため、要求すると正当な Foreign を Invalid 化し上書き破壊する恐れがある。
+#     判別に必要なのは managedBy の有無のみ (Managed/Foreign の分岐キー)。
 supman__classify() {
   local dir="$1" path; path="$(supman__manifest_path "$dir")"
   [[ -f "$path" ]] || { printf 'Missing'; return 0; }
+  [[ -s "$path" ]] || { printf 'Invalid'; return 0; }
   jq empty "$path" >/dev/null 2>&1 || { printf 'Invalid'; return 0; }
+  jq -e 'type == "object" and has("managedBy")' "$path" >/dev/null 2>&1 \
+    || { printf 'Invalid'; return 0; }
   local managed_by ssh_enabled
   managed_by="$(jq -r '.managedBy // ""' "$path" 2>/dev/null || true)"
   ssh_enabled="$(jq -r '.sshEnabled // false' "$path" 2>/dev/null || true)"
@@ -173,10 +182,29 @@ supman__apply() {
     return 0
   fi
 
-  mkdir -p "$(dirname "$path")"
-  local tmp; tmp="$(mktemp)"
-  supman__desired "$name" 1 > "$tmp"
-  mv "$tmp" "$path"
+  # 書き込みは各段を検査し、失敗を silent に成功へ見せない (return 1)。
+  local dest_dir; dest_dir="$(dirname "$path")"
+  mkdir -p "$dest_dir" || { log_error "ディレクトリ作成失敗: $dest_dir"; return 1; }
+
+  # Invalid (壊れた/空 manifest) を置換する場合は原本をバックアップしてから上書きする
+  # (他ツールの書き込み途中ファイルだった場合の復旧余地を残す)。
+  if [[ "$status" == "Invalid" && -f "$path" ]]; then
+    local backup="${path}.invalid.bak"
+    cp -f "$path" "$backup" 2>/dev/null \
+      && log_info "  🗄 Invalid manifest をバックアップ: $backup" \
+      || log_warn "  Invalid manifest のバックアップに失敗 (続行): $path"
+  fi
+
+  # tmp は dest_dir 内に作成し mv を同一 FS の原子操作にする (cross-FS の非原子 mv 回避)。
+  local tmp
+  tmp="$(mktemp "$dest_dir/.supman-manifest.XXXXXX")" || { log_error "一時ファイル作成失敗: $dest_dir"; return 1; }
+  if ! supman__desired "$name" 1 > "$tmp"; then
+    log_error "manifest 生成失敗 (jq): $name"; rm -f "$tmp"; return 1
+  fi
+  [[ -s "$tmp" ]] || { log_error "生成 manifest が空: $name"; rm -f "$tmp"; return 1; }
+  jq empty "$tmp" >/dev/null 2>&1 || { log_error "生成 manifest が不正 JSON: $name"; rm -f "$tmp"; return 1; }
+  chmod 644 "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$path" || { log_error "manifest 書込失敗: $path"; rm -f "$tmp"; return 1; }
   log_ok "✍️  manifest 適用: $name (action=$action)"
 }
 

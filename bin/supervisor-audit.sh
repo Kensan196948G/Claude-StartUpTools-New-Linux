@@ -86,11 +86,21 @@ sa__apply_all() {
     fi
   fi
 
-  local ok=0
+  # 適用 (applied) / Foreign 保護スキップ (protected) / 失敗 (failed) を分けて集計する。
+  # supman__apply は Foreign 保護時も return 0 (未書込) のため、事前分類で区別する。
+  local applied=0 protected=0 failed=0 dir status
   for p in "${projects[@]}"; do
-    supman__apply "$(config_projects_dir)/$p" && ok=$((ok + 1)) || true
+    dir="$(config_projects_dir)/$p"
+    status="$(supman__classify "$dir")"
+    if [[ "$status" == "Foreign" && "${CCSU_SUPMAN_FORCE:-0}" != "1" ]]; then
+      supman__apply "$dir" >/dev/null 2>&1 || true   # 保護警告を出しつつ未書込
+      protected=$((protected + 1))
+      continue
+    fi
+    if supman__apply "$dir"; then applied=$((applied + 1)); else failed=$((failed + 1)); fi
   done
-  log_ok "🎉 適用完了: $ok / ${#projects[@]} 件"
+  log_ok "🎉 適用結果: applied=$applied / protected=$protected / failed=$failed (計 ${#projects[@]} 件)"
+  (( failed == 0 ))
 }
 
 main() {

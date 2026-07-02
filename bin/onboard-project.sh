@@ -55,9 +55,9 @@ ob__inspect() {
     done <<<"$results"
   fi
 
-  # --apply: manifest を実書き込み
+  # --apply: manifest を実書き込み (失敗しても set -e で全体を止めず次プロジェクトへ)
   if (( apply )); then
-    supman__apply "$dir"
+    supman__apply "$dir" || log_warn "manifest 適用に失敗: $name (継続)"
   else
     printf '  %sℹ️  プレビューのみ (書込は --apply)%s\n' "$C_WHITE" "$C_RESET"
   fi
