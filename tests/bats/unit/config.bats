@@ -114,3 +114,93 @@ teardown() { _bats_common_teardown; }
   [[ "$output" != *"file.md"* ]]
   [[ "$output" != *".hidden"* ]]
 }
+
+# --- 検証コマンド自動推定 (config_verify_command / config_infer_*) ---
+
+@test "config_infer_test_command: package.json script→npm test" {
+  local d="$TEST_TEMP/vt-npm"; mkdir -p "$d"
+  printf '{ "scripts": { "test": "bats" } }\n' > "$d/package.json"
+  run config_infer_test_command "$d"
+  [ "$output" = "npm test" ]
+}
+
+@test "config_infer_test_command: Makefile target→make test (npm より優先)" {
+  local d="$TEST_TEMP/vt-make"; mkdir -p "$d"
+  printf 'test:\n\techo hi\n' > "$d/Makefile"
+  printf '{ "scripts": { "test": "bats" } }\n' > "$d/package.json"
+  run config_infer_test_command "$d"
+  [ "$output" = "make test" ]
+}
+
+@test "config_infer_test_command: pyproject/tests→pytest" {
+  local d="$TEST_TEMP/vt-py"; mkdir -p "$d/tests"
+  run config_infer_test_command "$d"
+  [ "$output" = "pytest" ]
+}
+
+@test "config_infer_test_command: Cargo.toml→cargo test / go.mod→go test" {
+  local d="$TEST_TEMP/vt-rs"; mkdir -p "$d"; touch "$d/Cargo.toml"
+  run config_infer_test_command "$d"; [ "$output" = "cargo test" ]
+  local g="$TEST_TEMP/vt-go"; mkdir -p "$g"; touch "$g/go.mod"
+  run config_infer_test_command "$g"; [ "$output" = "go test ./..." ]
+}
+
+@test "config_infer_lint_command: ruff/flake8 検出→ruff check ." {
+  local d="$TEST_TEMP/vl-py"; mkdir -p "$d"
+  printf '[tool.ruff]\n' > "$d/pyproject.toml"
+  run config_infer_lint_command "$d"
+  [ "$output" = "ruff check ." ]
+}
+
+@test "config_infer_build_command: 推定不能なら空" {
+  local d="$TEST_TEMP/vb-none"; mkdir -p "$d"
+  run config_infer_build_command "$d"
+  [ -z "$output" ]
+}
+
+@test "config_verify_command: config .verify 上書きが推定より優先" {
+  local d="$TEST_TEMP/vc-ovr"; mkdir -p "$d"
+  printf '{ "scripts": { "test": "bats" } }\n' > "$d/package.json"
+  printf '{ "verify": { "testCommand": "make check" } }\n' > "$TEST_TEMP/vc-config.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-config.json"
+  run config_verify_command test "$d"
+  [ "$output" = "make check" ]
+}
+
+@test "config_verify_command: 上書き空文字は検証を明示無効化 (推定へ落とさない)" {
+  local d="$TEST_TEMP/vc-dis"; mkdir -p "$d"
+  printf '{ "scripts": { "lint": "shellcheck" } }\n' > "$d/package.json"
+  printf '{ "verify": { "lintCommand": "" } }\n' > "$TEST_TEMP/vc-config2.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-config2.json"
+  run config_verify_command lint "$d"
+  [ -z "$output" ]
+}
+
+@test "config_verify_command: 上書きキー不在なら推定へフォールバック" {
+  local d="$TEST_TEMP/vc-fb"; mkdir -p "$d"
+  printf '{ "scripts": { "build": "tsc" } }\n' > "$d/package.json"
+  printf '{ "verify": { "testCommand": "make check" } }\n' > "$TEST_TEMP/vc-config3.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-config3.json"
+  run config_verify_command build "$d"
+  [ "$output" = "npm run build" ]
+}
+
+@test "config_verify_command: 不正 JSON config は警告し推定へフォールバック (上書き無言破棄しない)" {
+  local d="$TEST_TEMP/vc-bad"; mkdir -p "$d"
+  printf '{ "scripts": { "test": "bats" } }\n' > "$d/package.json"
+  printf '{ broken json' > "$TEST_TEMP/vc-bad.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-bad.json"
+  run config_verify_command test "$d"
+  # stderr の警告 + stdout に推定結果 (npm test) が出る
+  [[ "$output" == *"npm test"* ]]
+  [[ "$output" == *"不正 JSON"* ]]
+}
+
+@test "config_verify_command: .verify が非オブジェクトなら警告し推定へフォールバック" {
+  local d="$TEST_TEMP/vc-nonobj"; mkdir -p "$d"
+  printf '{ "scripts": { "lint": "eslint" } }\n' > "$d/package.json"
+  printf '{ "verify": "oops" }\n' > "$TEST_TEMP/vc-nonobj.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/vc-nonobj.json"
+  run config_verify_command lint "$d"
+  [[ "$output" == *"npm run lint"* ]]
+}
