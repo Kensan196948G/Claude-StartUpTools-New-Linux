@@ -88,6 +88,77 @@ config_recent_history_path() {
   if [[ -n "$p" ]]; then json_expand_path "$p"; else printf '%s' "$HOME/.ai-startup/recent-projects.json"; fi
 }
 
+# --- 検証コマンド自動推定 (test/lint/build) ---
+#   移植元: Codex-StartUpTools/bin/auto_setup.sh の infer_{test,lint,build}_command
+#   Codex 依存 (CODEX_* / nightly_codex.sh) は持ち込まず、推定ロジックのみを移植。
+#   設計方針 (Claude 向け書き直し): config.json の .verify.<kind>Command を最優先の
+#   明示上書きとし、未指定時のみリポジトリ内容から推定する「設定ファースト」。
+#   推定不能・上書き空文字なら空文字 + exit 0 を返す (set -e 安全)。
+#   release-check.sh / onboarding CLI 等がプロジェクトの検証手段を得るための共通 API。
+
+# config__has_make_target <dir> <target> — Makefile に target: 定義があれば 0
+config__has_make_target() {
+  local dir="$1" target="$2"
+  [[ -f "$dir/Makefile" ]] && grep -Eq "^${target}:" "$dir/Makefile"
+}
+
+# config__package_has_script <dir> <script> — package.json に "script": があれば 0
+config__package_has_script() {
+  local dir="$1" script="$2"
+  [[ -f "$dir/package.json" ]] && grep -Eq "\"${script}\"[[:space:]]*:" "$dir/package.json"
+}
+
+# config_infer_test_command <dir> — テストコマンドを推定 (無ければ空)
+config_infer_test_command() {
+  local dir="$1"
+  if   config__has_make_target "$dir" test;      then printf 'make test'
+  elif config__package_has_script "$dir" test;   then printf 'npm test'
+  elif [[ -f "$dir/pyproject.toml" || -f "$dir/pytest.ini" || -d "$dir/tests" ]]; then printf 'pytest'
+  elif [[ -f "$dir/Cargo.toml" ]];               then printf 'cargo test'
+  elif [[ -f "$dir/go.mod" ]];                   then printf 'go test ./...'
+  fi
+}
+
+# config_infer_lint_command <dir> — lint コマンドを推定 (無ければ空)
+config_infer_lint_command() {
+  local dir="$1"
+  if   config__has_make_target "$dir" lint;      then printf 'make lint'
+  elif config__package_has_script "$dir" lint;   then printf 'npm run lint'
+  elif [[ -f "$dir/pyproject.toml" ]] && grep -Eq 'ruff|flake8' "$dir/pyproject.toml"; then printf 'ruff check .'
+  elif [[ -f "$dir/Cargo.toml" ]];               then printf 'cargo clippy'
+  elif [[ -f "$dir/go.mod" ]];                   then printf 'go vet ./...'
+  fi
+}
+
+# config_infer_build_command <dir> — build コマンドを推定 (無ければ空)
+config_infer_build_command() {
+  local dir="$1"
+  if   config__has_make_target "$dir" build;     then printf 'make build'
+  elif config__package_has_script "$dir" build;  then printf 'npm run build'
+  elif [[ -f "$dir/Cargo.toml" ]];               then printf 'cargo build'
+  elif [[ -f "$dir/go.mod" ]];                   then printf 'go build ./...'
+  fi
+}
+
+# config_verify_command <kind> <dir> — 検証コマンドを解決 (kind: test|lint|build)
+#   .verify.<kind>Command が config.json に「存在すれば」その値を優先する
+#   (空文字なら "その検証を明示的に無効化" とみなし空を返す)。キー不在時のみ推定する。
+#   json_get は空文字と未定義を区別できないため、キー存在は jq has() で直接判定する。
+config_verify_command() {
+  local kind="$1" dir="$2" key="${1}Command"
+  if [[ -f "$CCSU_CONFIG_PATH" ]] \
+     && jq -e --arg k "$key" '(.verify // {}) | has($k)' "$CCSU_CONFIG_PATH" >/dev/null 2>&1; then
+    jq -r --arg k "$key" '.verify[$k] // ""' "$CCSU_CONFIG_PATH" 2>/dev/null || true
+    return 0
+  fi
+  case "$kind" in
+    test)  config_infer_test_command  "$dir" ;;
+    lint)  config_infer_lint_command  "$dir" ;;
+    build) config_infer_build_command "$dir" ;;
+    *)     return 0 ;;
+  esac
+}
+
 # --- config 妥当性確認 (実行エントリ用。不在/不正 JSON で終了) ---
 config_require() {
   [[ -f "$CCSU_CONFIG_PATH" ]] || die "config が見つかりません: $CCSU_CONFIG_PATH"
