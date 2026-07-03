@@ -21,14 +21,23 @@ const AUDIT_FILE = path.join(process.cwd(), ".claude", "claudeos", "data", "audi
 const MAX_BYTES = 1024 * 1024;
 const CMD_MAX_LEN = 300;
 
-// Bash: gh/git の書込サブコマンド判定
+// Bash: gh/git の書込サブコマンド判定 (gh api は isGhApiWrite で別判定)
 const BASH_WRITE_RE = new RegExp(
   "\\b(?:" +
     "git\\s+(?:push|commit|merge|tag|rebase|reset|revert|cherry-pick|branch\\s+-[dD]|remote\\s+(?:add|remove|set-url))" +
-    "|gh\\s+(?:pr|issue|release|repo|api|label|secret|workflow)\\s+\\S*\\s*(?:create|merge|edit|close|reopen|comment|delete|transfer|set|enable|disable|run|cancel)" +
-    "|gh\\s+api\\s+(?:-X\\s*)?(?:POST|PUT|PATCH|DELETE)" +
+    "|gh\\s+(?:pr|issue|release|repo|label|secret|workflow)\\s+\\S*\\s*(?:create|merge|edit|close|reopen|comment|delete|transfer|set|enable|disable|run|cancel)" +
   ")\\b"
 );
+
+// gh api の書込判定: -f/-F/--field/--raw-field/--input を付けると gh は暗黙的に
+// POST へ切り替わるため、-X 明示だけを見ると書込を取りこぼす。
+// -X GET/HEAD が明示されている場合のみ読取とみなす。
+function isGhApiWrite(cmd) {
+  if (!/\bgh\s+api\b/.test(cmd)) return false;
+  if (/(?:^|\s)(?:-X|--method)[= ]\s*(?:GET|HEAD)\b/i.test(cmd)) return false;
+  return /(?:^|\s)(?:-X|--method)[= ]\s*(?:POST|PUT|PATCH|DELETE)\b/i.test(cmd) ||
+         /(?:^|\s)(?:-f|-F|--raw-field|--field|--input)\b/.test(cmd);
+}
 
 // MCP: write 系ツール名判定
 const MCP_WRITE_RE = /^mcp__.+__(?:.*(?:create|update|merge|push|delete|add|write|apply|move|duplicate|send|schedule|label|unlabel).*)$/i;
@@ -45,7 +54,7 @@ function parseHookInput(raw) {
 function summarize(toolName, toolInput) {
   if (toolName === "Bash") {
     const cmd = String(toolInput.command || "");
-    if (!BASH_WRITE_RE.test(cmd)) return null;
+    if (!BASH_WRITE_RE.test(cmd) && !isGhApiWrite(cmd)) return null;
     return cmd.replace(/\s+/g, " ").trim().slice(0, CMD_MAX_LEN);
   }
   if (MCP_WRITE_RE.test(toolName)) {
