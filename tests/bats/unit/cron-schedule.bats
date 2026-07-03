@@ -55,6 +55,18 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"duration=300"* ]]
 }
 
+@test "add: --goal-type で override 前置と goal meta を記録" {
+  bash "$SCRIPT" add --project MyProj --time 14:30 --dow 1 --duration 30 --goal-type pr-babysit
+  run cat "$CRON_STORE"
+  [[ "$output" == *"CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit bash"* ]]
+  [[ "$output" == *" goal=pr-babysit"* ]]
+}
+
+@test "add: --goal-type の不正値 (空白/記号) は拒否" {
+  run bash "$SCRIPT" add --project MyProj --time 14:30 --dow 1 --goal-type "bad value"
+  [ "$status" -ne 0 ]
+}
+
 @test "list: 登録済みを曜日ラベル付きで表示" {
   bash "$SCRIPT" add --project MyProj --time 21:00 --dow 1 >/dev/null
   run bash "$SCRIPT" list

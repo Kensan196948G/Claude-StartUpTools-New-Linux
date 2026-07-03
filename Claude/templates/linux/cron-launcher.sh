@@ -293,6 +293,14 @@ else
   echo "⚠️  [cron-launcher] state.json not found or python3 unavailable — using defaults" >> "$LOG_FILE"
 fi
 
+# 単発ジョブ用の goal 上書き (例: PR 番人マイクロループが cron 行で
+# CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit を指定)。state.json の goal_type は変更しない。
+if [[ -n "${CLAUDEOS_GOAL_TYPE_OVERRIDE:-}" ]]; then
+  RESUME_GOAL_TYPE="$CLAUDEOS_GOAL_TYPE_OVERRIDE"
+  export CLAUDEOS_GOAL_TYPE="$RESUME_GOAL_TYPE"
+  echo "🎯 [cron-launcher] goal_type override: $RESUME_GOAL_TYPE" >> "$LOG_FILE"
+fi
+
 export CLAUDE_RESUME_PHASE="$RESUME_PHASE"
 export CLAUDE_RESUME_CONSECUTIVE="$RESUME_CONSECUTIVE"
 

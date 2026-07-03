@@ -7,7 +7,7 @@
 # 使い方:
 #   cron-schedule.sh                  # 対話メニュー
 #   cron-schedule.sh list             # 一覧 (非対話)
-#   cron-schedule.sh add --project P --time 21:00 --dow 1,2,3,4,5,6 [--duration 300]
+#   cron-schedule.sh add --project P --time 21:00 --dow 1,2,3,4,5,6 [--duration 300] [--goal-type pr-babysit]
 #   cron-schedule.sh remove --id <id>
 #   cron-schedule.sh remove-all
 #   cron-schedule.sh run-now --project P [--duration 300] [--foreground] [--tmux]  # cron 登録済みのみ
@@ -58,14 +58,15 @@ cs__list_display() {
 
 # --- 非対話: add ---
 cs__add() {
-  local project="" duration="$DEFAULT_DURATION" time="" dow=""
+  local project="" duration="$DEFAULT_DURATION" time="" dow="" goal_type=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --project)  project="$2"; shift 2 ;;
-      --duration) duration="$2"; shift 2 ;;
-      --time)     time="$2"; shift 2 ;;
-      --dow)      dow="$2"; shift 2 ;;
-      --dry-run)  CS_DRY_RUN=1; shift ;;
+      --project)   project="$2"; shift 2 ;;
+      --duration)  duration="$2"; shift 2 ;;
+      --time)      time="$2"; shift 2 ;;
+      --dow)       dow="$2"; shift 2 ;;
+      --goal-type) goal_type="$2"; shift 2 ;;
+      --dry-run)   CS_DRY_RUN=1; shift ;;
       *) log_error "add: 不明な引数: $1"; return 1 ;;
     esac
   done
@@ -79,12 +80,17 @@ cs__add() {
     log_info "  project=$project"
     log_info "  expr=$expr"
     log_info "  duration=${duration}m"
+    [[ -n "$goal_type" ]] && log_info "  goal-type=$goal_type"
     log_info "dry-run: crontab は変更しません"
     return 0
   fi
   local id
-  id="$(cron__add "$project" "$duration" "$time" "${dows[@]}")" || return 1
-  log_ok "登録: id=$id project=$project time=$time dow=$dow duration=${duration}m"
+  if [[ -n "$goal_type" ]]; then
+    id="$(CCSU_CRON_GOAL_TYPE="$goal_type" cron__add "$project" "$duration" "$time" "${dows[@]}")" || return 1
+  else
+    id="$(cron__add "$project" "$duration" "$time" "${dows[@]}")" || return 1
+  fi
+  log_ok "登録: id=$id project=$project time=$time dow=$dow duration=${duration}m${goal_type:+ goal=$goal_type}"
 }
 
 # --- 非対話: remove ---
