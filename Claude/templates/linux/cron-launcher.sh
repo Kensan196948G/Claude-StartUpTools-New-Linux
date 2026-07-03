@@ -391,6 +391,14 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   SJT_COST_FILE="$SESSIONS_DIR/${SESSION_ID}.cost"
   export SJT_SESSION_ID_FILE SJT_COST_FILE
 
+  # 無人セッション堅牢化 (Claude Code v2.1.186 / v2.1.196):
+  #   RETRY_WATCHDOG=1  → 一時 API エラーのリトライ上限を無人運用向けに拡大 (既定 300 回)。
+  #                       overload で 300 分セッションが空振りするのを防ぐ (公式が無人運用に推奨)。
+  #   STREAM_WATCHDOG   → ストリーム 5 分無イベントで abort+retry。v2.1.196 で既定有効化済みだが、
+  #                       将来の既定変更に影響されないよう明示して意図を固定する。
+  export CLAUDE_CODE_RETRY_WATCHDOG="${CLAUDE_CODE_RETRY_WATCHDOG:-1}"
+  export CLAUDE_ENABLE_STREAM_WATCHDOG="${CLAUDE_ENABLE_STREAM_WATCHDOG:-1}"
+
   # headless 課金経路の env プレフィックス (空配列= api-key 系統そのまま)
   _HL_AUTH=()
   if [[ "${CLAUDEOS_HEADLESS_AUTH:-subscription}" != "api-key" ]]; then

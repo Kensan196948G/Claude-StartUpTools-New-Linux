@@ -109,6 +109,26 @@ _running_foreground_projects() {
   done
 }
 
+# claude agents --json による稼働セッション状態 (v2.1.162+)
+#   waitingFor == "permission prompt" のセッションは headless では自力で進めない
+#   スタック状態のため、件数を警告表示する (手動介入 or settings.allow 追加が必要)。
+#   claude CLI 不在・daemon 未稼働・JSON 不正はすべて fail-soft でスキップする。
+_render_agents_state() {
+  [[ "${CCSU_DISABLE_AGENTS_JSON:-0}" == "1" ]] && return 0
+  has_cmd claude && has_cmd jq || return 0
+  local agents
+  agents="$(claude agents --json 2>/dev/null)" || return 0
+  printf '%s' "$agents" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1 || return 0
+  printf '\n  %s● claude agents 状態 (state / waitingFor):%s\n' "$C_GREEN" "$C_RESET"
+  printf '%s' "$agents" | jq -r '.[] | "      \(.name // .id // "?")  state=\(.state // "?")\(if .waitingFor then "  ⚠️ waiting: \(.waitingFor)" else "" end)"' 2>/dev/null || true
+  local stuck
+  stuck="$(printf '%s' "$agents" | jq -r '[.[] | select(.waitingFor == "permission prompt")] | length' 2>/dev/null)" || stuck=0
+  if [[ "$stuck" =~ ^[0-9]+$ ]] && (( stuck > 0 )); then
+    printf '      %s🚨 permission prompt 待ちで停滞中: %s 件 (headless では前進不能 — 手動介入か settings.json permissions.allow への追加が必要)%s\n' "$C_YELLOW" "$stuck" "$C_RESET"
+  fi
+  return 0
+}
+
 # 最近のセッション履歴 (最新15件)
 _render_history() {
   local sdir="$1" f n=0
@@ -152,6 +172,7 @@ _render_once() {
       printf '      (実行中なし)\n'
     fi
   fi
+  _render_agents_state
   printf '\n'
   _render_history "$sdir"
 }

@@ -22,6 +22,9 @@ _bats_common_setup() {
   export STUB_BIN
   PATH="$STUB_BIN:$PATH"
   export PATH
+
+  # 実マシンの claude daemon へ問い合わせない (watch-session の claude agents --json を密閉化)
+  export CCSU_DISABLE_AGENTS_JSON=1
 }
 
 # _bats_common_teardown — 各テスト後に実行
