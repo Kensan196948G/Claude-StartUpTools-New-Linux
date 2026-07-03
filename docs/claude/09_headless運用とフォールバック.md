@@ -17,9 +17,10 @@ tmux は標準経路ではなく、`--tmux` または `CLAUDEOS_TMUX=1` 明示�
 
 `★ ポイント` headless 既定化は **Agent SDK 月次クレジット**（対話枠とは別枠、2026-06-15 課金変更）を消費します。
 消費は `lib/credits.sh` が ledger 追記 → `agentSdk` ブロックの warn/verifyOnly/stop 閾値で段階ガードします。
-省クレジット運用では、既定セッション長を 180 分にし、Supervisor の全体デフォルトも
-`dailyMaxMinutes=180` / `maxRestartsPerDay=1` / `sessionMinutes=180` に絞ります。
-cron 登録は 1 日 2 プロジェクトまで、1 セッション 180 分までを上限にします。
+標準運用では、既定セッション長を 300 分（5 時間）とし、Supervisor の全体デフォルトは
+`dailyMaxMinutes=600` / `maxRestartsPerDay=1` / `sessionMinutes=300` にします。
+cron 登録は 1 日 2 プロジェクトまで、1 セッション 300 分までを上限にします。
+省クレジット退避が必要な場合は `run-now --duration 60` 等の単発短縮実行へ落とします。
 
 ## 2. TUI 退避への切替（課金枯渇・障害時）
 

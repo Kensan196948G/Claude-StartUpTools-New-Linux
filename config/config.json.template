@@ -110,8 +110,8 @@
   "cron": {
     "_comment": "v3.1.0 新設。Linux 側 crontab で ClaudeCode を週次自動起動する機能の設定。",
     "enabled": true,
-    "defaultDurationMinutes": 180,
-    "maxDurationMinutes": 180,
+    "defaultDurationMinutes": 300,
+    "maxDurationMinutes": 300,
     "maxProjectsPerDay": 2,
     "launcherPath": "/home/kensan/.claudeos/cron-launcher.sh",
     "sessionsDir": "/home/kensan/.claudeos/sessions",
@@ -123,9 +123,9 @@
   "supervisor": {
     "_comment": "省クレジット運用の全体デフォルト。project/state.json の supervisor ブロックでプロジェクト別に上書き可能。",
     "defaults": {
-      "dailyMaxMinutes": 180,
+      "dailyMaxMinutes": 600,
       "maxRestartsPerDay": 1,
-      "sessionMinutes": 180,
+      "sessionMinutes": 300,
       "cooldownSeconds": 30,
       "crashLoopThreshold": 3,
       "crashLoopMinSeconds": 120

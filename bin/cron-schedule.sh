@@ -7,10 +7,10 @@
 # 使い方:
 #   cron-schedule.sh                  # 対話メニュー
 #   cron-schedule.sh list             # 一覧 (非対話)
-#   cron-schedule.sh add --project P --time 21:00 --dow 1,2,3,4,5,6 [--duration 180]
+#   cron-schedule.sh add --project P --time 21:00 --dow 1,2,3,4,5,6 [--duration 300]
 #   cron-schedule.sh remove --id <id>
 #   cron-schedule.sh remove-all
-#   cron-schedule.sh run-now --project P [--duration 180] [--foreground] [--tmux]  # cron 登録済みのみ
+#   cron-schedule.sh run-now --project P [--duration 300] [--foreground] [--tmux]  # cron 登録済みのみ
 #   cron-schedule.sh launch [--project P[,P2]] [--duration N] [--all] [--yes] [--tmux] # 登録から一括 BG
 #   cron-schedule.sh bulk-register [--github-only] [--unmanaged-only] [--apply]  # 曜日分散一括登録
 # ============================================================
@@ -28,7 +28,7 @@ source "$SCRIPT_DIR/../lib/cron-manager.sh"
 source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
 CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
-DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '180')"
+DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '300')"
 CS_DRY_RUN=0
 
 # --- 自動配備: launcher 起動の直前にテンプレ → ~/.claudeos を同期 (恒久ドリフト対策) ---
@@ -324,7 +324,7 @@ cs__bulk_register() {
     esac
   done
   [[ "$start_hour" =~ ^[0-9]+$ && "$duration" =~ ^[0-9]+$ ]] || { log_error "--start / --duration は数値"; return 1; }
-  # 既定 spacing: duration を時間換算 (= 重複しない最小間隔)。例 180m → 3h
+  # 既定 spacing: duration を時間換算 (= 重複しない最小間隔)。例 300m → 5h
   [[ -z "$spacing" ]] && spacing=$(( (duration + 59) / 60 ))
   [[ "$spacing" =~ ^[0-9]+$ ]] || { log_error "--spacing は数値"; return 1; }
   (( spacing < 1 )) && spacing=1
