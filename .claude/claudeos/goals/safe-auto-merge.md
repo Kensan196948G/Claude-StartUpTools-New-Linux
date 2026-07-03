@@ -63,6 +63,7 @@ main/default branch 以外の PR は、次をすべて満たす場合のみ自�
 ■ Stop Conditions
 正常終了:
 - 対象 open PR の gate 判定と、可能な非 main 自動マージが完了
+- 上記の測定可能基準を満たした時点で、残り時間・残ターンがあっても直ちに終了処理へ進んでよい（早期終了）
 異常終了（Failure）:
 - GitHub 認証なし、token 権限不足、GitHub API 障害
 - main/default branch PR があり人間確認待ち

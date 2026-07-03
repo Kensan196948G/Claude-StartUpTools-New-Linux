@@ -54,6 +54,7 @@ CTO優先順位テーブル (CLAUDE.md §5.1) の優先度1: Security Critical �
 ■ Stop Conditions
 正常終了:
 - 脆弱性解消・セキュリティスキャン Critical/High = 0・CI 成功・PR 作成済み・Post-mortem 完了
+- 上記の測定可能基準を満たした時点で、残り時間・残ターンがあっても直ちに終了処理へ進んでよい（早期終了）
 異常終了（Failure）:
 - 修復試行3回到達 → Blocked + P1 Issue起票 + CTO エスカレーション
 - 影響範囲が想定より広大と判明 → 即停止 + 範囲再評価 + Issue化
