@@ -67,6 +67,32 @@ teardown() { _bats_common_teardown; }
   [ "$status" -ne 0 ]
 }
 
+@test "tune: 低活動 (commit 0) は idle-duration への縮退候補" {
+  bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1 >/dev/null
+  run bash "$SCRIPT" tune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"縮退候補: MyProj"* ]]
+  [[ "$output" == *"300m → 60m"* ]]
+  run cat "$CRON_STORE"
+  [[ "$output" == *"duration=300"* ]]
+}
+
+@test "tune --apply: crontab の duration を実書換する" {
+  bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1 >/dev/null
+  bash "$SCRIPT" tune --apply
+  run cat "$CRON_STORE"
+  [[ "$output" == *"duration=60"* ]]
+  [[ "$output" != *"duration=300"* ]]
+  [[ "$output" == *"0 8 * * 1"* ]]
+}
+
+@test "tune: goal ジョブ (pr-babysit 等) は対象外" {
+  bash "$SCRIPT" add --project MyProj --time 14:30 --dow 1 --duration 30 --goal-type pr-babysit >/dev/null
+  run bash "$SCRIPT" tune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skip (goal ジョブ): MyProj"* ]]
+}
+
 @test "list: 登録済みを曜日ラベル付きで表示" {
   bash "$SCRIPT" add --project MyProj --time 21:00 --dow 1 >/dev/null
   run bash "$SCRIPT" list

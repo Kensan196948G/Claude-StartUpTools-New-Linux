@@ -13,6 +13,7 @@
 #   cron-schedule.sh run-now --project P [--duration 300] [--foreground] [--tmux]  # cron 登録済みのみ
 #   cron-schedule.sh launch [--project P[,P2]] [--duration N] [--all] [--yes] [--tmux] # 登録から一括 BG
 #   cron-schedule.sh bulk-register [--github-only] [--unmanaged-only] [--apply]  # 曜日分散一括登録
+#   cron-schedule.sh tune [--apply] [--window-days 14] [--low-threshold 5] [--low-duration 120] [--idle-duration 60]
 # ============================================================
 
 set -euo pipefail
@@ -450,6 +451,71 @@ cs__menu() {
   done
 }
 
+# --- 非対話: tune — 直近活動量に応じて登録 duration を縮退 ---
+#   低活動プロジェクトの 5h スロットを短縮し、クレジット消費を実際の変化周期に合わせる。
+#   判定: 直近 window 日の git commit 数
+#     >= low-threshold       → 現状維持
+#     1 .. low-threshold-1   → low-duration へ縮退
+#     0 (git 取得不能を含む)  → idle-duration へ縮退
+#   goal= 付きエントリ (PR 番人等の単発 goal ジョブ) は対象外。縮退のみで拡大はしない。
+cs__tune() {
+  local window_days=14 low_threshold=5 low_duration=120 idle_duration=60 apply=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --window-days)   window_days="$2"; shift 2 ;;
+      --low-threshold) low_threshold="$2"; shift 2 ;;
+      --low-duration)  low_duration="$2"; shift 2 ;;
+      --idle-duration) idle_duration="$2"; shift 2 ;;
+      --apply)         apply=1; shift ;;
+      *) log_error "tune: 不明な引数: $1"; return 1 ;;
+    esac
+  done
+  local v
+  for v in "$window_days" "$low_threshold" "$low_duration" "$idle_duration"; do
+    [[ "$v" =~ ^[0-9]+$ ]] || { log_error "tune: 数値オプションのみ指定可能: $v"; return 1; }
+  done
+  local base raw id project duration created expr commits target changed=0 kept=0
+  local minute hour dowcsv
+  base="$(config_projects_dir)"
+  raw="$(cron__read)"
+  while IFS='|' read -r id project duration created expr; do
+    [[ -z "$id" ]] && continue
+    if grep -q "^# ${CRON_ENTRY_PREFIX}:${id} .* goal=" <<<"$raw"; then
+      log_info "skip (goal ジョブ): $project"
+      continue
+    fi
+    commits="$(git -C "$base/$project" rev-list --count --since="${window_days} days ago" HEAD 2>/dev/null || echo 0)"
+    [[ "$commits" =~ ^[0-9]+$ ]] || commits=0
+    if   (( commits == 0 ));            then target="$idle_duration"
+    elif (( commits < low_threshold )); then target="$low_duration"
+    else                                     target="$duration"
+    fi
+    if (( target >= duration )); then
+      kept=$((kept + 1))
+      log_info "維持: $project commits=${commits}/${window_days}d duration=${duration}m"
+      continue
+    fi
+    changed=$((changed + 1))
+    if (( apply )); then
+      minute="$(awk '{print $1}' <<<"$expr")"
+      hour="$(awk '{print $2}' <<<"$expr")"
+      dowcsv="$(awk '{print $5}' <<<"$expr")"
+      local -a dows; IFS=',' read -ra dows <<<"$dowcsv"
+      cron__remove "$id" >/dev/null || { log_error "縮退失敗 (remove): $project"; return 1; }
+      cron__add "$project" "$target" "$(printf '%02d:%02d' "$((10#$hour))" "$((10#$minute))")" "${dows[@]}" >/dev/null \
+        || { log_error "縮退失敗 (add): $project"; return 1; }
+      log_ok "縮退: $project commits=${commits}/${window_days}d ${duration}m → ${target}m"
+    else
+      log_info "縮退候補: $project commits=${commits}/${window_days}d ${duration}m → ${target}m"
+    fi
+  done < <(cron__list)
+  if (( apply )); then
+    log_ok "tune 完了: 縮退 ${changed} 件 / 維持 ${kept} 件"
+  else
+    log_info "tune DRY-RUN: 縮退候補 ${changed} 件 / 維持 ${kept} 件 (--apply で実施)"
+  fi
+}
+
 main() {
   local -a args=()
   local arg
@@ -475,6 +541,7 @@ main() {
     run-now)    shift; cs__run_now "$@" ;;
     launch)     shift; cs__launch "$@" ;;
     bulk-register) shift; cs__bulk_register "$@" ;;
+    tune)       shift; cs__tune "$@" ;;
     menu|"")    cs__menu ;;
     *) log_error "不明なサブコマンド: $1 (list|add|remove|remove-all|run-now|launch|bulk-register|menu)"; exit 1 ;;
   esac
