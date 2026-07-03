@@ -22,6 +22,15 @@ tmux は標準経路ではなく、`--tmux` または `CLAUDEOS_TMUX=1` 明示�
 cron 登録は 1 日 2 プロジェクトまで、1 セッション 300 分までを上限にします。
 省クレジット退避が必要な場合は `run-now --duration 60` 等の単発短縮実行へ落とします。
 
+### 無人セッションの堅牢化（v2.1.186 / v2.1.196 対応）
+
+| 対策 | 実装 | 効果 |
+|---|---|---|
+| 🔁 retry watchdog | cron-launcher が `CLAUDE_CODE_RETRY_WATCHDOG=1` を export | 一時 API エラーのリトライ上限を無人運用向けに拡大（既定 300 回）。overload での 300 分セッション空振りを防ぐ |
+| ⏱ stream watchdog | 同 `CLAUDE_ENABLE_STREAM_WATCHDOG=1`（既定有効を明示固定） | ストリーム 5 分無イベントで abort+retry |
+| 🧬 fallbackModel | settings.json `"fallbackModel": ["opus", "sonnet", "haiku"]`（最大 3 段） | プライマリモデル過負荷・利用不可時に自動フォールバック |
+| 🚨 waitingFor 監視 | `watch-session.sh` が `claude agents --json` の `waitingFor == "permission prompt"` を検出して警告 | headless で自力前進できない permission 待ちスタックを可視化（対処: 手動介入 or `permissions.allow` 追加） |
+
 ## 2. TUI 退避への切替（課金枯渇・障害時）
 
 headless が使えない/使いたくない場合は **明示的に TUI へ退避**します。tmux はさらに明示した場合だけ使います。
