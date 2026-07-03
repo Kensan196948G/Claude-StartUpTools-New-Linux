@@ -96,3 +96,9 @@ gh pr merge <PR番号> --auto --squash
 - token の値をログ、ファイル、Issue、PR コメントへ出力しない
 - CI 未通過・未検証・review required の PR はマージしない
 - 自動マージ対象は、通常の開発 branch 間 PR または検証用 branch への統合に限定する
+
+## 例外経路: JIT 単発承認
+
+自動マージ条件を満たさない操作（main 宛 merge、Secrets、破壊的変更等）を無人セッションで
+どうしても進める必要がある場合は、`jit-approval-protocol.md` の 1 回限り・期限付き承認チケットを
+使う。恒久的な条件緩和はしない。
