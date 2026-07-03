@@ -153,19 +153,26 @@ cron__list() {
 # ------------------------------------------------------------
 # cron__add <project> <duration> <time-HH:MM> <dow...> — エントリ追加。id を stdout
 #   PowerShell: Add-ClaudeOSCronEntry。crontab の % は \% エスケープ必須
+#   CCSU_CRON_GOAL_TYPE 設定時: cron 行へ CLAUDEOS_GOAL_TYPE_OVERRIDE を前置し、
+#   meta コメントへ goal= を記録する (PR 番人等の単発 goal ジョブ用)
 # ------------------------------------------------------------
 cron__add() {
   local project="$1" duration="$2" time="$3"; shift 3
   local -a dows=("$@")
-  local expr id created logp cmd comment cronline cur new
+  local expr id created logp cmd comment cronline cur new goal_env="" goal_meta=""
   expr="$(cron__format_expr "$time" "${dows[@]}")" || return 1
   cron__validate_limits "$project" "$duration" "${dows[@]}" || return 1
+  if [[ -n "${CCSU_CRON_GOAL_TYPE:-}" ]]; then
+    [[ "$CCSU_CRON_GOAL_TYPE" =~ ^[A-Za-z0-9_-]+$ ]] || { log_error "goal-type は英数字とハイフンのみ: $CCSU_CRON_GOAL_TYPE"; return 1; }
+    goal_env="CLAUDEOS_GOAL_TYPE_OVERRIDE=$CCSU_CRON_GOAL_TYPE "
+    goal_meta=" goal=$CCSU_CRON_GOAL_TYPE"
+  fi
   id="$(cron__new_id)"
   created="$(date +%Y-%m-%dT%H:%M:%S)"
   # crontab の % は改行扱いのため \% でエスケープ ($ もリテラルにして cron 実行時に展開)
   logp="$CRON_LOGS_DIR/cron-\$(date +\\%Y\\%m\\%d-\\%H\\%M\\%S).log"
-  cmd="bash $CRON_LAUNCHER_PATH $project $duration >> $logp 2>&1"
-  comment="# $CRON_ENTRY_PREFIX:$id project=$project duration=$duration created=$created"
+  cmd="${goal_env}bash $CRON_LAUNCHER_PATH $project $duration >> $logp 2>&1"
+  comment="# $CRON_ENTRY_PREFIX:$id project=$project duration=$duration created=$created$goal_meta"
   cronline="$expr $cmd"
   cur="$(cron__read)"   # コマンド置換で末尾改行は自動除去
   if [[ -n "$cur" ]]; then

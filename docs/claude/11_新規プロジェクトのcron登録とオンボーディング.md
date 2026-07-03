@@ -94,6 +94,20 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --duration 300 --d
 ➡️ **容量 = 2 スロット × 6 曜日 = 12 枠**。13 番目以降のプロジェクトは
 `⚠️ 容量超過(12件/週) → skip` で**黙って登録されない**ので、ログを必ず確認すること。
 
+### ⏱ PR 番人マイクロループ（任意）
+
+5 時間メガセッションの合間に open PR の CI 失敗・レビュー指摘対応だけを行う短時間ジョブ。
+`--goal-type pr-babysit` を付けると cron 行に `CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit` が
+前置され、`goals/pr-babysit.md` の限定 /goal（新規開発禁止・stop after 8 turns・早期終了）で起動する。
+
+```bash
+# 例: 毎日 14:30 に 30 分だけ PR の面倒を見る
+bash bin/cron-schedule.sh add --project <NAME> --time 14:30 --dow 1,2,3,4,5,6 --duration 30 --goal-type pr-babysit
+```
+
+- state.json の `goal_type` は変更しない（そのセッション限りの上書き）
+- 番人エントリも `cron.maxProjectsPerDay=2` の枠を消費する点に注意（メインスロットと同日に置く場合は空き枠を確認）
+
 ### 🔧 12 枠を超えて登録したいとき
 
 | 方法 | コマンド例 | 容量 | トレードオフ |
