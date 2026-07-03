@@ -122,8 +122,9 @@ if (rec) {
 // Agent Teams 直近使用状況サマリ
 const atu = state.agent_teams_usage || {};
 const atuCur = atu.current_session || {};
-if (atuCur.team_create_count || atuCur.send_message_count) {
-  lines.push(`  agent_teams_current: TeamCreate=${atuCur.team_create_count || 0} SendMessage=${atuCur.send_message_count || 0} patterns=[${(atuCur.patterns_used || []).join(",")}]`);
+const atuSpawns = (atuCur.teammate_spawn_count || 0) + (atuCur.team_create_count || 0);
+if (atuSpawns || atuCur.send_message_count) {
+  lines.push(`  agent_teams_current: TeammateSpawn=${atuSpawns} SendMessage=${atuCur.send_message_count || 0} patterns=[${(atuCur.patterns_used || []).join(",")}]`);
 }
 
 // Dashboard URL 案内（Agent View 代替）

@@ -41,16 +41,30 @@ const SOURCE_FILES = {
 };
 
 // settings.json に追加する PostToolUse matcher エントリ
+// v2.1.178: TeamCreate 廃止に伴い、teammate spawn は Agent(name 付き) で検出する
+const TRACKER_COMMAND = "node .claude/claudeos/scripts/hooks/agent-teams-tracker.js";
 const NEW_MATCHERS = [
   {
-    matcher: "TeamCreate",
-    hooks: [{ type: "command", command: "node .claude/claudeos/scripts/hooks/agent-teams-tracker.js" }],
+    matcher: "Agent",
+    hooks: [{ type: "command", command: TRACKER_COMMAND }],
   },
   {
     matcher: "SendMessage",
-    hooks: [{ type: "command", command: "node .claude/claudeos/scripts/hooks/agent-teams-tracker.js" }],
+    hooks: [{ type: "command", command: TRACKER_COMMAND }],
   },
 ];
+
+// 廃止 matcher: TeamCreate ツール削除 (v2.1.178) 後は発火しない死配線として除去する
+function isObsoleteEntry(entry) {
+  return entry.matcher === "TeamCreate" &&
+    (entry.hooks || []).some(h => h.command === TRACKER_COMMAND);
+}
+
+// matcher 文字列だけでは usage-tracker 等の既存 "Agent" エントリと衝突するため、
+// matcher + command の複合キーで存在判定する
+function entryKeys(entry) {
+  return (entry.hooks || []).map(h => `${entry.matcher}::${h.command}`);
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // 引数パース
@@ -250,13 +264,17 @@ function computePlan(project) {
   }
   settings.hooks = settings.hooks || {};
   const postToolUse = Array.isArray(settings.hooks.PostToolUse) ? settings.hooks.PostToolUse : [];
-  const existingMatchers = new Set(postToolUse.map(e => e.matcher));
-  const missingMatchers  = NEW_MATCHERS.filter(m => !existingMatchers.has(m.matcher));
-  if (missingMatchers.length > 0) {
+  const existingKeys = new Set(postToolUse.flatMap(entryKeys));
+  const missingMatchers = NEW_MATCHERS.filter(m => entryKeys(m).some(k => !existingKeys.has(k)));
+  const obsoleteCount   = postToolUse.filter(isObsoleteEntry).length;
+  if (missingMatchers.length > 0 || obsoleteCount > 0) {
+    const reasons = [];
+    if (missingMatchers.length > 0) reasons.push(`add matchers: ${missingMatchers.map(m => m.matcher).join(", ")}`);
+    if (obsoleteCount > 0)          reasons.push(`remove obsolete TeamCreate entries: ${obsoleteCount}`);
     plan.files.push({
       action: "patch",
       path: settingsFn,
-      reason: `add matchers: ${missingMatchers.map(m => m.matcher).join(", ")}`,
+      reason: reasons.join(" / "),
       _missingMatchers: missingMatchers,
     });
   }
@@ -291,8 +309,13 @@ function applyPlan(plan, dryRun) {
         current.hooks.PostToolUse = Array.isArray(current.hooks.PostToolUse) ? current.hooks.PostToolUse : [];
         // backup
         fs.copyFileSync(f.path, f.path + BACKUP_SUFFIX);
-        // append missing matchers
-        for (const m of f._missingMatchers) current.hooks.PostToolUse.push(m);
+        // remove obsolete TeamCreate entries (v2.1.178 で発火しなくなった死配線)
+        current.hooks.PostToolUse = current.hooks.PostToolUse.filter(e => !isObsoleteEntry(e));
+        // append missing matchers (matcher+command 複合キーで存在判定)
+        const keys = new Set(current.hooks.PostToolUse.flatMap(entryKeys));
+        for (const m of f._missingMatchers) {
+          if (entryKeys(m).some(k => !keys.has(k))) current.hooks.PostToolUse.push(m);
+        }
         // atomic write
         const tmp = f.path + ".tmp." + process.pid;
         fs.writeFileSync(tmp, JSON.stringify(current, null, 2) + "\n", "utf8");

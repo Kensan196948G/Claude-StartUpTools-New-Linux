@@ -140,7 +140,7 @@
         ]
       },
       {
-        "matcher": "TeamCreate",
+        "matcher": "Agent",
         "hooks": [
           {
             "type": "command",

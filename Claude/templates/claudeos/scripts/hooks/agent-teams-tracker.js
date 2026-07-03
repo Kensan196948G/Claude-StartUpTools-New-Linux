@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 // PostToolUse hook (ClaudeOS v9.0)
-// Agent Teams (TeamCreate / SendMessage) の使用を state.json に記録する。
+// Agent Teams (Agent named-spawn / SendMessage) の使用を state.json に記録する。
+//
+// v2.1.178 対応: TeamCreate / TeamDelete ツールは廃止された。セッション全体が
+// 暗黙の 1 チームとなり、teammate は Agent ツールの name パラメータ付き呼び出しで
+// 起動される。本 hook は Agent(name 付き) を teammate spawn として記録する。
+// TeamCreate 分岐は旧 CLI 後方互換のため残置。
 //
 // 設計方針:
 //  - experimental API のため tool_input の構造変化に強い fail-soft 設計
@@ -66,7 +71,13 @@ function main() {
   const toolInput = input.tool_input || input.toolInput || (input.tool && input.tool.input) || {};
 
   // 対象 tool でなければ何もしない
-  if (toolName !== "TeamCreate" && toolName !== "SendMessage") {
+  if (toolName !== "TeamCreate" && toolName !== "SendMessage" && toolName !== "Agent") {
+    process.exit(0);
+  }
+  // Agent は name パラメータ付き (= teammate spawn) のみ対象。
+  // 無名 Agent 呼び出しは通常のサブエージェントで usage-tracker.js が担当。
+  const teammateName = typeof toolInput.name === "string" ? toolInput.name.trim() : "";
+  if (toolName === "Agent" && !teammateName) {
     process.exit(0);
   }
 
@@ -80,12 +91,12 @@ function main() {
   if (!state.agent_teams_usage) {
     state.agent_teams_usage = {
       session_start_at: state.execution?.current_session_start_at || new Date().toISOString(),
-      current_session: { team_create_count: 0, send_message_count: 0, teammates: [], patterns_used: [] },
+      current_session: { team_create_count: 0, teammate_spawn_count: 0, send_message_count: 0, teammates: [], patterns_used: [] },
       history: [],
     };
   }
   if (!state.agent_teams_usage.current_session) {
-    state.agent_teams_usage.current_session = { team_create_count: 0, send_message_count: 0, teammates: [], patterns_used: [] };
+    state.agent_teams_usage.current_session = { team_create_count: 0, teammate_spawn_count: 0, send_message_count: 0, teammates: [], patterns_used: [] };
   }
   if (!Array.isArray(state.agent_teams_usage.history)) {
     state.agent_teams_usage.history = [];
@@ -95,11 +106,12 @@ function main() {
   const sessionStartAt = state.execution?.current_session_start_at;
   if (sessionStartAt && state.agent_teams_usage.session_start_at !== sessionStartAt) {
     const prev = state.agent_teams_usage.current_session;
-    if (prev && (prev.team_create_count > 0 || prev.send_message_count > 0)) {
+    if (prev && (prev.team_create_count > 0 || prev.teammate_spawn_count > 0 || prev.send_message_count > 0)) {
       state.agent_teams_usage.history.push({
         date: (state.agent_teams_usage.session_start_at || "").slice(0, 10),
         session_start_at: state.agent_teams_usage.session_start_at,
         team_create_count: prev.team_create_count,
+        teammate_spawn_count: prev.teammate_spawn_count || 0,
         send_message_count: prev.send_message_count,
         patterns_used: prev.patterns_used || [],
         teammates_count: (prev.teammates || []).length,
@@ -109,7 +121,7 @@ function main() {
       }
     }
     state.agent_teams_usage.session_start_at = sessionStartAt;
-    state.agent_teams_usage.current_session  = { team_create_count: 0, send_message_count: 0, teammates: [], patterns_used: [] };
+    state.agent_teams_usage.current_session  = { team_create_count: 0, teammate_spawn_count: 0, send_message_count: 0, teammates: [], patterns_used: [] };
   }
 
   const cur = state.agent_teams_usage.current_session;
@@ -133,6 +145,20 @@ function main() {
       cur.patterns_used.push(pattern);
     }
     console.log(`[agent-teams-tracker] TeamCreate recorded: team="${teamName}" teammates=${teammates.length} pattern=${pattern || "n/a"}`);
+  } else if (toolName === "Agent") {
+    // v2.1.178+: 暗黙 1 チームへの named teammate spawn
+    cur.teammate_spawn_count = (cur.teammate_spawn_count || 0) + 1;
+    cur.teammates.push({
+      team:          "(implicit)",
+      name:          teammateName,
+      subagent_type: toolInput.subagent_type || toolInput.agentType || "",
+      spawned_at:    now,
+    });
+    const pattern = estimatePattern(state.phase || state.execution?.phase);
+    if (pattern && !cur.patterns_used.includes(pattern)) {
+      cur.patterns_used.push(pattern);
+    }
+    console.log(`[agent-teams-tracker] Teammate spawn recorded: name="${teammateName}" type=${toolInput.subagent_type || "n/a"} pattern=${pattern || "n/a"}`);
   } else if (toolName === "SendMessage") {
     cur.send_message_count = (cur.send_message_count || 0) + 1;
     const target = toolInput.to || toolInput.target || "(unknown)";

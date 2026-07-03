@@ -88,10 +88,15 @@ claude agents
 ### 計測 hook
 
 `.claude/claudeos/scripts/hooks/agent-teams-tracker.js` が **PostToolUse** で
-`TeamCreate` / `SendMessage` の呼び出しを検出し、`state.agent_teams_usage` に記録する。
+`Agent`（`name` パラメータ付き = teammate spawn）/ `SendMessage` の呼び出しを検出し、
+`state.agent_teams_usage` に記録する。
+
+> **v2.1.178 変更**: `TeamCreate` / `TeamDelete` ツールは廃止。セッション全体が暗黙の
+> 1 チームになり、teammate は `Agent` ツールの `name` パラメータで直接 spawn する。
+> 旧 `team_create_count` は後方互換のため残置（履歴・旧 CLI 用）。
 
 記録項目:
-- `current_session.team_create_count` / `send_message_count`
+- `current_session.teammate_spawn_count` / `send_message_count`（旧 `team_create_count` も保持）
 - `current_session.teammates[]`（spawn された teammate 名と subagent_type）
 - `current_session.patterns_used[]`（現フェーズから推定: Build→A / Verify→B / Monitor→C）
 - `history[]`（過去 50 セッション分の集計）
@@ -110,7 +115,7 @@ node scripts/dashboards/serve-dashboard.js
 - `GET /api/agent-teams` → `state.agent_teams_usage` の集計を返す
 
 Agent Teams タブ内の **Agent Teams Activity バッジ** で以下を 30 秒ごとに自動更新表示:
-- 現セッションの TeamCreate / SendMessage 回数
+- 現セッションの Teammate spawn / SendMessage 回数
 - 現セッションで使用されたパターン
 - 直近 7 日のパターン別使用回数
 

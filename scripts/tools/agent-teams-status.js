@@ -129,8 +129,8 @@ function render() {
 
   if (!atu) {
     console.log(`${ICON.warn} まだ計測データがありません。`);
-    console.log(`   ${ICON.bullet} Claude が TeamCreate / SendMessage を実行すると記録が始まります`);
-    console.log(`   ${ICON.bullet} hook 登録確認: .claude/settings.json (PostToolUse > matcher: TeamCreate / SendMessage)`);
+    console.log(`   ${ICON.bullet} Claude が Agent (name 付き teammate spawn) / SendMessage を実行すると記録が始まります`);
+    console.log(`   ${ICON.bullet} hook 登録確認: .claude/settings.json (PostToolUse > matcher: Agent / SendMessage)`);
     console.log("");
     return;
   }
@@ -139,7 +139,7 @@ function render() {
   const cur = atu.current_session || {};
   console.log(`${ICON.chart} 現セッション`);
   console.log(`   ${ICON.bullet} セッション開始    : ${atu.session_start_at || "—"} (${relTime(atu.session_start_at)})`);
-  console.log(`   ${ICON.team} TeamCreate       : ${pad(cur.team_create_count || 0, 4)} 回`);
+  console.log(`   ${ICON.team} TeammateSpawn    : ${pad((cur.teammate_spawn_count || 0) + (cur.team_create_count || 0), 4)} 回`);
   console.log(`   ${ICON.msg} SendMessage      : ${pad(cur.send_message_count || 0, 4)} 回`);
   const patterns = cur.patterns_used || [];
   console.log(`   ${ICON.pattern} 使用パターン     : ${patterns.length ? patterns.join(", ") : "—"}`);
@@ -172,12 +172,12 @@ function render() {
     let totalTC = 0, totalSM = 0;
     recent.forEach(h => {
       (h.patterns_used || []).forEach(p => { if (patternCount[p] !== undefined) patternCount[p] += 1; });
-      totalTC += h.team_create_count  || 0;
+      totalTC += (h.team_create_count || 0) + (h.teammate_spawn_count || 0);
       totalSM += h.send_message_count || 0;
     });
 
     console.log(`${ICON.chart} 直近 7 日サマリ (${recent.length} sessions / 履歴総数 ${hist.length})`);
-    console.log(`   ${ICON.team} TeamCreate 合計  : ${totalTC} 回`);
+    console.log(`   ${ICON.team} TeammateSpawn 合計: ${totalTC} 回`);
     console.log(`   ${ICON.msg} SendMessage 合計 : ${totalSM} 回`);
     console.log(`   ${ICON.pattern} パターン別       : A=${patternCount.A}  B=${patternCount.B}  C=${patternCount.C}`);
     console.log("");
@@ -191,7 +191,7 @@ function render() {
     hist.slice().reverse().forEach(h => {
       console.log(
         `   ${pad(h.date || "—", 12)} ${pad((h.patterns_used || []).join(",") || "—", 12)} ` +
-        `${pad(h.team_create_count || 0, 5)} ${pad(h.send_message_count || 0, 5)} ` +
+        `${pad((h.team_create_count || 0) + (h.teammate_spawn_count || 0), 5)} ${pad(h.send_message_count || 0, 5)} ` +
         `${pad(h.teammates_count || 0, 10)} ${h.session_start_at || "—"}`
       );
     });
