@@ -38,11 +38,13 @@ const SOURCE_FILES = {
   "session-start.js":       path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "hooks", "session-start.js"),
   "session-end.js":         path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "hooks", "session-end.js"),
   "measure-kpi.js":         path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "tools", "measure-kpi.js"),
+  "audit-trail.js":         path.join(__dirname, "..", "..", "Claude", "templates", "claudeos", "scripts", "hooks", "audit-trail.js"),
 };
 
 // settings.json に追加する PostToolUse matcher エントリ
 // v2.1.178: TeamCreate 廃止に伴い、teammate spawn は Agent(name 付き) で検出する
 const TRACKER_COMMAND = "node .claude/claudeos/scripts/hooks/agent-teams-tracker.js";
+const AUDIT_COMMAND   = "node .claude/claudeos/scripts/hooks/audit-trail.js";
 const NEW_MATCHERS = [
   {
     matcher: "Agent",
@@ -51,6 +53,10 @@ const NEW_MATCHERS = [
   {
     matcher: "SendMessage",
     hooks: [{ type: "command", command: TRACKER_COMMAND }],
+  },
+  {
+    matcher: "Bash|mcp__.*",
+    hooks: [{ type: "command", command: AUDIT_COMMAND }],
   },
 ];
 
@@ -253,6 +259,15 @@ function computePlan(project) {
     plan.files.push({ action: "copy", path: kpiDest, src: kpiSrc, reason: "new file" });
   } else if (fs.readFileSync(kpiDest, "utf8") !== fs.readFileSync(kpiSrc, "utf8")) {
     plan.files.push({ action: "replace", path: kpiDest, src: kpiSrc, reason: "content differs (will be overwritten)" });
+  }
+
+  // 4.5. audit-trail.js (外部書込操作の audit 記録 hook)
+  const auditSrc  = SOURCE_FILES["audit-trail.js"];
+  const auditDest = path.join(hooksDir, "audit-trail.js");
+  if (!fs.existsSync(auditDest)) {
+    plan.files.push({ action: "copy", path: auditDest, src: auditSrc, reason: "new file" });
+  } else if (fs.readFileSync(auditDest, "utf8") !== fs.readFileSync(auditSrc, "utf8")) {
+    plan.files.push({ action: "replace", path: auditDest, src: auditSrc, reason: "content differs (will be overwritten)" });
   }
 
   // 5. settings.json (PostToolUse matcher 差分マージ)

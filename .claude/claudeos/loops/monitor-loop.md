@@ -12,6 +12,7 @@
 - `.claude/claudeos/data/reasoning-bank.json` の failure / success パターン
 - Memory MCP の当該プロジェクト記録
 - `state.json` の `learning.failure_patterns` / `blocked_issues`
+- `.claude/claudeos/data/audit-log.jsonl` の前セッション外部操作記録（gh/git/MCP 書込）
 
 却下済み・失敗済みの案は再提案しない。突合結果に反する計画を立てる場合は、
 その理由を Session Report の Risks に 1 行で記録する。
