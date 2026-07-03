@@ -6,9 +6,9 @@
 #   多重起動防止: supervisor/flock。tmux は --tmux 明示時のみ fallback として使う。
 #
 # 使い方 (menu.sh から):
-#   start-claude.sh --project P --foreground [--duration 180] [--dry-run]          # L1: 新規端末タブで Claude TUI
-#   start-claude.sh --project P --background [--duration 180] [--dry-run]          # S1: supervisor BG
-#   start-claude.sh --project P --safe-mode  [--duration 180] [--tmux] [--dry-run] # 診断: hooks/MCP 無効の素起動
+#   start-claude.sh --project P --foreground [--duration 300] [--dry-run]          # L1: 新規端末タブで Claude TUI
+#   start-claude.sh --project P --background [--duration 300] [--dry-run]          # S1: supervisor BG
+#   start-claude.sh --project P --safe-mode  [--duration 300] [--tmux] [--dry-run] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
 # ============================================================
 
@@ -148,9 +148,9 @@ session__running_count() {
 session__enforce_launch_limits() {
   local duration="$1"
   local max_sessions="${CCSU_MAX_SESSIONS:-2}"
-  local max_minutes="${CCSU_MAX_SESSION_MINUTES:-180}"
+  local max_minutes="${CCSU_MAX_SESSION_MINUTES:-300}"
 
-  [[ "$max_minutes" =~ ^[0-9]+$ ]] || max_minutes=180
+  [[ "$max_minutes" =~ ^[0-9]+$ ]] || max_minutes=300
   [[ "$max_sessions" =~ ^[0-9]+$ ]] || max_sessions=2
 
   if (( max_minutes > 0 && duration > max_minutes )); then
@@ -326,7 +326,7 @@ main() {
   done
 
   if [[ -z "$duration" ]]; then
-    duration="$(config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '180')")"
+    duration="$(config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '300')")"
   fi
   [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください: $duration"; exit 1; }
   session__enforce_launch_limits "$duration" || exit 1

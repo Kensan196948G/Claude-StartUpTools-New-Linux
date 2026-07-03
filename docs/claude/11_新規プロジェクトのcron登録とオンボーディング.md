@@ -64,16 +64,16 @@ cron スロットの割り当ては `bin/cron-schedule.sh bulk-register` が担�
 
 ```bash
 # まず DRY-RUN で割り当て計画を確認（--apply なし）
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --duration 300 --dow 1,2,3,4,5,6
 
 # 計画に問題なければ --apply で実登録（登録済みは自動 skip）
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6 --apply
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --duration 300 --dow 1,2,3,4,5,6 --apply
 ```
 
-- `--start 6 --spacing 3 --duration 180`: 06:00 を起点に 3 時間間隔（= 1 セッション 180 分と重複しない最小間隔）。
+- `--start 6 --spacing 5 --duration 300`: 06:00 を起点に 5 時間間隔（= 1 セッション 300 分と重複しない最小間隔。`--spacing` 省略時は duration から自動導出）。
 - `--dow 1,2,3,4,5,6`: 月〜土。0 を加えると日曜も使う。
 - 未登録のみ対象にしたい場合は `--unmanaged-only`（cron 登録済み / supervisor 管理下を除外）。
-- 登録上限は `config.json` の `cron.maxProjectsPerDay=2` / `cron.maxDurationMinutes=180`。3件目/日と180分超は拒否する。
+- 登録上限は `config.json` の `cron.maxProjectsPerDay=2` / `cron.maxDurationMinutes=300`。3件目/日と300分超は拒否する。
 - `run-now` / `launch --project` は cron 登録済みプロジェクトだけ実行できる。未登録プロジェクトの単発実行は禁止。
 - 利用クレジット枯渇時は `bulk-register --apply` と `launch --all --yes` を使わず、登録済み対象の単発 `run-now --duration 60` へ落とす。
 
@@ -84,12 +84,12 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --d
 `bulk-register` は **1日2プロジェクト × 曜日 round-robin**で負荷分散する。割り当て式は
 `hour = start_hour + slot * spacing`、`slot` は 0 または 1 のみ。1日3件目は作らない。
 
-省クレジット既定（`--start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6`）の場合:
+標準既定（`--start 6 --spacing 5 --duration 300 --dow 1,2,3,4,5,6`）の場合:
 
 | スロット | 時刻 | 月 | 火 | 水 | 木 | 金 | 土 |
 |---|---|---|---|---|---|---|---|
 | slot 0 | 06:00 | ● | ● | ● | ● | ● | ● |
-| slot 1 | 09:00 | ● | ● | ● | ● | ● | ● |
+| slot 1 | 11:00 | ● | ● | ● | ● | ● | ● |
 
 ➡️ **容量 = 2 スロット × 6 曜日 = 12 枠**。13 番目以降のプロジェクトは
 `⚠️ 容量超過(12件/週) → skip` で**黙って登録されない**ので、ログを必ず確認すること。
@@ -101,7 +101,7 @@ bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --d
 | 日曜も使う | `--dow 0,1,2,3,4,5,6` | 14 枠 | 週 7 日稼働になる |
 | 優先度で間引く | `localExcludes` に低優先度 repo を追加 | 可変 | 実行対象を減らす |
 
-> 12 枠は「1日2プロジェクト・各3h」を守る運用上限。プロジェクト数が増え続ける場合は、
+> 12 枠は「1日2プロジェクト・各5h」を守る運用上限。プロジェクト数が増え続ける場合は、
 > 優先度の低いプロジェクトを `localExcludes` で間引くか、週次ローテーションを手動で組み替える。
 
 ---
@@ -154,8 +154,8 @@ bash -c 'source lib/config-loader.sh; config_project_list | grep <NAME>'
 # 3. 除外対象なら localExcludes に追加（config/config.json）
 
 # 4. cron スロットを割り当て（DRY-RUN → --apply）
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6        # 計画確認
-bash bin/cron-schedule.sh bulk-register --start 6 --spacing 3 --duration 180 --dow 1,2,3,4,5,6 --apply # 実登録
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --duration 300 --dow 1,2,3,4,5,6        # 計画確認
+bash bin/cron-schedule.sh bulk-register --start 6 --spacing 5 --duration 300 --dow 1,2,3,4,5,6 --apply # 実登録
 
 # 5. cron に入ったか確認
 crontab -l | grep 'project=<NAME> '

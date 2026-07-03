@@ -127,10 +127,10 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *'\%Y'* ]]
 }
 
-@test "cron__add: duration が 180 分を超えると拒否" {
-  run cron__add MyProj 181 21:00 1
+@test "cron__add: duration が 300 分を超えると拒否" {
+  run cron__add MyProj 301 21:00 1
   [ "$status" -ne 0 ]
-  [[ "$output" == *"上限 180m"* ]]
+  [[ "$output" == *"上限 300m"* ]]
 }
 
 @test "cron__add: 同一曜日は 2 プロジェクトまで" {

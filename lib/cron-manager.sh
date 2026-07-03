@@ -26,7 +26,7 @@ CRON_ENTRY_PREFIX="${CCSU_CRON_PREFIX:-CLAUDEOS}"
 CRON_LAUNCHER_PATH="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
 CRON_LOGS_DIR="${CCSU_CRON_LOGS_DIR:-$HOME/.claudeos/logs}"
 CRONTAB_BIN="${CCSU_CRONTAB_BIN:-crontab}"
-CRON_MAX_DURATION_MIN="${CCSU_CRON_MAX_DURATION_MIN:-$(json_get "$CCSU_CONFIG_PATH" '.cron.maxDurationMinutes' '180')}"
+CRON_MAX_DURATION_MIN="${CCSU_CRON_MAX_DURATION_MIN:-$(json_get "$CCSU_CONFIG_PATH" '.cron.maxDurationMinutes' '300')}"
 CRON_MAX_PROJECTS_PER_DAY="${CCSU_CRON_MAX_PROJECTS_PER_DAY:-$(json_get "$CCSU_CONFIG_PATH" '.cron.maxProjectsPerDay' '2')}"
 
 # ------------------------------------------------------------
@@ -139,7 +139,7 @@ cron__list() {
     line="${lines[$i]}"
     if [[ "$line" =~ ^[[:space:]]*#[[:space:]]*${CRON_ENTRY_PREFIX}:([A-Za-z0-9_-]+)[[:space:]]*(.*)$ ]]; then
       id="${BASH_REMATCH[1]}"; meta="${BASH_REMATCH[2]}"
-      project=""; duration="180"; created=""
+      project=""; duration="300"; created=""
       [[ "$meta" =~ project=([^[:space:]]+) ]]  && project="${BASH_REMATCH[1]}"
       [[ "$meta" =~ duration=([0-9]+) ]]        && duration="${BASH_REMATCH[1]}"
       [[ "$meta" =~ created=([^[:space:]]+) ]]  && created="${BASH_REMATCH[1]}"

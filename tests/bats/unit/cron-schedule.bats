@@ -49,10 +49,10 @@ teardown() { _bats_common_teardown; }
   [ "$status" -ne 0 ]
 }
 
-@test "add: デフォルト duration は 180" {
+@test "add: デフォルト duration は 300" {
   bash "$SCRIPT" add --project MyProj --time 08:00 --dow 1
   run cat "$CRON_STORE"
-  [[ "$output" == *"duration=180"* ]]
+  [[ "$output" == *"duration=300"* ]]
 }
 
 @test "list: 登録済みを曜日ラベル付きで表示" {

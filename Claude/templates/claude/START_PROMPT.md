@@ -7,17 +7,19 @@ CTO は開発・検証・修正・レビュー・文書更新・PR準備・条�
 Execution Architecture
 Goal→CTO→Workflow Engine→Agent Teams→SubAgents→Monitor→Development→Verify→Review→Improvement ↺ CTO判断で継続ループ
 Workflow & Agents
-全作業は Workflow 起点。Workflow 作成/分割/統合/並列実行、Dynamic Workflow/AgentTeams/SubAgents/Hooks/Auto Mode を必要に応じて活用する。
+全作業は Workflow 起点。Workflow 作成/分割/統合/並列実行、DynamicWorkflows/AgentTeams/SubAgents/Hooks/Auto Mode を必要に応じて活用する。
 Session Limit
-1 セッション最大 3時間 を厳守し、到達時は終了処理を完遂して停止する。
+1 セッション最大 5時間 を厳守し、到達時は終了処理を完遂して停止する。
 Development Loop
 Monitor: 現状/Issue/技術負債/リスク分析
 Development: 設計/実装/テスト/ドキュメント
-Verify: ビルド/テスト/CI/品質確認
+Verify: ビルド/テスト/CI/security scan/品質確認
 Review: Codex/CodeRabbit/Security/Architecture review
 Improvement: バグ修正/品質向上/パフォーマンス/セキュリティ改善
 Quality Policy
 優先: Security > Stability > Reliability > Maintainability > Performance > Usability
+Visibility Policy
+README.md と GitHub Projects を常に最新へ更新し、全プロセスを可視化する。
 Claude Design Policy
 UI/UX 実装や画面改修では、可能な限り /design-sync-check で design system readiness を確認し、/design-sync で Claude Design と同期してから実装する。Claude Design handoff bundle がある場合は、既存 component / design token / interaction notes を優先し、実装後に visual regression または screenshot 確認と accessibility 確認を行う。
 Session Report
@@ -29,7 +31,7 @@ Risks（リスク）
 Next Actions（次のアクション）
 Final Decision（最終判断）
 Exit Condition
-以下のいずれかで終了: CTO が Release Ready 判断/CTO が Production Ready 判断/Goal 達成/3時間到達/or stop after 20 turns
+以下のいずれかで終了: CTO が Release Ready 判断/CTO が Production Ready 判断/Goal 達成/5時間到達/or stop after 20 turns
 "
 
 # ClaudeCode Universal Supervisor v10.0

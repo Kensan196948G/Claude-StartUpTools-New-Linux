@@ -74,16 +74,16 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"supervisor 起動"* ]]
 }
 
-@test "start-claude: duration 未指定は supervisor 既定 180m を使う" {
+@test "start-claude: duration 未指定は supervisor 既定 300m を使う" {
   run bash "$SCRIPT" --project MyProj --background
   [ "$status" -eq 0 ]
-  grep -q "__run MyProj 180" "$TEST_TEMP/setsid.log"
+  grep -q "__run MyProj 300" "$TEST_TEMP/setsid.log"
 }
 
-@test "start-claude: duration 180m 超は拒否する" {
-  run bash "$SCRIPT" --project MyProj --background --duration 181
+@test "start-claude: duration 300m 超は拒否する" {
+  run bash "$SCRIPT" --project MyProj --background --duration 301
   [ "$status" -ne 0 ]
-  [[ "$output" == *"上限 180m"* ]]
+  [[ "$output" == *"上限 300m"* ]]
 }
 
 @test "start-claude: 実行中セッションが2件なら新規起動を拒否する" {
