@@ -88,6 +88,15 @@
             "command": "node .claude/claudeos/scripts/hooks/agent-teams-tracker.js"
           }
         ]
+      },
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/claudeos/scripts/hooks/audit-trail.js"
+          }
+        ]
       }
     ],
     "TeammateIdle": [
