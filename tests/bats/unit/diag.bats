@@ -159,7 +159,7 @@ teardown() { _bats_common_teardown; }
 @test "diag-agent-teams: state の count を表示" {
   run bash "$LX/diag-agent-teams.sh"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"TeamCreate=2"* ]]
+  [[ "$output" == *"TeammateSpawn=2"* ]]
 }
 
 @test "diag-worktree: exit 0" {

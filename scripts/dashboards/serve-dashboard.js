@@ -861,7 +861,7 @@ function getActiveCronProject() {
 
 /**
  * Agent Teams Activity: state.agent_teams_usage を返す。
- * agent-teams-tracker.js hook が記録した TeamCreate / SendMessage 使用統計。
+ * agent-teams-tracker.js hook が記録した Teammate spawn / SendMessage 使用統計。
  * 既存の getAgentAndEventData() (session 由来) とは別データソース。
  */
 function getAgentTeamsActivity() {
@@ -889,8 +889,9 @@ function getAgentTeamsActivity() {
       available: true,
       session_start_at: atu.session_start_at || null,
       current: {
-        team_create_count:  cur.team_create_count  || 0,
-        send_message_count: cur.send_message_count || 0,
+        team_create_count:    cur.team_create_count    || 0,
+        teammate_spawn_count: cur.teammate_spawn_count || 0,
+        send_message_count:   cur.send_message_count   || 0,
         patterns_used:      cur.patterns_used      || [],
         last_activity_at:   cur.last_activity_at   || null,
         teammates:          (cur.teammates || []).slice(-10),  // 直近 10 件

@@ -16,10 +16,11 @@ main() {
   log_info "Agent Teams ランタイム"
   local state="${CCSU_STATE_FILE:-$CCSU_ROOT/state.json}"
   if [[ -f "$state" ]]; then
-    local tc sc
+    local tc ts sc
     tc="$(json_get "$state" '.agent_teams_usage.current_session.team_create_count' '0')"
+    ts="$(json_get "$state" '.agent_teams_usage.current_session.teammate_spawn_count' '0')"
     sc="$(json_get "$state" '.agent_teams_usage.current_session.send_message_count' '0')"
-    log_ok "現セッション: TeamCreate=$tc / SendMessage=$sc"
+    log_ok "現セッション: TeammateSpawn=$((tc + ts)) / SendMessage=$sc"
     local js="$CCSU_ROOT/scripts/tools/agent-teams-status.js"
     if [[ -f "$js" ]] && has_cmd node; then
       printf '  %s-- agent-teams-status.js --%s\n' "$C_CYAN" "$C_RESET"
