@@ -56,6 +56,7 @@ CTO優先順位テーブル (CLAUDE.md §5.1) の優先度4: /goal の Goal 直�
 ■ Stop Conditions
 正常終了:
 - MVP 完成条件全達成・CI 成功・PR 作成済み
+- 上記の測定可能基準を満たした時点で、残り時間・残ターンがあっても直ちに終了処理へ進んでよい（早期終了）
 異常終了（Failure）:
 - 修復試行5回到達 → Blocked + Issue起票
 - Critical 脆弱性未解消 → 停止 + P1 Issue起票

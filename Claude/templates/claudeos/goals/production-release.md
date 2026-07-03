@@ -55,6 +55,7 @@ CTO優先順位テーブル (CLAUDE.md §5.1) の優先度4（Release フェー�
 ■ Stop Conditions
 正常終了:
 - リリース条件全達成・deploy.ready=true 設定完了・人間サインオフ待ち状態
+- 上記の測定可能基準を満たした時点で、残り時間・残ターンがあっても直ちに終了処理へ進んでよい（早期終了）
 異常終了（Failure）:
 - Critical 脆弱性検出 → 即停止 + P1 Issue起票
 - STABLE N=5 未達で時間切れ → Draft PR + 再開ポイント記録

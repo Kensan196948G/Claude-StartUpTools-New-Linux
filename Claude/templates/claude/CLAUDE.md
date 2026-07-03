@@ -266,22 +266,26 @@ CTO は固定ループで動作しない。以下の優先順位で現状を評�
 
 ### 6.1 ロール定義
 
-| ロール | 責務 |
-|---|---|
-| CTO | 最終判断、優先順位、継続可否、5 時間終了時の最終判断 |
-| ProductManager | Issue 生成、要件整理 |
-| Architect | アーキテクチャ設計、責務分離、構造改善 |
-| Developer | 実装、修正、修復 |
-| Reviewer | Codex レビュー、コード品質、保守性、差分確認 |
-| Debugger | 原因分析、Codex rescue 実行 |
-| QA | テスト、回帰確認、品質評価 |
-| Security | secrets、権限、脆弱性確認、リスク評価 |
-| DevOps | CI/CD、PR、Projects、Deploy Gate 制御 |
-| Analyst | KPI 分析、メトリクス評価 |
-| EvolutionManager | 改善提案、自己進化管理 |
-| ReleaseManager | リリース管理、マージ判断 |
-| CMDB-Agent | 構成アイテム台帳・依存関係マップ・変更影響分析 |
-| Audit-Agent | 変更証跡収集・ISO/J-SOX 規格準拠確認・監査レポート |
+| ロール | 責務 | 提案権 |
+|---|---|---|
+| CTO | 最終判断、優先順位、継続可否、5 時間終了時の最終判断 | ✅ 全領域の新規ワークストリーム提案可 |
+| ProductManager | Issue 生成、要件整理 | ✅ 新規ワークストリーム提案可（Issue 起点） |
+| Architect | アーキテクチャ設計、責務分離、構造改善 | ✅ 新規ワークストリーム提案可（設計起点） |
+| Developer | 実装、修正、修復 | 担当領域内の改善提案のみ |
+| Reviewer | Codex レビュー、コード品質、保守性、差分確認 | 担当領域内の改善提案のみ |
+| Debugger | 原因分析、Codex rescue 実行 | 担当領域内の改善提案のみ |
+| QA | テスト、回帰確認、品質評価 | 担当領域内の改善提案のみ |
+| Security | secrets、権限、脆弱性確認、リスク評価 | ✅ 新規ワークストリーム提案可（リスク起点） |
+| DevOps | CI/CD、PR、Projects、Deploy Gate 制御 | 担当領域内の改善提案のみ |
+| Analyst | KPI 分析、メトリクス評価 | 担当領域内の改善提案のみ |
+| EvolutionManager | 改善提案、自己進化管理 | ✅ 新規ワークストリーム提案可（改善起点） |
+| ReleaseManager | リリース管理、マージ判断 | 担当領域内の改善提案のみ |
+| CMDB-Agent | 構成アイテム台帳・依存関係マップ・変更影響分析 | 担当領域内の改善提案のみ |
+| Audit-Agent | 変更証跡収集・ISO/J-SOX 規格準拠確認・監査レポート | 担当領域内の改善提案のみ |
+
+> 提案は Issue 下書きとして起票し、CTO 判断または Session Report の
+> 「人間決裁待ちキュー」へ接続する。提案権のないロールの改善案は
+> 担当領域内で EvolutionManager 経由で集約する。
 
 ### 6.2 Agent Teams パターン（v9.0）
 
