@@ -149,6 +149,52 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"GroupC/SubE"* ]]
 }
 
+@test "config_project_groups: 未設定なら空 / 設定なら列挙" {
+  printf '{ "projects": "%s" }\n' "$TEST_TEMP" > "$TEST_TEMP/pg-none.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/pg-none.json"
+  run config_project_groups
+  [ -z "$output" ]
+  printf '{ "projectGroups": ["Mirai-Project","Mirai-DX-Project"] }\n' > "$TEST_TEMP/pg-set.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/pg-set.json"
+  run config_project_groups
+  [[ "$output" == *"Mirai-Project"* ]]
+  [[ "$output" == *"Mirai-DX-Project"* ]]
+}
+
+@test "config_project_list: projectGroups 設定時はグループ配下のみを group/sub で列挙" {
+  local base="$TEST_TEMP/pg"
+  mkdir -p "$base/Mirai/AppA/.git" "$base/Mirai/AppB/.git" "$base/MiraiDX/AppC/.git"
+  mkdir -p "$base/Other/.git" "$base/Loose/.git"    # スコープ外の単独リポジトリ
+  printf '{ "projects": "%s", "projectGroups": ["Mirai","MiraiDX"] }\n' "$base" > "$TEST_TEMP/pg-config.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/pg-config.json"
+  run config_project_list
+  [[ "$output" == *"Mirai/AppA"* ]]
+  [[ "$output" == *"Mirai/AppB"* ]]
+  [[ "$output" == *"MiraiDX/AppC"* ]]
+  [[ "$output" != *"Other"* ]]
+  [[ "$output" != *"Loose"* ]]
+}
+
+@test "config_project_list: projectGroups はグループ自身の .git を無視して配下を列挙" {
+  local base="$TEST_TEMP/pg2"
+  mkdir -p "$base/Mirai/.git" "$base/Mirai/AppA/.git"   # グループ自身にも .git
+  printf '{ "projects": "%s", "projectGroups": ["Mirai"] }\n' "$base" > "$TEST_TEMP/pg2-config.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/pg2-config.json"
+  run config_project_list
+  [[ "$output" == *"Mirai/AppA"* ]]
+  [[ "$output" != *$'\n'"Mirai"$'\n'* ]]   # "Mirai" 単独は出ない
+}
+
+@test "config_project_list: projectGroups + localExcludes で個別サブを除外できる" {
+  local base="$TEST_TEMP/pg5"
+  mkdir -p "$base/Mirai/AppA/.git" "$base/Mirai/AppB/.git"
+  printf '{ "projects": "%s", "projectGroups": ["Mirai"], "localExcludes": ["Mirai/AppB"] }\n' "$base" > "$TEST_TEMP/pg5.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/pg5.json"
+  run config_project_list
+  [[ "$output" == *"Mirai/AppA"* ]]
+  [[ "$output" != *"Mirai/AppB"* ]]
+}
+
 # --- 検証コマンド自動推定 (config_verify_command / config_infer_*) ---
 
 @test "config_infer_test_command: package.json script→npm test" {
