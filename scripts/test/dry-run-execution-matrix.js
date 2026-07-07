@@ -35,7 +35,7 @@ function makeFixture() {
   fs.mkdirSync(path.join(demo, ".git"), { recursive: true });
   fs.mkdirSync(path.join(clean, ".git"), { recursive: true });
   fs.mkdirSync(path.join(demo, ".claude", "claudeos", "scripts", "hooks"), { recursive: true });
-  writeJson(path.join(demo, "package.json"), { name: "demo", version: "0.0.0" });
+  writeJson(path.join(demo, "package.json"), { name: "demo", version: "0.0.0", scripts: { start: "node ." } });
   writeJson(path.join(demo, ".claude", "settings.json"), { hooks: {}, env: {} });
   writeFile(path.join(demo, ".claude", "claudeos", "scripts", "hooks", "session-start.js"), "\n", 0o644);
   writeFile(path.join(demo, ".claude", "claudeos", "scripts", "hooks", "agent-teams-tracker.js"), "\n", 0o644);
@@ -121,6 +121,11 @@ function buildMatrix(fx) {
     command("cron remove dry-run", "bash", ["bin/cron-schedule.sh", "--dry-run", "remove", "--id", "dummy"]),
     command("cron remove-all dry-run", "bash", ["bin/cron-schedule.sh", "--dry-run", "remove-all"]),
     command("cron bulk-register default dry-run", "bash", ["bin/cron-schedule.sh", "bulk-register", "--duration", "1"]),
+    command("systemd status read-only", "bash", ["bin/systemd-control.sh", "status"]),
+    command("systemd scan read-only", "bash", ["bin/systemd-control.sh", "scan"]),
+    command("systemd list read-only", "bash", ["bin/systemd-control.sh", "list"]),
+    command("systemd register dry-run", "bash", ["bin/systemd-control.sh", "--dry-run", "register", "Demo"]),
+    command("systemd generate dry-run", "bash", ["bin/systemd-control.sh", "--dry-run", "generate", "Demo"]),
     command("init-claudeos-project dry-run", "node", ["scripts/setup/init-claudeos-project.js", "--target", fx.demo, "--dry-run"]),
     command("migrate-agent-teams dry-run", "node", ["scripts/setup/migrate-agent-teams.js", "--dry-run", "--config", fx.configPath]),
     command("install-mcp dry", "node", ["scripts/setup/install-mcp.js", "--project", fx.demo, "--dry"]),
@@ -152,7 +157,9 @@ function main() {
     CLAUDEOS_PLAIN_OUTPUT: "1",
     CCSU_DISABLE_TERMINAL_TAB: "1",
     CCSU_MAX_SESSION_MINUTES: "10",
-    CCSU_MAX_SESSIONS: "10"
+    CCSU_MAX_SESSIONS: "10",
+    CCSU_SYSTEMD_REGISTRY: path.join(fx.root, "systemd-registry.json"),
+    CCSU_SYSTEMD_USER_DIR: path.join(fx.root, "systemd-user")
   };
 
   const failures = [];
