@@ -842,6 +842,7 @@ ClaudeOS 起動経路では `lib/model-router.sh` により Opus 4.8=`xhigh`、S
 | CI | `claudeos/ci/ci-manager.md` |
 | Evolution | `claudeos/evolution/self-evolution.md` |
 | CTO | `claudeos/executive/ai-cto.md` |
+| Data Architecture | `claudeos/docs/data-architecture-protocol.md` |
 | /goal 公式 docs | `https://code.claude.com/docs/en/goal` |
 | changelog | `https://code.claude.com/docs/en/changelog` |
 | グローバル設定 | `~/.claude/CLAUDE.md` |
