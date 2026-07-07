@@ -30,6 +30,30 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"終了"* ]]
 }
 
+@test "menu --render: 起動時間ラベルは config.sessionMinutes を反映 (300→5h)" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-dur5h.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "supervisor": { "defaults": { "sessionMinutes": 300 } } }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"フォアグラウンド / 5h"* ]]
+  [[ "$output" == *"自律 / 5h"* ]]
+}
+
+@test "menu --render: 起動時間ラベルは動的 (90→1h30m・ハードコード 3h でない)" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-dur90.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "supervisor": { "defaults": { "sessionMinutes": 90 } } }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"1h30m"* ]]
+  [[ "$output" != *"3h"* ]]
+}
+
 @test "menu --render: development で DP/M 表示・I/W 非表示" {
   echo '{ "maintenance": { "phase_mode": "development" } }' > "$CCSU_STATE_FILE"
   run bash "$SCRIPT" --render
