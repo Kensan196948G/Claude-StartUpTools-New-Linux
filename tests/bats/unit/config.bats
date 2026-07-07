@@ -115,6 +115,40 @@ teardown() { _bats_common_teardown; }
   [[ "$output" != *".hidden"* ]]
 }
 
+@test "config_project_list: グループフォルダ (直下 .git 無し) は 1 階層下を group/sub 形式で列挙" {
+  local base="$TEST_TEMP/plg"
+  mkdir -p "$base/GroupA/SubA/.git" "$base/GroupA/SubB/.git" "$base/GroupA/PlainSub"
+  mkdir -p "$base/SoloRepo/.git"
+  printf '{ "projects": "%s" }\n' "$base" > "$TEST_TEMP/plg-config.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/plg-config.json"
+  run config_project_list
+  [[ "$output" == *"GroupA/SubA"* ]]
+  [[ "$output" == *"GroupA/SubB"* ]]
+  [[ "$output" != *"GroupA/PlainSub"* ]]
+  [[ "$output" != *$'\n'"GroupA"$'\n'* ]]
+  [[ "$output" == *"SoloRepo"* ]]
+}
+
+@test "config_project_list: グループ孫フォルダは 1 階層のみなので列挙されない (2 階層目非対応)" {
+  local base="$TEST_TEMP/plg2"
+  mkdir -p "$base/GroupB/SubC/GrandChild/.git"
+  printf '{ "projects": "%s" }\n' "$base" > "$TEST_TEMP/plg2-config.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/plg2-config.json"
+  run config_project_list
+  [[ "$output" != *"GrandChild"* ]]
+  [ -z "$output" ]
+}
+
+@test "config_project_list: localExcludes は group/sub 複合名でも除外できる" {
+  local base="$TEST_TEMP/plg3"
+  mkdir -p "$base/GroupC/SubD/.git" "$base/GroupC/SubE/.git"
+  printf '{ "projects": "%s", "localExcludes": ["GroupC/SubD"] }\n' "$base" > "$TEST_TEMP/plg3-config.json"
+  CCSU_CONFIG_PATH="$TEST_TEMP/plg3-config.json"
+  run config_project_list
+  [[ "$output" != *"GroupC/SubD"* ]]
+  [[ "$output" == *"GroupC/SubE"* ]]
+}
+
 # --- 検証コマンド自動推定 (config_verify_command / config_infer_*) ---
 
 @test "config_infer_test_command: package.json script→npm test" {

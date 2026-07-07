@@ -36,7 +36,9 @@ config_projects_dir() {
 }
 
 # --- プロジェクト列挙 (正本) ---
-#   条件: config_projects_dir 直下の「ディレクトリ かつ Git リポジトリ(.git 保有)」のみ。
+#   条件: config_projects_dir 直下の「ディレクトリ かつ Git リポジトリ(.git 保有)」。
+#   直下が Git リポジトリでない場合は「グループフォルダ」とみなし、その 1 階層下を
+#   走査して Git リポジトリを "グループ名/サブ名" 形式で列挙する (1 階層のみ再帰)。
 #   worktree/submodule の .git ファイルも Git リポジトリとして扱う。
 #   ファイル・非 Git ディレクトリ・隠しエントリは除外。出力は名前を 1 行 1 件 (名前順)。
 #   ※ */ グロブがディレクトリのみ・隠し除外を満たすため、.md/.sh/.json 等は自然に落ちる。
@@ -57,10 +59,21 @@ config_project_list() {
   local d name
   for d in "$base"/*/; do
     [[ -d "$d" ]] || continue         # マッチ無し時の literal "*/" 対策
-    [[ -e "${d}.git" ]] || continue   # Git リポジトリのみ (.git dir/file 保有)
     name="$(basename "$d")"
     config_project_excluded "$name" "$d" && continue
-    printf '%s\n' "$name"
+    if [[ -e "${d}.git" ]]; then
+      printf '%s\n' "$name"
+      continue
+    fi
+    # 直下に .git が無いグループフォルダ → 1 階層下のみ走査
+    local sd sname
+    for sd in "$d"*/; do
+      [[ -d "$sd" ]] || continue
+      [[ -e "${sd}.git" ]] || continue
+      sname="$(basename "$sd")"
+      config_project_excluded "${name}/${sname}" "$sd" && continue
+      printf '%s/%s\n' "$name" "$sname"
+    done
   done
 }
 
