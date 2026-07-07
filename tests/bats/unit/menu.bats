@@ -94,6 +94,14 @@ JSON
   [[ "$output" == *"セッション状態監視"* ]]
 }
 
+@test "menu --render: Systemd 起動管理 (SY) 項目" {
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Systemd 起動管理"* ]]
+  [[ "$output" == *"SY"* ]]
+}
+
 @test "menu: 不明引数でエラー" {
   run bash "$SCRIPT" --frobnicate
   [ "$status" -ne 0 ]
