@@ -57,13 +57,14 @@ launcher__project_run_status() {
 }
 
 # launcher__select_project [mode] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
-#   mode: foreground (既定) | background
+#   mode: foreground (既定) | background | deploy
 #   全プロジェクトを番号付きで表示する。running は選択後に menu 側で接続/停止へ分岐する。
 launcher__select_project() {
   local mode="${1:-foreground}"
   local mode_label
   case "$mode" in
     background) mode_label="バックグラウンド" ;;
+    deploy)     mode_label="デプロイ準備" ;;
     *)          mode_label="フォアグラウンド" ;;
   esac
 
