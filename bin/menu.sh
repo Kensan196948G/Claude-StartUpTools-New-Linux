@@ -198,6 +198,13 @@ launch_claude() {
   run_menu_script "$BIN/start-claude.sh" --project "$project" "--$mode"
 }
 
+deploy_prep_menu() {
+  local project
+  project="$(launcher__select_project "deploy")"
+  [[ -n "$project" ]] || { log_warn "プロジェクト未選択"; sleep 1; return 0; }
+  run_menu_script "$BIN/deploy-prep.sh" --project "$project"
+}
+
 # DK: Docker 統合サブメニュー (docker-control.sh への薄い対話ラッパ)
 docker_submenu() {
   local dc="$BIN/docker-control.sh"
@@ -245,7 +252,7 @@ menu_loop() {
     case "${choice^^}" in
       L1) launch_claude foreground ;;
       S1) launch_claude background ;;
-      DP) run_menu_script "$BIN/deploy-prep.sh" ;;
+      DP) deploy_prep_menu ;;
       M)  run_menu_script "$BIN/maintenance-mode.sh" ;;
       I)  run_menu_script "$BIN/incident-response.sh" ;;
       W)  run_menu_script "$BIN/weekly-devops.sh" ;;
