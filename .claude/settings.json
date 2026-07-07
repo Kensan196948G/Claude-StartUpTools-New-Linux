@@ -144,7 +144,7 @@
       "Bash(tail *)", "Bash(wc *)", "Bash(sort *)", "Bash(uniq *)", "Bash(diff *)",
       "Bash(kill *)", "Bash(ps *)", "Bash(timeout *)", "Bash(sleep *)",
       "Bash(flock *)", "Bash(date *)", "Bash(printf *)", "Bash(env *)",
-      "Bash(which *)", "Bash(curl *)", "Bash(coderabbit *)", "Bash(docker *)",
+      "Bash(which *)", "Bash(curl *)", "Bash(coderabbit *)",
       "Bash(python3 *)", "Bash(pip3 *)", "Bash(make *)", "Bash(tar *)",
       "Bash(tee *)", "Bash(stat *)",
       "mcp__github__*", "mcp__memory__*",

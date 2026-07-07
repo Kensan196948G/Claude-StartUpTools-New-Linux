@@ -16,7 +16,6 @@ CTO優先順位テーブル (CLAUDE.md §5.1) の優先度4: /goal の Goal 直�
 - Critical/High 脆弱性ゼロ
 - E2E テスト成功
 - README / 運用手順完成
-- Docker 起動成功（docker-compose.yml がある場合のみ）
 - ローカル環境再現可能
 
 ■ Scope

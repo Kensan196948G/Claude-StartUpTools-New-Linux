@@ -45,7 +45,7 @@
 ### 段階1: 登録（可視化）— 🟢 明示
 
 `/home/kensan/Projects` 配下に `.git`（ディレクトリまたは worktree/submodule のファイル）を持つフォルダは、`config_project_list`
-（`lib/config-loader.sh`）が L1 メニュー / cron / autonomy / docker の **全 4 経路**で候補として列挙する。
+（`lib/config-loader.sh`）が L1 メニュー / cron / autonomy の **全 3 経路**で候補として列挙する。
 
 - **新規フォルダの git 化**: 通常の `start.sh` は高速起動と不要ログ抑制を優先し、自動 `git init` は行わない。
   必要な場合のみ config の `.autoInitProjects=true` を設定すると、`bin/menu.sh` の実起動（`menu` 経路）時に

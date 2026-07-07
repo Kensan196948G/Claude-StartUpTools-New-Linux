@@ -13,7 +13,7 @@
   - 新規フォルダ作成にも対応: メニュー実起動時 (`bin/menu.sh` の `menu` 経路) に
     `project_autoinit_scan` が `.git` 未保有フォルダを検知し、自動で `git init` +
     `CLAUDE.md` テンプレ配置 + 初期 commit を行う。`.git` が付くことで
-    `config_project_list`（L1 メニュー / cron / autonomy / docker の全 4 経路）へ
+    `config_project_list`（L1 メニュー / cron / autonomy の全 3 経路）へ
     自然に登録される。冪等・非破壊・ローカル限定（GitHub repo 作成等の外部操作はしない）。
     無効化は config の `.autoInitProjects=false`。`--render`（テスト用描画）経路では実行しない。
 - 運用メニューは灰色表示を使わず、青、緑、黄、マゼンタ、赤、白を中心にする。

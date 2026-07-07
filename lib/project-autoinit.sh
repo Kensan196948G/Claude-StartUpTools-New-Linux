@@ -5,7 +5,7 @@
 # 役割: config_projects_dir 直下に作成された「.git 未保有フォルダ」を検知し、
 #       自動で git init + CLAUDE.md テンプレート配置 + 初期 commit を実行する。
 #       .git が付くことで config_project_list が拾い、L1 メニュー / cron /
-#       autonomy / docker の全 4 経路へ「登録プロジェクト」として自然に載る。
+#       autonomy の全 3 経路へ「登録プロジェクト」として自然に載る。
 #
 # 設計:
 #   - 冪等: .git 保有フォルダは skip。worktree/submodule の .git ファイルも skip。

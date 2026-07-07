@@ -36,7 +36,6 @@ function makeFixture() {
   fs.mkdirSync(path.join(clean, ".git"), { recursive: true });
   fs.mkdirSync(path.join(demo, ".claude", "claudeos", "scripts", "hooks"), { recursive: true });
   writeJson(path.join(demo, "package.json"), { name: "demo", version: "0.0.0" });
-  writeFile(path.join(demo, "docker-compose.yml"), "services:\n  app:\n    image: alpine:latest\n", 0o644);
   writeJson(path.join(demo, ".claude", "settings.json"), { hooks: {}, env: {} });
   writeFile(path.join(demo, ".claude", "claudeos", "scripts", "hooks", "session-start.js"), "\n", 0o644);
   writeFile(path.join(demo, ".claude", "claudeos", "scripts", "hooks", "agent-teams-tracker.js"), "\n", 0o644);
@@ -122,18 +121,6 @@ function buildMatrix(fx) {
     command("cron remove dry-run", "bash", ["bin/cron-schedule.sh", "--dry-run", "remove", "--id", "dummy"]),
     command("cron remove-all dry-run", "bash", ["bin/cron-schedule.sh", "--dry-run", "remove-all"]),
     command("cron bulk-register default dry-run", "bash", ["bin/cron-schedule.sh", "bulk-register", "--duration", "1"]),
-    command("docker status read-only", "bash", ["bin/docker-control.sh", "status"]),
-    command("docker scan read-only", "bash", ["bin/docker-control.sh", "scan"]),
-    command("docker register dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "register", "Demo"]),
-    command("docker register-all dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "register-all"]),
-    command("docker scaffold dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "scaffold", "Demo", "--force"]),
-    command("docker up dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "up", "Demo"]),
-    command("docker down dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "down", "Demo"]),
-    command("docker ps dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "ps", "Demo"]),
-    command("docker logs dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "logs", "Demo", "--tail=10"]),
-    command("docker up-all dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "up-all"]),
-    command("docker unregister dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "unregister", "Demo"]),
-    command("docker hub-pull dry-run", "bash", ["bin/docker-control.sh", "--dry-run", "hub-pull", "alpine:latest"]),
     command("init-claudeos-project dry-run", "node", ["scripts/setup/init-claudeos-project.js", "--target", fx.demo, "--dry-run"]),
     command("migrate-agent-teams dry-run", "node", ["scripts/setup/migrate-agent-teams.js", "--dry-run", "--config", fx.configPath]),
     command("install-mcp dry", "node", ["scripts/setup/install-mcp.js", "--project", fx.demo, "--dry"]),
@@ -159,15 +146,13 @@ function main() {
     CCSU_STATE_FILE: fx.statePath,
     CCSU_CLAUDE_SETTINGS: path.join(fx.home, ".claude", "settings.json"),
     CCSU_CRONTAB_BIN: fx.crontabStub,
-    CCSU_DOCKER_REGISTRY: path.join(fx.root, "docker-registry.json"),
     CCSU_SKIP_DEPLOY_SYNC: "1",
     CCSU_SKIP_ENV_FILE: "1",
     CLAUDEOS_AUTO_DEPLOY: "0",
     CLAUDEOS_PLAIN_OUTPUT: "1",
     CCSU_DISABLE_TERMINAL_TAB: "1",
     CCSU_MAX_SESSION_MINUTES: "10",
-    CCSU_MAX_SESSIONS: "10",
-    DOCKER_CONFIG: path.join(fx.root, "docker-config")
+    CCSU_MAX_SESSIONS: "10"
   };
 
   const failures = [];
