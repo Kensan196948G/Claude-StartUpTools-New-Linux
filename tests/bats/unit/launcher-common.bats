@@ -247,3 +247,70 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "" ]
 }
+
+# ─── launcher__select_project: 2段階 (projectGroups) ─────────
+
+_setup_groups() {
+  local base="$TEST_TEMP/gprojects"
+  mkdir -p "$base/GroupA/App1/.git" "$base/GroupA/App2/.git" "$base/GroupB/App3/.git"
+  mkdir -p "$base/Loose/.git"   # スコープ外の単独リポジトリ
+  cat > "$TEST_TEMP/gconfig.json" <<JSON
+{ "projects": "$base", "projectGroups": ["GroupA","GroupB"] }
+JSON
+}
+
+@test "select(grouped): グループ1→サブ2 で GroupA/App2 を返す" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n2\n' | launcher__select_project foreground 2>/dev/null
+  "
+  [ "$output" = "GroupA/App2" ]
+}
+
+@test "select(grouped): グループ2→サブ1 で GroupB/App3 を返す" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '2\n1\n' | launcher__select_project foreground 2>/dev/null
+  "
+  [ "$output" = "GroupB/App3" ]
+}
+
+@test "select(grouped): スコープ外 (Loose) は候補に出ない" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n1\n' | launcher__select_project foreground
+  " 2>&1
+  [[ "$output" != *"Loose"* ]]
+}
+
+@test "select(grouped): グループ選択で 0 は空を返して戻る" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '0\n' | launcher__select_project foreground 2>/dev/null
+  "
+  [ "$output" = "" ]
+}
+
+@test "select(grouped): サブ選択で 0 はグループ選択へ戻り再選択できる" {
+  _setup_groups
+  # グループ1 → サブ 0(戻る) → グループ2 → サブ1 = GroupB/App3
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n0\n2\n1\n' | launcher__select_project foreground 2>/dev/null
+  "
+  [ "$output" = "GroupB/App3" ]
+}

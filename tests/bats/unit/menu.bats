@@ -102,6 +102,18 @@ JSON
   [[ "$output" == *"SY"* ]]
 }
 
+@test "menu --render: projectGroups 設定時は実行グループ見出しを表示" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-groups.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-Project","Mirai-DX-Project"] }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"実行グループ"* ]]
+  [[ "$output" == *"Mirai-Project, Mirai-DX-Project"* ]]
+}
+
 @test "menu: 不明引数でエラー" {
   run bash "$SCRIPT" --frobnicate
   [ "$status" -ne 0 ]

@@ -7,6 +7,8 @@
   "_autoInitProjects_comment": "true にすると start.sh 起動時に非Gitフォルダを git init する。通常起動の高速化と不要ログ抑制のため既定 false。",
   "_localExcludes_comment": "config_project_list の除外正本 (L1メニュー/cron/autonomy 全3経路に効く)。製品でないツール repo・バックアップ・アーカイブ・純インフラ等の git フォルダをここへ列挙して自動開発対象から外す。worktree (.git がファイル) も登録プロジェクトとして扱う。本ツール repo 自身 (CCSU_ROOT) は config-loader が自動除外するため記載不要。新規プロジェクトの cron 登録手順は docs/claude/11_新規プロジェクトのcron登録とオンボーディング.md を参照。",
   "localExcludes": [],
+  "_projectGroups_comment": "実行スコープを特定のグループフォルダ配下だけに限定する場合に列挙 (例: [\"Mirai-Project\",\"Mirai-DX-Project\"])。設定すると config_project_list はその各グループ配下の Git リポジトリのみを「グループ名/サブ名」で列挙し (L1メニュー/cron/autonomy 共通)、L1 は「グループ選択→配下選択」の2段階になる。グループ自身が .git を持っていても無視し配下を対象にする。autoInitProjects も設定時はグループ配下のみ対象。空配列 (既定) なら projects 直下全体が対象。",
+  "projectGroups": [],
   "tools": {
     "defaultTool": "claude",
     "claude": {

@@ -75,6 +75,11 @@ show_menu() {
   printf '  %s╚════════════════════════════════════════════════════╝%s\n' "$C_CYAN" "$C_RESET"
   printf '  %s📋 フェーズ: %s%s%s%s\n' "$C_WHITE" "$C_RESET" "$phase_color" "$phase_label$deploy_badge" "$C_RESET"
   printf '  %s📂 %s%s%s\n' "$C_GREEN" "$C_DKGREEN" "$local_dir" "$C_RESET"
+  local -a _mgroups=(); mapfile -t _mgroups < <(config_project_groups)
+  if (( ${#_mgroups[@]} > 0 )); then
+    local _gjoin; printf -v _gjoin '%s, ' "${_mgroups[@]}"; _gjoin="${_gjoin%, }"
+    printf '  %s   ▸ 実行グループ (%d): %s%s%s\n' "$C_GREEN" "${#_mgroups[@]}" "$C_DKGREEN" "$_gjoin" "$C_RESET"
+  fi
   printf '\n'
 
   # 起動

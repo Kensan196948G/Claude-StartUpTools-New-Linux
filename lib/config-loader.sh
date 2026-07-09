@@ -35,6 +35,15 @@ config_projects_dir() {
   if [[ -n "$base" ]]; then printf '%s' "$base"; else config_get '.projectsDir' "$HOME/Projects"; fi
 }
 
+# --- 実行グループ (projectGroups) ---
+#   config.projectGroups に「実行スコープとするグループフォルダ名」を列挙すると、
+#   config_project_list は projects 直下の全走査をやめ、その各グループ配下の
+#   Git リポジトリだけを "グループ名/サブ名" 形式で列挙する (実行対象を 2 グループ等へ限定)。
+#   未設定 (空配列/キー不在) なら従来どおり projects 直下全体を対象にする。
+config_project_groups() {
+  jq -r '.projectGroups[]? // empty' "$CCSU_CONFIG_PATH" 2>/dev/null || true
+}
+
 # --- プロジェクト列挙 (正本) ---
 #   条件: config_projects_dir 直下の「ディレクトリ かつ Git リポジトリ(.git 保有)」。
 #   直下が Git リポジトリでない場合は「グループフォルダ」とみなし、その 1 階層下を
@@ -56,6 +65,26 @@ config_project_excluded() {
 config_project_list() {
   local base; base="$(config_projects_dir)"
   [[ -d "$base" ]] || return 0
+
+  # projectGroups 設定時: その各グループ配下のみを "グループ名/サブ名" で列挙する
+  # (グループ自身が .git を持っていても無視し、配下の Git リポジトリだけを対象にする)。
+  local -a groups=(); mapfile -t groups < <(config_project_groups)
+  if (( ${#groups[@]} > 0 )); then
+    local g gd sd sname
+    for g in "${groups[@]}"; do
+      gd="$base/$g"
+      [[ -d "$gd" ]] || continue
+      for sd in "$gd"/*/; do
+        [[ -d "$sd" ]] || continue
+        [[ -e "${sd}.git" ]] || continue
+        sname="$(basename "$sd")"
+        config_project_excluded "${g}/${sname}" "$sd" && continue
+        printf '%s/%s\n' "$g" "$sname"
+      done
+    done
+    return 0
+  fi
+
   local d name
   for d in "$base"/*/; do
     [[ -d "$d" ]] || continue         # マッチ無し時の literal "*/" 対策

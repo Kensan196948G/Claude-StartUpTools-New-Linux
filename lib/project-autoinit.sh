@@ -30,31 +30,47 @@ project_autoinit_scan() {
   [[ -d "$base" ]] || return 0
 
   local template="$CCSU_ROOT/Claude/templates/claude/CLAUDE.md"
-  local d name count=0
 
-  for d in "$base"/*/; do
-    [[ -d "$d" ]] || continue          # マッチ無し時の literal "*/" 対策
-    [[ -e "${d}.git" ]] && continue    # 既に Git/worktree/submodule → skip (冪等)
-    name="$(basename "$d")"
-    config_project_excluded "$name" "$d" && continue   # リポジトリ自身 / localExcludes
+  # 走査対象: projectGroups 設定時は各グループ配下のみ (グループ自身・スコープ外の
+  # 直下フォルダは触らない)。未設定時は従来どおり projects 直下。
+  # これにより「グループフォルダを毎回 git init して単独 repo 化してしまう」退行を防ぐ。
+  local -a groups=(); mapfile -t groups < <(config_project_groups)
+  local -a scan_roots=()
+  if (( ${#groups[@]} > 0 )); then
+    local g
+    for g in "${groups[@]}"; do [[ -d "$base/$g" ]] && scan_roots+=("$base/$g"); done
+  else
+    scan_roots+=("$base")
+  fi
 
-    if ! git init -q "$d" 2>/dev/null; then
-      log_warn "🆕 自動登録: git init 失敗のため skip → $name"
-      continue
-    fi
+  local root d name prefix exclude_name count=0
+  for root in "${scan_roots[@]}"; do
+    prefix=""; [[ "$root" != "$base" ]] && prefix="$(basename "$root")/"
+    for d in "$root"/*/; do
+      [[ -d "$d" ]] || continue          # マッチ無し時の literal "*/" 対策
+      [[ -e "${d}.git" ]] && continue    # 既に Git/worktree/submodule → skip (冪等)
+      name="$(basename "$d")"
+      exclude_name="${prefix}${name}"
+      config_project_excluded "$exclude_name" "$d" && continue   # リポジトリ自身 / localExcludes
 
-    if [[ -f "$template" && ! -f "${d}CLAUDE.md" ]]; then
-      cp "$template" "${d}CLAUDE.md" 2>/dev/null || true
-    fi
+      if ! git init -q "$d" 2>/dev/null; then
+        log_warn "🆕 自動登録: git init 失敗のため skip → $exclude_name"
+        continue
+      fi
 
-    if git -C "$d" add -A 2>/dev/null \
-       && git -C "$d" commit -q -m "chore: ClaudeOS 登録初期化 (auto-init)" 2>/dev/null; then
-      log_ok "🆕 自動登録: $name を初期化しました (git init + CLAUDE.md + 初期commit)"
-    else
-      # commit 失敗 (git identity 未設定など) でも .git は残るため登録自体は成立。
-      log_warn "🆕 自動登録: $name を git init 済み (初期 commit は未完 — git identity を確認)"
-    fi
-    count=$((count + 1))
+      if [[ -f "$template" && ! -f "${d}CLAUDE.md" ]]; then
+        cp "$template" "${d}CLAUDE.md" 2>/dev/null || true
+      fi
+
+      if git -C "$d" add -A 2>/dev/null \
+         && git -C "$d" commit -q -m "chore: ClaudeOS 登録初期化 (auto-init)" 2>/dev/null; then
+        log_ok "🆕 自動登録: $exclude_name を初期化しました (git init + CLAUDE.md + 初期commit)"
+      else
+        # commit 失敗 (git identity 未設定など) でも .git は残るため登録自体は成立。
+        log_warn "🆕 自動登録: $exclude_name を git init 済み (初期 commit は未完 — git identity を確認)"
+      fi
+      count=$((count + 1))
+    done
   done
 
   (( count > 0 )) && log_info "🆕 自動登録: $count 件の新規フォルダを登録プロジェクト化しました"

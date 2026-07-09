@@ -58,8 +58,87 @@ launcher__project_run_status() {
 
 # launcher__select_project [mode] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
 #   mode: foreground (既定) | background | deploy
-#   全プロジェクトを番号付きで表示する。running は選択後に menu 側で接続/停止へ分岐する。
+#   config.projectGroups が設定されていれば「①グループ選択 → ②配下から選択」の 2 段階、
+#   未設定なら全プロジェクトをフラットに番号付き表示する (従来動作)。
 launcher__select_project() {
+  local -a _groups=(); mapfile -t _groups < <(config_project_groups)
+  if (( ${#_groups[@]} > 0 )); then launcher__select_grouped "${1:-foreground}"; else launcher__select_flat "${1:-foreground}"; fi
+}
+
+# launcher__select_mode_label <mode> — 表示用ラベル
+launcher__select_mode_label() {
+  case "$1" in
+    background) printf 'バックグラウンド' ;;
+    deploy)     printf 'デプロイ準備' ;;
+    *)          printf 'フォアグラウンド' ;;
+  esac
+}
+
+# launcher__print_project_row <display_num> <label> <run_status> — 1 行を stderr へ (色/アイコン付き)
+launcher__print_project_row() {
+  local n="$1" label="$2" st="$3"
+  case "$st" in
+    running)      printf '  %s[%2d]%s %s🔴 %-40s%s %s(実行中)%s\n'     "$C_RED"    "$n" "$C_RESET" "$C_RED"    "$label" "$C_RESET" "$C_WHITE"   "$C_RESET" >&2 ;;
+    goal-reached) printf '  %s[%2d]%s %s🟡 %-40s%s %s(目標達成済)%s\n' "$C_YELLOW" "$n" "$C_RESET" "$C_YELLOW" "$label" "$C_RESET" "$C_DKGREEN" "$C_RESET" >&2 ;;
+    crash-loop)   printf '  %s[%2d]%s %s🟡 %-40s%s %s(クラッシュ)%s\n' "$C_YELLOW" "$n" "$C_RESET" "$C_YELLOW" "$label" "$C_RESET" "$C_YELLOW"  "$C_RESET" >&2 ;;
+    blocked)      printf '  %s[%2d]%s %s🟡 %-40s%s %s(ブロック中)%s\n' "$C_YELLOW" "$n" "$C_RESET" "$C_YELLOW" "$label" "$C_RESET" "$C_RED"     "$C_RESET" >&2 ;;
+    *)            printf '  %s[%2d]%s %s🟢 %s%s\n'                     "$C_GREEN"  "$n" "$C_RESET" "$C_GREEN"  "$label" "$C_RESET" >&2 ;;
+  esac
+}
+
+# launcher__select_grouped [mode] — projectGroups 用の 2 段階選択 (グループ → 配下)
+#   戻り値 (stdout): "グループ名/サブ名"。0/q/exit で 1 つ前 (配下→グループ, グループ→終了) へ戻る。
+launcher__select_grouped() {
+  local mode="${1:-foreground}" mode_label
+  mode_label="$(launcher__select_mode_label "$mode")"
+  local -a groups=(); mapfile -t groups < <(config_project_groups)
+  local -a all=();    mapfile -t all    < <(launcher__project_list)
+
+  while true; do
+    # Step 1: グループ選択
+    printf '\n  %s📋 グループ選択 [%s起動]%s\n' "$C_CYAN" "$mode_label" "$C_RESET" >&2
+    printf '     %s0・q・exit・/exit = 戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
+    local gi g cnt p
+    for gi in "${!groups[@]}"; do
+      g="${groups[$gi]}"
+      cnt=0; for p in "${all[@]}"; do [[ "$p" == "${g}/"* ]] && cnt=$((cnt + 1)); done
+      printf '  %s[%2d]%s 📁 %-30s %s(%s件)%s\n' "$C_CYAN" "$((gi + 1))" "$C_RESET" "$g" "$C_WHITE" "$cnt" "$C_RESET" >&2
+    done
+    printf '\n' >&2
+    local gidx; read -rp "  グループ番号 (1-${#groups[@]}, 0=戻る): " gidx
+    case "${gidx,,}" in 0|q|quit|exit|/exit|"") return 0 ;; esac
+    if ! [[ "$gidx" =~ ^[0-9]+$ ]] || (( gidx < 1 || gidx > ${#groups[@]} )); then
+      printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET" >&2; continue
+    fi
+    local group="${groups[$((gidx - 1))]}"
+
+    # Step 2: 配下サブプロジェクト選択
+    local -a subs=(); for p in "${all[@]}"; do [[ "$p" == "${group}/"* ]] && subs+=("$p"); done
+    if (( ${#subs[@]} == 0 )); then
+      printf '  %s(%s に .git 付きサブプロジェクトがありません)%s\n' "$C_YELLOW" "$group" "$C_RESET" >&2
+      continue
+    fi
+    printf '\n  %s📂 %s のプロジェクト [%s起動]%s\n' "$C_CYAN" "$group" "$mode_label" "$C_RESET" >&2
+    printf '     %s0・q = グループ選択へ戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
+    local si proj st
+    for si in "${!subs[@]}"; do
+      proj="${subs[$si]}"
+      st="$(launcher__project_run_status "$proj")"
+      launcher__print_project_row "$((si + 1))" "${proj#*/}" "$st"
+    done
+    printf '\n' >&2
+    local sidx; read -rp "  番号 (1-${#subs[@]}, 0=戻る): " sidx
+    case "${sidx,,}" in 0|q|quit|exit|/exit|"") continue ;; esac
+    if [[ "$sidx" =~ ^[0-9]+$ ]] && (( sidx >= 1 && sidx <= ${#subs[@]} )); then
+      printf '%s' "${subs[$((sidx - 1))]}"; return 0
+    fi
+    printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET" >&2
+  done
+}
+
+# launcher__select_flat [mode] — 従来のフラット選択 (projectGroups 未設定時)
+#   全プロジェクトを番号付きで表示する。running は選択後に menu 側で接続/停止へ分岐する。
+launcher__select_flat() {
   local mode="${1:-foreground}"
   local mode_label
   case "$mode" in
