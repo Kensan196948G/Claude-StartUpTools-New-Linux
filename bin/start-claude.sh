@@ -147,11 +147,11 @@ session__running_count() {
 
 session__enforce_launch_limits() {
   local duration="$1"
-  local max_sessions="${CCSU_MAX_SESSIONS:-2}"
+  local max_sessions="${CCSU_MAX_SESSIONS:-4}"
   local max_minutes="${CCSU_MAX_SESSION_MINUTES:-300}"
 
   [[ "$max_minutes" =~ ^[0-9]+$ ]] || max_minutes=300
-  [[ "$max_sessions" =~ ^[0-9]+$ ]] || max_sessions=2
+  [[ "$max_sessions" =~ ^[0-9]+$ ]] || max_sessions=4
 
   if (( max_minutes > 0 && duration > max_minutes )); then
     log_error "duration=${duration}m は上限 ${max_minutes}m を超えています"

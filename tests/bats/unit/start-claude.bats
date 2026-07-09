@@ -86,17 +86,29 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"上限 300m"* ]]
 }
 
-@test "start-claude: 実行中セッションが2件なら新規起動を拒否する" {
+@test "start-claude: 実行中セッションが4件なら新規起動を拒否する" {
   mkdir -p "$CLAUDEOS_HOME/supervisor"
-  cat > "$CLAUDEOS_HOME/supervisor/RunA.json" <<JSON
-{"project":"RunA","status":"running","pid":$$}
+  local p
+  for p in RunA RunB RunC RunD; do
+    cat > "$CLAUDEOS_HOME/supervisor/${p}.json" <<JSON
+{"project":"${p}","status":"running","pid":$$}
 JSON
-  cat > "$CLAUDEOS_HOME/supervisor/RunB.json" <<JSON
-{"project":"RunB","status":"running","pid":$$}
-JSON
+  done
   run bash "$SCRIPT" --project MyProj --background --duration 5
   [ "$status" -ne 0 ]
   [[ "$output" == *"同時実行セッション上限"* ]]
+}
+
+@test "start-claude: 実行中セッションが3件なら起動を許可する" {
+  mkdir -p "$CLAUDEOS_HOME/supervisor"
+  local p
+  for p in RunA RunB RunC; do
+    cat > "$CLAUDEOS_HOME/supervisor/${p}.json" <<JSON
+{"project":"${p}","status":"running","pid":$$}
+JSON
+  done
+  run bash "$SCRIPT" --project MyProj --background --duration 5
+  [ "$status" -eq 0 ]
 }
 
 @test "start-claude: --safe-mode は既定で tmux なし直接起動" {
