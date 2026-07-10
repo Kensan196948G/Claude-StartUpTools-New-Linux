@@ -48,6 +48,15 @@ const SETTINGS_TEMPLATE = "Claude/templates/claude/settings.json";
 const STATE_TEMPLATE    = "Claude/templates/claude/claudeos/templates/state.json";
 const SKILLS_DIRTY       = ".claude/claudeos/.skills-dirty";
 
+// autocompact thrashing 対策 (#78 のテンプレート修正の配布側フォロー)。
+// merge は追加専用のため、配布済みプロジェクトに残る旧設定は明示的に除去する:
+// - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: 50% 強制 compact の旧オーバーライド (全層撤去済み)
+// - SessionStart matcher "*": compact 直後にも session-start.js 等の大型コンテキストを
+//   再注入し context を即再充填させるため startup|resume|clear へ正規化する
+const DEPRECATED_ENV_KEYS = ["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"];
+const SESSION_START_SAFE_MATCHER = "startup|resume|clear";
+const CONTEXT_INJECTING_HOOK_SCRIPTS = ["session-start.js", "verify-goal-set.js"];
+
 // ──────────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const args = { mode: null, target: null, projectFilter: null, configPath: null, all: false };
@@ -172,8 +181,9 @@ function copyFileIfMissing(src, dest, plan, dryRun, transform) {
   }
 }
 
-// settings.json を deep-merge: hooks (per-event, matcher+command で重複排除) と env を
+// settings.json を deep-merge: hooks (per-event, matcher+command 群で重複排除) と env を
 // 不足分だけ追加。permissions と既存スカラー値は保護 (上書きしない)。
+// 加えて DEPRECATED_ENV_KEYS の除去と SessionStart matcher の正規化 (sanitize) を行う。
 function mergeSettings(srcPath, destPath, plan, dryRun) {
   if (!fs.existsSync(srcPath)) { plan.srcMissing.push(srcPath); return; }
   if (!fs.existsSync(destPath)) {            // 新規: テンプレをそのままコピー
@@ -185,21 +195,45 @@ function mergeSettings(srcPath, destPath, plan, dryRun) {
   try { tmpl = JSON.parse(fs.readFileSync(srcPath, "utf8")); cur = JSON.parse(fs.readFileSync(destPath, "utf8")); }
   catch (e) { console.error(`  WARN: settings.json parse 失敗、merge skip: ${e.message}`); plan.skip++; return; }
 
+  // hook エントリ内の実行対象を command / args 両形式から復元する
+  // (旧配布には command:"node" + args:["...session-start.js"] 形式が混在する)
+  const entryCommands = (e) => (e.hooks || []).map(
+    (h) => [h.command || "", ...(Array.isArray(h.args) ? h.args : [])].join(" ").trim()
+  );
+
+  let sanitized = 0;
+  // 旧 env オーバーライドの除去
+  if (cur.env && typeof cur.env === "object") {
+    for (const k of DEPRECATED_ENV_KEYS) {
+      if (k in cur.env) { delete cur.env[k]; sanitized++; }
+    }
+  }
+  // SessionStart matcher "*" でコンテキスト注入 hook を実行するエントリを正規化
+  const ssEntries = (cur.hooks && Array.isArray(cur.hooks.SessionStart)) ? cur.hooks.SessionStart : [];
+  for (const e of ssEntries) {
+    const cmds = entryCommands(e).join(" ");
+    if ((e.matcher || "*") === "*" && CONTEXT_INJECTING_HOOK_SCRIPTS.some((s) => cmds.includes(s))) {
+      e.matcher = SESSION_START_SAFE_MATCHER;
+      sanitized++;
+    }
+  }
+
   let added = 0;
   // top-level キー (hooks/env/permissions 以外): 欠けていれば追加、既存は保護
   for (const k of Object.keys(tmpl)) {
     if (k === "hooks" || k === "env" || k === "permissions") continue;
     if (!(k in cur)) { cur[k] = tmpl[k]; added++; }
   }
-  // env: 欠けている key を追加、既存値は保護
+  // env: 欠けている key を追加、既存値は保護 (廃止 key はテンプレ由来でも追加しない)
   if (tmpl.env && typeof tmpl.env === "object") {
     cur.env = (cur.env && typeof cur.env === "object") ? cur.env : {};
     for (const [k, v] of Object.entries(tmpl.env)) {
+      if (DEPRECATED_ENV_KEYS.includes(k)) continue;
       if (!(k in cur.env)) { cur.env[k] = v; added++; }
     }
   }
   // hooks: event ごとに (matcher + command 群) シグネチャで重複排除して不足分を追加
-  const sig = (e) => JSON.stringify({ m: e.matcher, c: (e.hooks || []).map(h => h.command) });
+  const sig = (e) => JSON.stringify({ m: e.matcher, c: entryCommands(e) });
   if (tmpl.hooks && typeof tmpl.hooks === "object") {
     cur.hooks = (cur.hooks && typeof cur.hooks === "object") ? cur.hooks : {};
     for (const [event, entries] of Object.entries(tmpl.hooks)) {
@@ -212,6 +246,7 @@ function mergeSettings(srcPath, destPath, plan, dryRun) {
   }
   // permissions は各プロジェクトのセキュリティ方針なので一切触らない。
 
+  added += sanitized;
   if (added > 0) {
     plan.merge += added;
     if (!dryRun) {
@@ -354,4 +389,6 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { mergeSettings };
