@@ -360,6 +360,21 @@ JSON
   [ "$output" = "" ]
 }
 
+@test "select(single-group): q / /exit も空を返して終了する" {
+  _setup_single_group
+  local key
+  for key in 'q' '/exit'; do
+    run bash -c "
+      export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/sgconfig.json'
+      export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+      source '$REPO_ROOT/lib/launcher-common.sh'
+      printf '%s\n' '$key' | launcher__select_project foreground 2>/dev/null
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "" ]
+  done
+}
+
 @test "select(single-group): サブが 0 件なら空を返して終了する" {
   local base="$TEST_TEMP/sgempty"
   mkdir -p "$base/GroupA"
