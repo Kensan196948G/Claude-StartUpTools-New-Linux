@@ -548,6 +548,39 @@ Codex レビューの代替ではなく、静的解析（40+ 解析器）によ�
 - 全体レビューループ: 最大 5 ラウンド
 - 上限到達時: 残指摘を Issue に起票して次フェーズへ進む
 
+<!-- claudeos:cf-neon-guide v1 -->
+## 8.6 ☁️🐘 Cloudflare / Neon プラグイン活用ガイド（デプロイ標準スタック）
+
+デプロイ標準スタックは **Systemd + GitHub + Cloudflare + Neon**（Docker は全プロジェクトで廃止済み・再導入しない）。
+Cloudflare / Neon プラグインはユーザースコープで有効化済みのため、追加セットアップなしで全セッションから利用できる。
+CTO は該当するプロジェクト（Web 公開・DB 利用があるもの）で以下を**能動的に**活用すること。
+
+### フェーズ別の使いどころ
+
+ツール名はプラグイン MCP の実ツール名（ToolSearch で検索・スキーマ取得可能）。
+
+| フェーズ | Cloudflare ☁️ | Neon 🐘 |
+|---|---|---|
+| 🔍 Monitor | `query_worker_observability` で本番 Worker のログ・エラー率を確認、`workers_builds_list_builds` で直近デプロイの CI 状況確認 | `list_slow_queries` で遅いクエリ検出、`describe_project` / ブランチ状態確認 |
+| 🔨 Build | `search_cloudflare_documentation` / skills（`workers-best-practices`・`wrangler`・`durable-objects` 等）で実装ガイド参照 | **dev ブランチを作成して隔離検証**（`create_branch` → `run_sql`）。main ブランチへ直接 DDL を流さない |
+| ✅ Verify | `workers_builds_get_build_logs` でビルド失敗解析、`query_worker_observability` で動作確認 | `prepare_database_migration` → dev ブランチでテスト → 結果確認。`explain_sql_statement` で実行計画検証 |
+| 🚀 Deploy 準備 | バインディング（D1/KV/R2）の設定値を確認し手順書へ記載 | `compare_database_schema` で差分確認、接続文字列の設定手順を手順書へ記載 |
+
+### 人間最終決断の境界（プラグイン操作）
+
+| CTO 自律 ✅ | 人間決裁 🚫 |
+|---|---|
+| ログ・メトリクス・ビルド状況の照会 | 本番デプロイ・本番公開 |
+| docs / skills 参照、設定値の読み取り | D1/KV/R2/Hyperdrive 等リソースの**新規作成・削除** |
+| Neon dev ブランチの作成・検証 | Neon **プロジェクト**の作成・削除、**dev ブランチの削除**（データ削除=人間承認の原則どおり） |
+| dev ブランチ上での SQL/DDL・migration 検証（本番へ波及しない隔離環境に限る） | **本番（main）ブランチへの一切の適用**（`complete_database_migration` 含む DB スキーマ変更） |
+| slow query 分析・チューニング提案 | 接続文字列・API トークン等 Secrets の登録・変更 |
+
+- 課金が発生し得る操作（リソース作成・プラン変更）は事前に判断材料と推奨案を提示し、人間の明示承認を待つ
+- headless セッションでプラグイン MCP が 401/403 を返す場合は認証失効。`claude mcp list` で状態確認し、
+  再認証（対話セッション）は人間へ依頼する。認証切れはブロッカーではなく Issue 化して他作業を継続する
+<!-- /claudeos:cf-neon-guide -->
+
 ## 9. STABLE 判定
 
 以下をすべて満たした場合のみ STABLE とします。
