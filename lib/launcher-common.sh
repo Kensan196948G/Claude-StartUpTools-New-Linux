@@ -88,38 +88,51 @@ launcher__print_project_row() {
 
 # launcher__select_grouped [mode] — projectGroups 用の 2 段階選択 (グループ → 配下)
 #   戻り値 (stdout): "グループ名/サブ名"。0/q/exit で 1 つ前 (配下→グループ, グループ→終了) へ戻る。
+#   グループが 1 件のみの場合はグループ選択を省略して配下一覧を直接表示し (実質 1 段階)、
+#   その場合の 0/q は「戻る先のグループ選択が無い」ため空を返して終了する。
 launcher__select_grouped() {
   local mode="${1:-foreground}" mode_label
   mode_label="$(launcher__select_mode_label "$mode")"
   local -a groups=(); mapfile -t groups < <(config_project_groups)
   local -a all=();    mapfile -t all    < <(launcher__project_list)
+  local single=0; (( ${#groups[@]} == 1 )) && single=1
 
   while true; do
-    # Step 1: グループ選択
-    printf '\n  %s📋 グループ選択 [%s起動]%s\n' "$C_CYAN" "$mode_label" "$C_RESET" >&2
-    printf '     %s0・q・exit・/exit = 戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
-    local gi g cnt p
-    for gi in "${!groups[@]}"; do
-      g="${groups[$gi]}"
-      cnt=0; for p in "${all[@]}"; do [[ "$p" == "${g}/"* ]] && cnt=$((cnt + 1)); done
-      printf '  %s[%2d]%s 📁 %-30s %s(%s件)%s\n' "$C_CYAN" "$((gi + 1))" "$C_RESET" "$g" "$C_WHITE" "$cnt" "$C_RESET" >&2
-    done
-    printf '\n' >&2
-    local gidx; read -rp "  グループ番号 (1-${#groups[@]}, 0=戻る): " gidx
-    case "${gidx,,}" in 0|q|quit|exit|/exit|"") return 0 ;; esac
-    if ! [[ "$gidx" =~ ^[0-9]+$ ]] || (( gidx < 1 || gidx > ${#groups[@]} )); then
-      printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET" >&2; continue
+    local group p
+    if (( single )); then
+      group="${groups[0]}"
+    else
+      # Step 1: グループ選択
+      printf '\n  %s📋 グループ選択 [%s起動]%s\n' "$C_CYAN" "$mode_label" "$C_RESET" >&2
+      printf '     %s0・q・exit・/exit = 戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
+      local gi g cnt
+      for gi in "${!groups[@]}"; do
+        g="${groups[$gi]}"
+        cnt=0; for p in "${all[@]}"; do [[ "$p" == "${g}/"* ]] && cnt=$((cnt + 1)); done
+        printf '  %s[%2d]%s 📁 %-30s %s(%s件)%s\n' "$C_CYAN" "$((gi + 1))" "$C_RESET" "$g" "$C_WHITE" "$cnt" "$C_RESET" >&2
+      done
+      printf '\n' >&2
+      local gidx; read -rp "  グループ番号 (1-${#groups[@]}, 0=戻る): " gidx
+      case "${gidx,,}" in 0|q|quit|exit|/exit|"") return 0 ;; esac
+      if ! [[ "$gidx" =~ ^[0-9]+$ ]] || (( gidx < 1 || gidx > ${#groups[@]} )); then
+        printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET" >&2; continue
+      fi
+      group="${groups[$((gidx - 1))]}"
     fi
-    local group="${groups[$((gidx - 1))]}"
 
     # Step 2: 配下サブプロジェクト選択
     local -a subs=(); for p in "${all[@]}"; do [[ "$p" == "${group}/"* ]] && subs+=("$p"); done
     if (( ${#subs[@]} == 0 )); then
       printf '  %s(%s に .git 付きサブプロジェクトがありません)%s\n' "$C_YELLOW" "$group" "$C_RESET" >&2
+      (( single )) && return 0
       continue
     fi
     printf '\n  %s📂 %s のプロジェクト [%s起動]%s\n' "$C_CYAN" "$group" "$mode_label" "$C_RESET" >&2
-    printf '     %s0・q = グループ選択へ戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
+    if (( single )); then
+      printf '     %s0・q・exit・/exit = 戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
+    else
+      printf '     %s0・q = グループ選択へ戻る%s\n\n' "$C_WHITE" "$C_RESET" >&2
+    fi
     local si proj st
     for si in "${!subs[@]}"; do
       proj="${subs[$si]}"
@@ -128,7 +141,10 @@ launcher__select_grouped() {
     done
     printf '\n' >&2
     local sidx; read -rp "  番号 (1-${#subs[@]}, 0=戻る): " sidx
-    case "${sidx,,}" in 0|q|quit|exit|/exit|"") continue ;; esac
+    case "${sidx,,}" in 0|q|quit|exit|/exit|"")
+      (( single )) && return 0
+      continue ;;
+    esac
     if [[ "$sidx" =~ ^[0-9]+$ ]] && (( sidx >= 1 && sidx <= ${#subs[@]} )); then
       printf '%s' "${subs[$((sidx - 1))]}"; return 0
     fi

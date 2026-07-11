@@ -54,12 +54,13 @@
   （GitHub repo 作成等の外部操作はしない）。`--render`（テスト描画）経路では実行しない。
 - 自動除外: 本ツール repo 自身（`CCSU_ROOT`）、および `config/config.json` の `localExcludes` に列挙したフォルダ。
 - **実行グループ限定（`projectGroups`）**: `config/config.json` の `projectGroups` にグループフォルダ名を
-  列挙すると（例 `["Mirai-Project","Mirai-DX-Project"]`）、`config_project_list` は projects 直下の全走査を
+  列挙すると（例 `["Mirai-DX-Project"]`）、`config_project_list` は projects 直下の全走査を
   やめ、**その各グループ配下の Git リポジトリのみ**を `グループ名/サブ名` 形式で列挙する（L1 メニュー /
   cron / autonomy 共通）。グループ自身が `.git` を持っていても無視し配下を対象にする。L1 は
   「①グループ選択 → ②配下から選択」の 2 段階 UI になり、`autoInitProjects` もグループ配下のみを対象に
-  する（グループフォルダを毎回 git init して単独 repo 化する退行を防止）。空配列（既定）なら projects
-  直下全体が対象。
+  する（グループフォルダを毎回 git init して単独 repo 化する退行を防止）。**グループが 1 件のみの場合は
+  ①グループ選択を省略して配下一覧を直接表示**する（実質 1 段階。`0`/`q` はグループ選択へ戻らず終了）。
+  空配列（既定）なら projects 直下全体が対象。
 
 > ⚠️ **重要**: auto-init が完了しても、それは段階1（可視化）に過ぎない。
 > **cron スロットは自動では付かない。** 段階2を必ず実施すること。
