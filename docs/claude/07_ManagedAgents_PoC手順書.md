@@ -106,7 +106,8 @@ PoC を中止する場合（人間判断・いつでも可）:
 | 🔐 Vault | `vlt_011CbwcTDqg1KetU7FtQ1Re8` | synapse-os-poc-vault |
 | 🔑 Credential | `vcrd_01XSYM6iEdxD6dK6JwJwjBwN` | GitHub PAT (Synapse-OS PoC)、static_bearer、matcher=`https://api.githubcopilot.com/mcp` |
 | 🧵 セッション (旧) | `sesn_01NreQr7engUWgdFe6UvrJ9E` | agent v2 をピン留め。billing_error で停止 |
-| 🧵 セッション (現) | `sesn_01HVfnamF4b8kAsNZxmUU8Y5` | agent v3 で再作成（セッションは作成時の version を固定するため） |
+| 🧵 セッション (旧2) | `sesn_01HVfnamF4b8kAsNZxmUU8Y5` | agent v3 で再作成（セッションは作成時の version を固定するため） |
+| 🧵 セッション (現) | `sesn_015qp3yco2J3wsX2BEXJtQSd` | PAT ローテーション後に再作成（2026-06-16）。7/11 再検証もこのセッションで実施 |
 | 🗑️ 削除候補 | `agent_012fiB96rVWvcWkRY1E74M1Q` | 「Untitled agent」= Console 操作中の下書き残骸 |
 
 - PoC 対象リポジトリ: `Kensan196948G/Synapse-OS`（PAT はこの 1 リポジトリ限定）
