@@ -106,6 +106,19 @@ JSONL
   [[ "$output" == "high|"*"+effort:task(monitor)" ]]
 }
 
+@test "taskEffort: 大文字の effort 値 (High) も小文字正規化して受理する" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "High" } } }\n' > "$TEST_TEMP/te-vcase.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-vcase.json" bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s" "$MODEL_ROUTER_EFFORT"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "high" ]
+}
+
+@test "CLAUDEOS_MODEL_EFFORT: 大文字値 (HIGH) も小文字正規化して受理する" {
+  run env CLAUDEOS_MODEL_EFFORT=HIGH bash -c 'source "'"$ROUTER"'"; model_router__select normal; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "high|"*"+effort:forced" ]]
+}
+
 @test "record: 選択結果を model-usage.jsonl に追記する" {
   run bash -c 'source "'"$ROUTER"'"; model_router__select docs; model_router__record_selection Demo test docs'
   [ "$status" -eq 0 ]
