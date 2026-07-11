@@ -314,3 +314,64 @@ JSON
   "
   [ "$output" = "GroupB/App3" ]
 }
+
+# ─── launcher__select_project: 単一グループ (グループ選択スキップ) ─
+
+_setup_single_group() {
+  local base="$TEST_TEMP/sgprojects"
+  mkdir -p "$base/GroupA/App1/.git" "$base/GroupA/App2/.git"
+  cat > "$TEST_TEMP/sgconfig.json" <<JSON
+{ "projects": "$base", "projectGroups": ["GroupA"] }
+JSON
+}
+
+@test "select(single-group): グループ選択を省略し番号1回で GroupA/App1 を返す" {
+  _setup_single_group
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/sgconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n' | launcher__select_project foreground 2>/dev/null
+  "
+  [ "$output" = "GroupA/App1" ]
+}
+
+@test "select(single-group): グループ選択画面を表示しない" {
+  _setup_single_group
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/sgconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n' | launcher__select_project foreground
+  " 2>&1
+  [[ "$output" != *"グループ選択 ["* ]]
+  [[ "$output" == *"GroupA のプロジェクト"* ]]
+}
+
+@test "select(single-group): 0 は空を返して終了する (無限ループしない)" {
+  _setup_single_group
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/sgconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '0\n' | launcher__select_project foreground 2>/dev/null
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+@test "select(single-group): サブが 0 件なら空を返して終了する" {
+  local base="$TEST_TEMP/sgempty"
+  mkdir -p "$base/GroupA"
+  cat > "$TEST_TEMP/sgempty.json" <<JSON
+{ "projects": "$base", "projectGroups": ["GroupA"] }
+JSON
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/sgempty.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    launcher__select_project foreground </dev/null 2>/dev/null
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
