@@ -2,12 +2,15 @@
 
 ## 目的
 
-Opus 4.8 と Sonnet 4.6 を、品質優先のタスク分類と利用量バランスで自動的に使い分けます。
+Opus 4.8 と Sonnet 5 を、品質優先のタスク分類と利用量バランスで自動的に使い分けます。
+既定モデルは **Sonnet 5 + effort `max`**（通常タスクはすべて Sonnet 5 ルート）。
 
 | 用途 | モデル | effort |
 |---|---|---|
 | 設計判断、アーキテクチャ、重大バグ、Security、PR最終レビュー | `claude-opus-4-8` | `xhigh` |
-| 通常実装、テスト修正、軽微なリファクタ、ドキュメント | `claude-sonnet-4-6` | `max` |
+| 通常実装、テスト修正、軽微なリファクタ、ドキュメント（既定） | `claude-sonnet-5` | `max` |
+
+Sonnet 5 は 1M context 対応（2026-08-31 まで $2/$10 per Mtok のプロモ価格）。
 
 ## 5% バランス
 
@@ -34,7 +37,7 @@ Opus 4.8 と Sonnet 4.6 を、品質優先のタスク分類と利用量バラ�
     "usageFile": "~/.claudeos/model-usage.jsonl",
     "models": {
       "opus": { "id": "claude-opus-4-8", "effort": "xhigh" },
-      "sonnet": { "id": "claude-sonnet-4-6", "effort": "max" }
+      "sonnet": { "id": "claude-sonnet-5", "effort": "max" }
     }
   }
 }

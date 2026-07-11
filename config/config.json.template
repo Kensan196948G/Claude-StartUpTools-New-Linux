@@ -141,13 +141,13 @@
     "ledgerPath": "/home/kensan/.claudeos/credits/ledger.jsonl"
   },
   "modelRouter": {
-    "_comment": "Opus 4.8 / Sonnet 4.6 自動使い分け。Security/architecture/release は Opus、通常実装/test/docs は Sonnet。利用差が balanceThresholdPct 以上なら低利用モデルへ切替。",
+    "_comment": "Opus 4.8 / Sonnet 5 自動使い分け。Security/architecture/release は Opus、通常実装/test/docs は Sonnet 5 (既定モデル・effort=max)。利用差が balanceThresholdPct 以上なら低利用モデルへ切替。",
     "enabled": true,
     "balanceThresholdPct": 5,
     "usageFile": "~/.claudeos/model-usage.jsonl",
     "models": {
       "opus": { "id": "claude-opus-4-8", "effort": "xhigh" },
-      "sonnet": { "id": "claude-sonnet-4-6", "effort": "max" }
+      "sonnet": { "id": "claude-sonnet-5", "effort": "max" }
     }
   },
   "email": {

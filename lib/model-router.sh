@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
-# model-router.sh — Opus 4.8 / Sonnet 4.6 自動選択
+# model-router.sh — Opus 4.8 / Sonnet 5 自動選択
 #
 # 方針:
 #   - 高リスク/設計/Release/PR最終レビューは Opus 4.8 + xhigh
-#   - 通常実装/テスト/docs/軽微リファクタは Sonnet 4.6 + max
+#   - 通常実装/テスト/docs/軽微リファクタは Sonnet 5 + max (既定)
 #   - 利用比率差が閾値(既定5%)以上なら、低利用モデルへ寄せる
 #   - 記録単位は session start。実 token/cost は stream-json から別途捕捉可能。
 # ============================================================
@@ -53,7 +53,7 @@ model_router__model_for_key() {
       MODEL_ROUTER_EFFORT="${CLAUDEOS_OPUS_EFFORT:-$(model_router__config_get '.modelRouter.models.opus.effort' 'xhigh')}"
       ;;
     sonnet)
-      MODEL_ROUTER_MODEL="${CLAUDEOS_SONNET_MODEL:-$(model_router__config_get '.modelRouter.models.sonnet.id' 'claude-sonnet-4-6')}"
+      MODEL_ROUTER_MODEL="${CLAUDEOS_SONNET_MODEL:-$(model_router__config_get '.modelRouter.models.sonnet.id' 'claude-sonnet-5')}"
       MODEL_ROUTER_EFFORT="${CLAUDEOS_SONNET_EFFORT:-$(model_router__config_get '.modelRouter.models.sonnet.effort' 'max')}"
       ;;
     *)

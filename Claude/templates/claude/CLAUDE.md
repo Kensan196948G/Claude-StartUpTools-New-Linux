@@ -820,12 +820,12 @@ Agent Teams で並列に動き、Agent View で監視する。
 | モデル | ID | 特徴 |
 |---|---|---|
 | **Opus 4.8** | `claude-opus-4-8` | xhigh effort デフォルト、Fast Mode で 2.5× 高速 |
-| Sonnet 4.6 | `claude-sonnet-4-6` | バランス型（現デフォルト） |
+| **Sonnet 5** | `claude-sonnet-5` | 1M context、バランス型（**現デフォルト**、2026-08-31 までプロモ価格） |
 | Haiku 4.5 | `claude-haiku-4-5-20251001` | 軽量・高速（/goal 達成判定用） |
 
-> **Lean System Prompt**: Opus 4.8 / Sonnet 4.6 でデフォルト有効。コンテキスト効率向上。
+> **Lean System Prompt**: Opus 4.8 / Sonnet 5 でデフォルト有効。コンテキスト効率向上。
 
-ClaudeOS 起動経路では `lib/model-router.sh` により Opus 4.8=`xhigh`、Sonnet 4.6=`max` を自動指定する。
+ClaudeOS 起動経路では `lib/model-router.sh` により Opus 4.8=`xhigh`、Sonnet 5=`max`（既定）を自動指定する。
 利用差が 5% 以上になった場合は、次回起動で利用が少ないモデルへ寄せる。
 
 ## 24. 参照先

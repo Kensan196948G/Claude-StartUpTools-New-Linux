@@ -17,10 +17,10 @@ teardown() { _bats_common_teardown; }
   [ "$output" = "opus|claude-opus-4-8|xhigh" ]
 }
 
-@test "task default: implementation/test/docs は Sonnet 4.6 max" {
+@test "task default: implementation/test/docs は Sonnet 5 max" {
   run bash -c 'source "'"$ROUTER"'"; model_router__select implementation; printf "%s|%s|%s" "$MODEL_ROUTER_KEY" "$MODEL_ROUTER_MODEL" "$MODEL_ROUTER_EFFORT"'
   [ "$status" -eq 0 ]
-  [ "$output" = "sonnet|claude-sonnet-4-6|max" ]
+  [ "$output" = "sonnet|claude-sonnet-5|max" ]
 }
 
 @test "balance: 利用差が5%以上なら少ない Opus へ切り替える" {
