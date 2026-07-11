@@ -557,9 +557,11 @@ CTO は該当するプロジェクト（Web 公開・DB 利用があるもの）
 
 ### フェーズ別の使いどころ
 
+ツール名はプラグイン MCP の実ツール名（ToolSearch で検索・スキーマ取得可能）。
+
 | フェーズ | Cloudflare ☁️ | Neon 🐘 |
 |---|---|---|
-| 🔍 Monitor | `observability` で本番 Worker のログ・エラー率を確認、`builds` で直近デプロイの CI ログ確認 | `list_slow_queries` で遅いクエリ検出、`describe_project` / ブランチ状態確認 |
+| 🔍 Monitor | `query_worker_observability` で本番 Worker のログ・エラー率を確認、`workers_builds_list_builds` で直近デプロイの CI 状況確認 | `list_slow_queries` で遅いクエリ検出、`describe_project` / ブランチ状態確認 |
 | 🔨 Build | `search_cloudflare_documentation` / skills（`workers-best-practices`・`wrangler`・`durable-objects` 等）で実装ガイド参照 | **dev ブランチを作成して隔離検証**（`create_branch` → `run_sql`）。main ブランチへ直接 DDL を流さない |
 | ✅ Verify | `workers_builds_get_build_logs` でビルド失敗解析、`query_worker_observability` で動作確認 | `prepare_database_migration` → dev ブランチでテスト → 結果確認。`explain_sql_statement` で実行計画検証 |
 | 🚀 Deploy 準備 | バインディング（D1/KV/R2）の設定値を確認し手順書へ記載 | `compare_database_schema` で差分確認、接続文字列の設定手順を手順書へ記載 |
@@ -570,8 +572,8 @@ CTO は該当するプロジェクト（Web 公開・DB 利用があるもの）
 |---|---|
 | ログ・メトリクス・ビルド状況の照会 | 本番デプロイ・本番公開 |
 | docs / skills 参照、設定値の読み取り | D1/KV/R2/Hyperdrive 等リソースの**新規作成・削除** |
-| Neon dev ブランチの作成・検証・削除 | Neon **プロジェクト**の作成・削除 |
-| dev ブランチでの SQL 実行・migration 検証 | **本番ブランチへの migration 適用**（`complete_database_migration` 含む DB スキーマ変更） |
+| Neon dev ブランチの作成・検証 | Neon **プロジェクト**の作成・削除、**dev ブランチの削除**（データ削除=人間承認の原則どおり） |
+| dev ブランチ上での SQL/DDL・migration 検証（本番へ波及しない隔離環境に限る） | **本番（main）ブランチへの一切の適用**（`complete_database_migration` 含む DB スキーマ変更） |
 | slow query 分析・チューニング提案 | 接続文字列・API トークン等 Secrets の登録・変更 |
 
 - 課金が発生し得る操作（リソース作成・プラン変更）は事前に判断材料と推奨案を提示し、人間の明示承認を待つ
