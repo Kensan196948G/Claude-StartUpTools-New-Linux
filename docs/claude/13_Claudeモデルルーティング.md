@@ -39,10 +39,26 @@ Sonnet 5 は 1M context 対応（2026-08-31 まで $2/$10 per Mtok のプロモ�
     "models": {
       "opus": { "id": "claude-opus-4-8", "effort": "xhigh" },
       "sonnet": { "id": "claude-sonnet-5", "effort": "max" }
-    }
+    },
+    "taskEffort": {}
   }
 }
 ```
+
+### フェーズ別 effort（`taskEffort`・opt-in）
+
+`modelRouter.taskEffort` にキー（task 部分一致）→ effort のマップを書くと、該当タスクだけ
+effort を上書きできます。**空 `{}`（既定）なら挙動は従来どおり**（Sonnet 5=`max` / Opus=`xhigh`）。
+effort は「思考時間」だけでなく読むファイル数・検証量・チェックイン頻度を制御するため、
+軽量フェーズだけ下げる使い方を想定しています。
+
+```json
+"taskEffort": { "monitor": "high", "improve": "high" }
+```
+
+- 上例では Monitor / Improve フェーズのみ `high` へ軽量化し、Verify / Review / Security は既定を維持
+- 値は `low|medium|high|xhigh|max` のみ有効（不正値は無視 = 起動失敗を予防）
+- 適用時は選択ログの `reason` に `+effort:task(<キー>)` が付く
 
 環境変数で一時上書きできます。
 
@@ -51,6 +67,7 @@ Sonnet 5 は 1M context 対応（2026-08-31 まで $2/$10 per Mtok のプロモ�
 | `CLAUDEOS_MODEL_ROUTER=0` | 自動モデル指定を無効化 |
 | `CLAUDEOS_MODEL_KEY=opus` / `sonnet` | 強制モデル指定 |
 | `CLAUDEOS_MODEL_TASK=security` | タスク分類を明示 |
+| `CLAUDEOS_MODEL_EFFORT=high` | effort を強制上書き（taskEffort より優先・`reason` に `+effort:forced`） |
 | `CLAUDEOS_MODEL_BALANCE_THRESHOLD_PCT=5` | 切替閾値 |
 | `CLAUDEOS_MODEL_USAGE_FILE=/path/file.jsonl` | 利用台帳パス |
 | `CLAUDEOS_OPUS_MODEL` / `CLAUDEOS_OPUS_EFFORT` | Opus 側上書き |

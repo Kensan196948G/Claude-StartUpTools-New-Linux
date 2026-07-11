@@ -62,6 +62,27 @@ model_router__model_for_key() {
   esac
 }
 
+# taskEffort: config の .modelRouter.taskEffort (キー→effort のマップ) を部分一致で引く。
+#   キーが task 文字列に含まれれば対応 effort を返す (opt-in・未設定なら空 = モデル既定を維持)。
+#   キー比較・effort 値とも case-insensitive (task_default の小文字化と整合)。reason 用に元キーを返す。
+#   effort 値は low|medium|high|xhigh|max のみ受理し、不正値は無視する (--effort 起動失敗の予防)。
+model_router__task_effort() {
+  local task="$1" cfg="${CCSU_CONFIG_PATH:-${AI_STARTUP_CONFIG_PATH:-}}"
+  [[ -n "$cfg" && -f "$cfg" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local task_lc k v k_lc v_lc
+  task_lc="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
+  while IFS=$'\t' read -r k v; do
+    k_lc="$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')"
+    [[ -n "$k_lc" && "$task_lc" == *"$k_lc"* ]] || continue
+    v_lc="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
+    [[ "$v_lc" =~ ^(low|medium|high|xhigh|max)$ ]] || continue
+    printf '%s\t%s' "$k" "$v_lc"
+    return 0
+  done < <(jq -r '.modelRouter.taskEffort // {} | to_entries[] | "\(.key)\t\(.value)"' "$cfg" 2>/dev/null || true)
+  return 0
+}
+
 model_router__task_default() {
   local task="${1:-${CLAUDEOS_MODEL_TASK:-normal}}"
   task="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
@@ -152,6 +173,24 @@ model_router__select() {
 
   MODEL_ROUTER_KEY="$key"
   model_router__model_for_key "$key"
+
+  # effort 上書き: CLAUDEOS_MODEL_EFFORT (強制) > taskEffort (config opt-in) > モデル既定
+  # 値は小文字正規化して判定 (case-insensitive)。不正な env 値は「未設定扱い」で
+  # taskEffort へフォールバックする (有効な config 設定を巻き込まない)。
+  local forced_effort_lc
+  forced_effort_lc="$(printf '%s' "${CLAUDEOS_MODEL_EFFORT:-}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$forced_effort_lc" =~ ^(low|medium|high|xhigh|max)$ ]]; then
+    MODEL_ROUTER_EFFORT="$forced_effort_lc"
+    MODEL_ROUTER_REASON="${MODEL_ROUTER_REASON}+effort:forced"
+  else
+    local te_key te_val te
+    te="$(model_router__task_effort "$task")"
+    if [[ -n "$te" ]]; then
+      te_key="${te%%$'\t'*}"; te_val="${te#*$'\t'}"
+      MODEL_ROUTER_EFFORT="$te_val"
+      MODEL_ROUTER_REASON="${MODEL_ROUTER_REASON}+effort:task(${te_key})"
+    fi
+  fi
 }
 
 model_router__json_escape() {

@@ -31,6 +31,32 @@ cron 登録は 1 日 2 プロジェクトまで、1 セッション 300 分ま�
 | 🧬 fallbackModel | settings.json `"fallbackModel": ["opus", "sonnet", "haiku"]`（最大 3 段） | プライマリモデル過負荷・利用不可時に自動フォールバック |
 | 🚨 waitingFor 監視 | `watch-session.sh` が `claude agents --json` の `waitingFor == "permission prompt"` を検出して警告 | headless で自力前進できない permission 待ちスタックを可視化（対処: 手動介入 or `permissions.allow` 追加） |
 
+### MCP 認証の headless 復旧（v2.1.186+）
+
+headless セッションは OAuth のブラウザフローを開けないため、MCP サーバーの認証切れは
+「ツール呼び出しの 401/403」や `waitingFor` スタックとして現れます。復旧は**信頼端末での
+CLI 認証**で行います（v2.1.186 の `claude mcp login/logout` が headless 認証に対応）:
+
+```bash
+# 認証状態の確認（v2.1.162+ は credential/URL を自動マスクして表示）
+claude mcp list
+
+# 認証切れサーバーへ再ログイン（ブラウザフローを CLI 起点で実行）
+claude mcp login <server-name>
+
+# 認証情報の破棄（トークン失効・ローテーション時）
+claude mcp logout <server-name>
+```
+
+運用ルール:
+
+1. 🟦 **cron セッション開始前の点検**: 長期運用サーバー（GitHub 等）は `claude mcp list` で
+   認証状態を確認してから cron スロットに乗せる
+2. 🟨 **headless 中に認証切れを検知**（ログの 401/403、`waitingFor` 警告）: そのセッションは
+   MCP 抜きで継続できるなら継続し、次セッション開始前に信頼端末で `claude mcp login` を実施
+3. 🔴 **トークン漏えい疑い**: `claude mcp logout` → 提供元でトークン revoke → 再ログインの順
+   （Secrets 操作は人間決裁の範囲）
+
 ## 2. TUI 退避への切替（課金枯渇・障害時）
 
 headless が使えない/使いたくない場合は **明示的に TUI へ退避**します。tmux はさらに明示した場合だけ使います。

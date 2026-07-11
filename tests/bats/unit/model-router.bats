@@ -51,6 +51,74 @@ JSONL
   [ "$output" = "opus|forced:opus" ]
 }
 
+@test "taskEffort: config の部分一致キーで effort を上書きし reason に痕跡を残す" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "high" } } }\n' > "$TEST_TEMP/te.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te.json" bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s|%s|%s" "$MODEL_ROUTER_MODEL" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "claude-sonnet-5|high|"*"+effort:task(monitor)" ]]
+}
+
+@test "taskEffort: 未設定なら既定 effort (max) を維持する" {
+  printf '{ "modelRouter": { "taskEffort": {} } }\n' > "$TEST_TEMP/te-empty.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-empty.json" bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "max|task:monitor" ]]
+}
+
+@test "taskEffort: 不正な effort 値は無視して既定を維持する" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "turbo" } } }\n' > "$TEST_TEMP/te-bad.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-bad.json" bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s" "$MODEL_ROUTER_EFFORT"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "max" ]
+}
+
+@test "taskEffort: opus ルートのタスクにも部分一致で適用される" {
+  printf '{ "modelRouter": { "taskEffort": { "release": "high" } } }\n' > "$TEST_TEMP/te-opus.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-opus.json" bash -c 'source "'"$ROUTER"'"; model_router__select mvp-release; printf "%s|%s" "$MODEL_ROUTER_MODEL" "$MODEL_ROUTER_EFFORT"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "claude-opus-4-8|high" ]
+}
+
+@test "CLAUDEOS_MODEL_EFFORT: taskEffort より優先して強制上書きする" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "high" } } }\n' > "$TEST_TEMP/te-force.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-force.json" CLAUDEOS_MODEL_EFFORT=low bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "low|"*"+effort:forced" ]]
+}
+
+@test "CLAUDEOS_MODEL_EFFORT: 不正値は無視して既定を維持する" {
+  run env CLAUDEOS_MODEL_EFFORT=turbo bash -c 'source "'"$ROUTER"'"; model_router__select normal; printf "%s" "$MODEL_ROUTER_EFFORT"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "max" ]
+}
+
+@test "CLAUDEOS_MODEL_EFFORT: 不正値は未設定扱いで taskEffort へフォールバックする" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "high" } } }\n' > "$TEST_TEMP/te-fallback.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-fallback.json" CLAUDEOS_MODEL_EFFORT=turbo bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "high|"*"+effort:task(monitor)" ]]
+}
+
+@test "taskEffort: 大文字混じり task (Monitor) にも case-insensitive で一致する" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "high" } } }\n' > "$TEST_TEMP/te-case.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-case.json" bash -c 'source "'"$ROUTER"'"; model_router__select Monitor; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "high|"*"+effort:task(monitor)" ]]
+}
+
+@test "taskEffort: 大文字の effort 値 (High) も小文字正規化して受理する" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "High" } } }\n' > "$TEST_TEMP/te-vcase.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-vcase.json" bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s" "$MODEL_ROUTER_EFFORT"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "high" ]
+}
+
+@test "CLAUDEOS_MODEL_EFFORT: 大文字値 (HIGH) も小文字正規化して受理する" {
+  run env CLAUDEOS_MODEL_EFFORT=HIGH bash -c 'source "'"$ROUTER"'"; model_router__select normal; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "high|"*"+effort:forced" ]]
+}
+
 @test "record: 選択結果を model-usage.jsonl に追記する" {
   run bash -c 'source "'"$ROUTER"'"; model_router__select docs; model_router__record_selection Demo test docs'
   [ "$status" -eq 0 ]
