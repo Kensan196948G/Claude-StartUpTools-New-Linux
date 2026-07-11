@@ -62,6 +62,23 @@ model_router__model_for_key() {
   esac
 }
 
+# taskEffort: config の .modelRouter.taskEffort (キー→effort のマップ) を部分一致で引く。
+#   キーが task 文字列に含まれれば対応 effort を返す (opt-in・未設定なら空 = モデル既定を維持)。
+#   effort 値は low|medium|high|xhigh|max のみ受理し、不正値は無視する (--effort 起動失敗の予防)。
+model_router__task_effort() {
+  local task="$1" cfg="${CCSU_CONFIG_PATH:-${AI_STARTUP_CONFIG_PATH:-}}"
+  [[ -n "$cfg" && -f "$cfg" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local k v
+  while IFS=$'\t' read -r k v; do
+    [[ -n "$k" && "$task" == *"$k"* ]] || continue
+    [[ "$v" =~ ^(low|medium|high|xhigh|max)$ ]] || continue
+    printf '%s\t%s' "$k" "$v"
+    return 0
+  done < <(jq -r '.modelRouter.taskEffort // {} | to_entries[] | "\(.key)\t\(.value)"' "$cfg" 2>/dev/null || true)
+  return 0
+}
+
 model_router__task_default() {
   local task="${1:-${CLAUDEOS_MODEL_TASK:-normal}}"
   task="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
@@ -152,6 +169,22 @@ model_router__select() {
 
   MODEL_ROUTER_KEY="$key"
   model_router__model_for_key "$key"
+
+  # effort 上書き: CLAUDEOS_MODEL_EFFORT (強制) > taskEffort (config opt-in) > モデル既定
+  if [[ -n "${CLAUDEOS_MODEL_EFFORT:-}" ]]; then
+    if [[ "${CLAUDEOS_MODEL_EFFORT}" =~ ^(low|medium|high|xhigh|max)$ ]]; then
+      MODEL_ROUTER_EFFORT="$CLAUDEOS_MODEL_EFFORT"
+      MODEL_ROUTER_REASON="${MODEL_ROUTER_REASON}+effort:forced"
+    fi
+  else
+    local te_key te_val te
+    te="$(model_router__task_effort "$task")"
+    if [[ -n "$te" ]]; then
+      te_key="${te%%$'\t'*}"; te_val="${te#*$'\t'}"
+      MODEL_ROUTER_EFFORT="$te_val"
+      MODEL_ROUTER_REASON="${MODEL_ROUTER_REASON}+effort:task(${te_key})"
+    fi
+  fi
 }
 
 model_router__json_escape() {
