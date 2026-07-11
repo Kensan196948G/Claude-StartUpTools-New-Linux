@@ -92,6 +92,20 @@ JSONL
   [ "$output" = "max" ]
 }
 
+@test "CLAUDEOS_MODEL_EFFORT: 不正値は未設定扱いで taskEffort へフォールバックする" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "high" } } }\n' > "$TEST_TEMP/te-fallback.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-fallback.json" CLAUDEOS_MODEL_EFFORT=turbo bash -c 'source "'"$ROUTER"'"; model_router__select monitor; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "high|"*"+effort:task(monitor)" ]]
+}
+
+@test "taskEffort: 大文字混じり task (Monitor) にも case-insensitive で一致する" {
+  printf '{ "modelRouter": { "taskEffort": { "monitor": "high" } } }\n' > "$TEST_TEMP/te-case.json"
+  run env AI_STARTUP_CONFIG_PATH="$TEST_TEMP/te-case.json" bash -c 'source "'"$ROUTER"'"; model_router__select Monitor; printf "%s|%s" "$MODEL_ROUTER_EFFORT" "$MODEL_ROUTER_REASON"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "high|"*"+effort:task(monitor)" ]]
+}
+
 @test "record: 選択結果を model-usage.jsonl に追記する" {
   run bash -c 'source "'"$ROUTER"'"; model_router__select docs; model_router__record_selection Demo test docs'
   [ "$status" -eq 0 ]
