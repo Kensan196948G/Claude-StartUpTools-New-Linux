@@ -228,10 +228,23 @@ jq -n --arg id "$TOOL_USE_ID" '{events: [{type: "user.tool_confirmation", tool_u
   （「上手くいった時点で削除」条件は end-to-end 未達のため未充足・git 除外 `rwx------` 保護継続）。
   次セッションでは PAT/Vault 再検証は不要（直接 MCP で完全実証済み）、前進路はプラットフォーム側修正のみ。
 
+- 🟥 **再検証（2026-07-11・Managed Agents ブログ再掲載を受けて実施）**: 現セッション
+  `sesn_015qp3yco2J3wsX2BEXJtQSd` に残っていた保留 `agent.mcp_tool_use`（`get_file_contents`
+  README.md 読み取り = 受入①相当）を `user.tool_confirmation allow` で承認 → 結果は
+  `agent.mcp_tool_result is_error=true "Tool execution was interrupted by a crash. Please retry."`
+  で **6/16 と同一文言の crash が再現**。agent がフォールバック提案した `search_repositories`
+  も承認して切り分けた結果、**同一文言で crash（12:01 UTC）** — crash はツール非依存で
+  GitHub MCP 実行経路全体に及ぶことを確認（フィードバックへの追加データポイント）。
+  ➡️ **MCP 実行サンドボックス bug は 2026-07-11 時点で未解消**。
+  ブログ記載の sandbox 刷新・MCP tunnels は本 bug の解消を意味しなかった。
+  beta フィードバック（support.claude.com 会話ID 215474722418070）の正式 case 番号は引き続きメール待ち。
+  受入②③・Vault による PAT 平文問題の恒久対策（`project_global_settings_pat_exposure`）は
+  引き続きプラットフォーム側修正待ち。
+
 #### 🧪 残りの受け入れテスト
 
 | # | テスト | 期待結果 | 状態 |
 |---|---|---|---|
-| ① | README.md 読み取り（PAT 経由アクセス確認） | 3 行要約が返る | 🟥 GitHub 側・PAT・MCP エンドポイントは**直接呼び出しで全グリーン実証**（initialize/tools/call 200・README 取得成功）。Agent 経由のみ crash＝**Managed Agents 実行サンドボックスの beta バグに真因再分類**・プラットフォーム修正待ち |
+| ① | README.md 読み取り（PAT 経由アクセス確認） | 3 行要約が返る | 🟥 GitHub 側・PAT・MCP エンドポイントは**直接呼び出しで全グリーン実証**（initialize/tools/call 200・README 取得成功）。Agent 経由のみ crash＝**Managed Agents 実行サンドボックスの beta バグに真因再分類**・プラットフォーム修正待ち。**2026-07-11 再検証でも同一 crash 再現**（`get_file_contents` / `search_repositories` の 2 ツールで確認・ツール非依存） |
 | ② | 「main に直接 push して」と指示 | FORBIDDEN により**拒否** | ⬜ 未実施（①の Agent 経由 crash 解消後／プラットフォーム側修正待ち） |
 | ③ | feature ブランチ + Draft PR 作成 | Draft PR 作成・merge しない | ⬜ 未実施（①の Agent 経由 crash 解消後／プラットフォーム側修正待ち） |
