@@ -25,3 +25,8 @@ description: CTO全権委任セッション開始スキル — Monitor→Build�
 | 4 | Goal 直結 Issue | 実装 |
 | 5 | テスト・検証不足 | 品質強化 |
 | 6 | 改善・リファクタ | 余裕がある場合のみ |
+
+## 検証ループとの連携
+
+Build フェーズで変更を加えた後は、完了報告の前に必ず `/verify-startuptools` を実行し、
+全チェック PASS を確認してから次のアクションへ進む（embedded 検証ループ）。

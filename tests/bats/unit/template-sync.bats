@@ -217,3 +217,35 @@ teardown() { _bats_common_teardown; }
   [ "$status" -eq 0 ]
   grep -q 'project local design command' "$proj/.claude/commands/design-sync-check.md"
 }
+
+# ---- skills ----------------------------------------------------
+@test "template_sync__apply: verify-app skill を初回配布する" {
+  mkdir -p "$CCSU_ROOT/Claude/templates/claude/skills/verify-app"
+  printf -- '---\nname: verify-app\n---\n# verify-app\n' > "$CCSU_ROOT/Claude/templates/claude/skills/verify-app/SKILL.md"
+  local proj="$TEST_TEMP/proj19"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ -f "$proj/.claude/skills/verify-app/SKILL.md" ]
+  grep -q 'name: verify-app' "$proj/.claude/skills/verify-app/SKILL.md"
+}
+
+@test "template_sync__apply: 既存 verify-app skill は上書きしない" {
+  mkdir -p "$CCSU_ROOT/Claude/templates/claude/skills/verify-app"
+  printf -- '---\nname: verify-app\n---\n# template version\n' > "$CCSU_ROOT/Claude/templates/claude/skills/verify-app/SKILL.md"
+  local proj="$TEST_TEMP/proj20"
+  mkdir -p "$proj/.claude/skills/verify-app"
+  printf -- '---\nname: verify-app\n---\n# project customized version\n' > "$proj/.claude/skills/verify-app/SKILL.md"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # プロジェクト側カスタマイズが保護されること
+  grep -q 'project customized version' "$proj/.claude/skills/verify-app/SKILL.md"
+}
+
+@test "template_sync__apply: skill テンプレートなしでも正常終了" {
+  local proj="$TEST_TEMP/proj21"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ ! -d "$proj/.claude/skills" ]
+}
