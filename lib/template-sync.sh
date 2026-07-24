@@ -7,6 +7,7 @@
 #   START_PROMPT.md  : 毎回上書き (セッション開始プロンプト)
 #   CLAUDE.md        : 存在しない場合のみ配布 (プロジェクト固有設定を保護)
 #   selected commands : 存在しない場合のみ .claude/commands へ配布
+#   selected skills   : 存在しない場合のみ .claude/skills/<name>/SKILL.md へ配布
 #   .coderabbit.yaml : 差分ありのみバックアップ→上書き (リポジトリルートへ配布)
 #
 # テスト用 env 上書き:
@@ -82,6 +83,22 @@ template_sync__apply() {
     if [[ ! -f "$dst_cmd" ]]; then
       cp "$src_cmd" "$dst_cmd"
       log_info "📄 /${cmd} command 配布: $dst_cmd"
+    fi
+  done
+
+  # ClaudeCode skills: 検証ループ skill を starter として配布する。
+  # スキル自動発見の条件は <name>/SKILL.md 形式 (flat .md は認識されない)。
+  # 既存同名 skill はプロジェクト側カスタマイズとして保護し、上書きしない。
+  local skill src_skill dst_skill
+  # shellcheck disable=SC2043  # 配布リストは今後増える前提の単一要素
+  for skill in verify-app; do
+    src_skill="$tmpl_dir/skills/${skill}/SKILL.md"
+    [[ -f "$src_skill" ]] || continue
+    dst_skill="$project_dir/.claude/skills/${skill}/SKILL.md"
+    if [[ ! -f "$dst_skill" ]]; then
+      mkdir -p "$project_dir/.claude/skills/${skill}"
+      cp "$src_skill" "$dst_skill"
+      log_info "📄 ${skill} skill 配布: $dst_skill"
     fi
   done
 }
