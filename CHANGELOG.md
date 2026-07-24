@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- 🔁 検証ループのスキル化（Anthropic ブログ 2026-07-22 準拠、`docs/claude/18_検証ループ運用.md` 正本）。
+  - `.claude/skills/` を `<name>/SKILL.md` ディレクトリ形式へ移行
+    （flat `.md` は Claude Code のスキル自動発見対象外と実証・移行後に認識を確認）。
+  - `/verify-startuptools` 新設: bash 構文・bats/node テスト・テンプレート整合性・
+    正本/テンプレ同期・secret 確認を PASS まで反復する本リポジトリ固有の検証ループ。
+  - 配布 starter スキル `verify-app` 新設（`Claude/templates/claude/skills/`）。
+    `lib/template-sync.sh` が登録プロジェクトの `.claude/skills/` へ
+    存在しない場合のみ配布（プロジェクト側カスタマイズ保護）。
+  - claudeos `verification-loop` スキルをブログ準拠に改訂
+    （4 起動形態 standalone / embedded / chained / on-every-PR、スキル化 6 ステップ、
+    修正上限 → BLOCKED のループ規則。正本と配布テンプレートを同期）。
+
 ### Removed
 
 - `bin/monitor-sessions.sh`（🎛️ コントロールセンター / `claudeos-monitor`）とそのテスト
