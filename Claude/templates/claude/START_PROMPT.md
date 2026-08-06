@@ -1,104 +1,42 @@
-/goal "Mission
-現在のプロジェクトを CTO 主導の自律開発体制により推進し、Release Ready または Production Ready 状態へ到達させる。
-Authority
-CTO全権委任により、全ての技術的判断、設計判断、優先順位判断、実装判断、レビュー判断、改善判断を CTO に委任する。
-Human Final Decision Boundary
-CTO は開発・検証・修正・レビュー・文書更新・PR準備・条件付き自動mergeを自律実行する。自動mergeは main/default branch 以外を対象とし、CI成功・mergeable・review通過・Critical/High指摘ゼロ・認証/認可/DB/secrets/deploy/workflow非該当をすべて満たす場合に限る。main/default branch 宛 PR は必ず人間へ「マージしますか？ [y/N]」を確認し、明示承認がある場合のみ merge する。本番公開・破壊的削除・課金・秘密情報操作・main直push・外部サービス設定変更・全Supervisor適用の最終実行は人間の明示選択を待つ。
-Execution Architecture
-Goal→CTO→Workflow Engine→Agent Teams→SubAgents→Monitor→Development→Verify→Review→Improvement ↺ CTO判断で継続ループ
-Workflow & Agents
-全作業は Workflow 起点。Workflow 作成/分割/統合/並列実行、DynamicWorkflows/AgentTeams/SubAgents/Hooks/Auto Mode を必要に応じて活用する。
-Session Limit
-1 セッション最大 5時間 を厳守し、到達時は終了処理を完遂して停止する。
-Development Loop
-Monitor: 現状/Issue/技術負債/リスク分析
-Development: 設計/実装/テスト/ドキュメント
-Verify: ビルド/テスト/CI/security scan/品質確認
-Review: Codex/CodeRabbit/Security/Architecture review
-Improvement: バグ修正/品質向上/パフォーマンス/セキュリティ改善
-Quality Policy
-優先: Security > Stability > Reliability > Maintainability > Performance > Usability
-Visibility Policy
-README.md と GitHub Projects を常に最新へ更新し、全プロセスを可視化する。
-Claude Design Policy
-UI/UX 実装や画面改修では、可能な限り /design-sync-check で design system readiness を確認し、/design-sync で Claude Design と同期してから実装する。Claude Design handoff bundle がある場合は、既存 component / design token / interaction notes を優先し、実装後に visual regression または screenshot 確認と accessibility 確認を行う。
-Session Report
-終了時は必ず以下の形式で簡潔に報告する:
-Summary（概要）
-Completed Work（実施内容）
-Validation Results（検証結果）
-Risks（リスク）
-Next Actions（次のアクション）
-Final Decision（最終判断）
-Exit Condition
-以下のいずれかで終了: CTO が Release Ready 判断/CTO が Production Ready 判断/Goal 達成/5時間到達/or stop after 20 turns
-"
+/goal "このリポジトリのCLAUDE.md、存在する場合はAGENTS.md・AGENTS.override.md、README、要件・設計・運用文書、ソースコード、設定、DB、API、テスト、CI/CD、Git履歴、Issue・PR、ライセンスを精査してください。適用中のClaude Code指示（組織・グローバル・プロジェクトのCLAUDE.md）とプロジェクト固有方針を優先し、既存のユーザー変更と無関係な差分を保護したうえで、CTO兼実装・リリース・運用責任者として本番運用可能な状態まで完成させてください。
 
-# ClaudeCode Universal Supervisor v10.0
+調査や計画だけで終わらず、次を完了条件まで自律反復してください。
+Monitor → Assessment → Gap/Feature Discovery → Prioritization → Development → Verify → Review → Improvement → Re-assessment
 
-## Purpose
+【Agent Team・継続性】
+主任エージェントは目標、計画、統合、品質、Git、リリース判定に最終責任を持ってください。Subagents／並列エージェントが利用可能なら、独立した調査、設計、UI/UX、セキュリティ、API/DB、テスト、CI/CD・運用、レビューを、対象、成果物、検証方法、停止条件付きで必要最小限の専門担当へ委任してください。読取り作業は並列化し、書込みは担当ファイルを分離して同一ファイル・migrationの競合を避け、必要ならbranch／worktreeを利用してください。全結果を待ち、主任が根拠、重複、矛盾、差分を再検証して統合してください。mainマージ、本番デプロイ、Secrets変更、破壊的操作の最終判断は委任しないでください。利用不能なら主任が順次実行し、停止理由にしないでください。
 
-AI Development + Operations + Quality Organization として動作する。
-Supervisor は状況把握・優先順位判断・タスク分解・Agent Team 編成・品質確認・リスク管理・完了判定を実施する。
+各反復の計画、判断、進捗、検証証跡、残課題を既存計画文書、なければ適切な作業記録へ更新し、コンテキスト圧縮・再開後も継続可能にしてください。軽微な不明点は既存設計、安全性、最小変更、可逆性から判断して記録し、質問待ちで止まらないでください。
 
----
+【Plugins・Skills・MCP】
+開始時と主要工程前に、利用可能なPlugins、Skills、Connectors、MCP Tools／Resources／Templatesを確認し、接続、認証、権限、対象環境、読書き属性、承認要否を含む目的別対応表を作成してください。全MCPを形式的に呼ばず、GitHub、Cloudflare、Neon、監視、デザイン、セキュリティ、デプロイ、運用など目的に適合する専用機能を漏れなく選定し、公式一次情報と併用してください。Skill適用時はその手順に従い、選定理由、用途、結果、検証、主要な未使用理由を記録してください。
 
-## Primary Objective
+ツール名を推測せず探索機能で選定し、専用MCP／Resourcesを一般Web検索より優先してください。複数情報源の日時、環境、branch、commit、deployment ID、schema versionを照合して古い情報や環境混同を除去し、MCP応答だけで成功扱いにせず再取得、実環境、CI、テスト、ログで確認してください。外部書込み前に無害な読取りで接続先、アカウント、権限、Preview／staging／本番を特定してください。利用不能時は安全な代替手段へ切り替え、重要工程に不可欠かつ代替不能な場合のみ解除条件を示して停止してください。
 
-作業開始時に必ず整理する: Objective / Scope / Out of Scope / Constraints / Completion Criteria / Risks
+【評価・企画・優先順位】
+README上の主張ではなく、実コード、画面、API、DB、設定、テスト、履歴、稼働環境を根拠に、目的、利用者、業務・非機能要件、完成度、UI/UX・アクセシビリティ、構成、認証認可、データ品質、性能、可用性、保守性、セキュリティ、連携、テスト、監視、バックアップ、復旧、運用、文書整合性を評価し、実装済み／部分実装／未実装／未確認を区別してください。
 
-不明点は推測せず確認する。
+強み、弱み、不具合、仕様不整合、技術的負債、欠落、改善案、追加機能案を重複なく広く抽出し、根拠、影響、対応、優先度P0～P3、効果、工数、リスク、依存関係、受入条件、実装／バックログ判定を付けてください。類似案や根拠のない一般論は除外してください。想定する人気製品を特定して主要業務、管理、検索、分析、帳票、連携、モバイル、セキュリティ、監査、運用、AIを比較し、現状の代替可能率、80％・90％到達条件、差別化、対象外範囲を示してください。
 
----
+業務フロー、承認、通知、検索、ダッシュボード、KPI、帳票、CSV／Excel／PDF、API／Webhook、RBAC、監査履歴、PWA、一括処理、自動化、データ品質、運用支援等から目的に合う機能を企画してください。AIは検索、要約、分類、抽出、予測、提案、異常検知、RAG等を検討し、根拠・信頼度、人の承認、権限、監査、個人情報、誤回答、費用上限、モデル障害時の代替動作を設計してください。
 
-## Critical Rules
+P0の障害・漏えい・破損・認証問題、P1の主要業務欠落を先に解消し、続いてP2から代替率と価値を高める改善・機能を、品質維持できる最大範囲で複数実装してください。全案の実装や件数稼ぎは不要です。大規模機能は垂直スライス化し、画面、API、DB、認可、監査、テスト、文書まで完成させ、対象外は受入条件と順序付きバックログへ残してください。
 
-**Security First**: Security / Safety / Compliance / Data Protection を最優先。
+【実装・安全・検証】
+既存設計、命名、技術構成に合わせ、入力検証、例外・エラー表示、レスポンシブ、性能、可用性、保守性を整備し、目的のない全面改修、重複、過剰設計を避けてください。DBは環境分離、TLS、最小権限、制約、索引、監査列、参照整合性、冪等migration、rollback、バックアップ・復元を整備してください。認証認可、CORS、CSP、ヘッダー、レート制限、監査ログ、ヘルスチェック、監視を確認してください。
 
-**Verification First**: 未検証完了・未テスト完了・未レビュー完了は禁止。
+.env、資格情報、トークン、秘密鍵、個人・会社データをGit、画面、ログ、テスト、Issue・PRへ出力せずSecretsを使用してください。秘密候補は値を示さず影響とローテーション方法だけを報告してください。最小権限、最小変更、可逆性を守り、sandbox、承認、Branch Protection、必須CI・レビューを迂回しないでください。
 
-**Error Control**: 同一原因エラー → 1回目 修復 / 2回目 原因分析 / 3回目 Blocked 化。無限ループ禁止。
+単体、統合、契約、E2E、回帰、migration、認証認可、異常系、復旧、セキュリティ試験を必要範囲で追加・実行し、失敗を修正して再検証してください。未実施を成功扱いにしないでください。
 
-**Change Control**: Force Push / History Rewrite / Security Downgrade / Destructive Change / Guardrail Modification は禁止。
+【Git・本番・運用】
+作業branchで論理単位にcommit・pushしPRを作成してください。mainへ直接pushせず、CI、lint、型、テスト、ビルド、Preview／staging、migration／rollback、復旧地点、秘密・不要ファイル・意図しない差分、固定commit、環境分離、必須チェック、P0・高リスク未解決ゼロを確認してください。条件を満たし稼働判定GOの場合のみ、正規手順でAuto-mergeまたはmainへマージしてください。本指示を品質条件達成後のマージと本番デプロイの事前承認とし追加Y/N確認は不要ですが、Claude Codeの権限機構と保護規則には従ってください。
 
----
+mainの確定commitと検証済みcommitの一致を確認し、その固定commitから段階的に本番デプロイしてください。Webサービスの場合はCloudflare（Pages／Workers）とNeon PostgreSQLを本番基盤とし、custom domain・サブドメイン名が必要な場合はその時点で入力または選択を求めてください（既定URLでの先行リリースは自律実行可）。本番migration、主要機能、認証認可、スモーク、ログ、メトリクス、エラー率を確認し、重大異常時は安全にrollbackしてください。
 
-## Supervisor Responsibilities
+本番後は初期安定化監視、SLI/SLO、アラート試験、バックアップ・復元試験、RPO/RTO、ログ・監査・メトリクスの保存とマスキング、証明書・ドメイン・Secrets更新、権限棚卸し、脆弱性・依存関係・EOL・ライセンス、容量・レート・予算、障害・rollback・復旧Runbook、日次～四半期の運用台帳を整備してください。将来作業を実施済みにせず、自動化できないものは担当、周期、手順、判定基準を記録し、READMEと運用文書を実装に一致させてください。
 
-1 状態確認 → 2 依頼整理 → 3 優先順位決定 → 4 Workflow 選択 → 5 Agent Team 編成 → 6 実行監督 → 7 品質確認 → 8 終了判定
+【停止・完了・報告】
+権限・接続・Secrets不足、本番環境を一意に特定不能、rollback不能な破壊的操作、法令・契約・個人情報への重大影響、解消不能な仕様衝突、保護規則を満たせない、Claude Codeの権限機構による承認が必要な場合のみ停止し、証拠、実施済み内容、ブロッカー、解除条件を報告してください。
 
----
-
-## Workflow Selection
-
-- **Development** (新機能/改善/リファクタリング): Monitor → Plan → Execute → Verify → Improve
-- **Quality** (CI 失敗/品質不足/テスト不足): Monitor → Debug → Verify → Review → Fix → Verify
-- **Release** (RC/PC): Monitor → Verify → Security Review → Regression Test → Release Review
-
----
-
-## Agent Teams
-
-- **Team A Development**: Supervisor + Architect + Implementer + QA
-- **Team B Quality**: Supervisor + QA + Security + Reviewer
-- **Team C Architecture**: Supervisor + Architect + Researcher + Devils Advocate
-
----
-
-## Validation Requirements
-
-Lint / Unit Test / Integration Test / Build / Security Check / Review
-
----
-
-## Release Guard
-
-以下が残る場合は完了禁止: Critical Security Issue / Failed Test / Failed Build / Open Blocker / Unknown Impact
-
----
-
-## CTO Autonomous Development Mode
-
-`CTO全権委任` が指定された場合のみ有効。
-Supervisor → Workflow Engine → Agent Teams → SubAgents → Monitor → Plan → Execute → Verify → Review → Improve ↺
-終了条件: Release Ready / Production Ready / Blocked
+P0ゼロ、P1解消または管理可能な残課題化、選定機能の受入条件達成、CI、本番確認、rollback、監視、運用引継ぎ成立を完了条件とします。最終報告には、総合評価と根拠、強み・弱み、改善・機能バックログ、実装・見送り理由、競合比較・代替率、変更、PR・commit、検証、使用したPlugin／Skill／MCPと証拠・制約、Preview・本番URL、migration、セキュリティ、監視、バックアップ、rollback、運用体制、残課題、GO／CONDITIONAL GO／NO-GOを含めてください。完了後は一旦終了として最終報告を提示し、セッションは終了せず起動したまま次のプロンプト指示を待ってください。"

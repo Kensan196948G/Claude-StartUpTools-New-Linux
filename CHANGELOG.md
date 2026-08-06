@@ -4,6 +4,23 @@
 
 ### Changed
 
+- 🤖 開発体制ポリシーを「毎 PR の Y/N マージ承認」から「品質ゲート条件付き自動マージ」へ全面変更。
+  - CTO 代行への全面権限委譲（例外なし）。§16 の品質ゲート 8 条件
+    （CI 全 PASS・Critical/High 脆弱性ゼロ・secret/PII 露出なし・additive migration のみ・
+    高リスク変更非該当・PR 本文完備・production-safe 判定・head SHA 一致）成立時は
+    追加確認なしで自動マージ〜本番デプロイ〜DevOps 安定化まで連続実行。
+  - 人間の Y/N 判断は §17 Approval PR（DNS/custom domain・production Secrets・認証方式・
+    破壊的 migration・課金影響等の高リスク変更）と品質ゲート未達時のみに限定。
+  - Web サービスの本番基盤は Cloudflare (Pages/Workers) + Neon PostgreSQL。
+    custom domain / サブドメインはデプロイ時点でユーザーへ入力または選択を要求
+    （既定 URL `*.pages.dev` / `*.workers.dev` での先行リリースは自律実行可）。
+  - 安定化完了後は「一旦終了」として最終報告を提示し、セッションは起動したまま
+    次のプロンプト指示を待つ運用へ変更。
+  - 対象: プロジェクト/正本/配布テンプレート計 5 コピーの `CLAUDE.md`、
+    `Claude/templates/claude/START_PROMPT.md`（新 `/goal` 統合プロンプトへ差し替え）。
+    グローバル `~/.claude/CLAUDE.md` も同一内容へ更新済み（Git 管理外）。
+    組織ポリシー `/etc/claude-code/CLAUDE.md` の改訂案は scratchpad に作成済みで、
+    ユーザーの sudo 適用後に完全有効化（適用まで旧ポリシーの Y/N ゲートが優先）。
 - 🖥️ L1「ローカル即起動 (フォアグラウンド)」の一回 5 時間制限を撤廃し、既定を無制限へ変更。
   - 新設定 `supervisor.defaults.foregroundSessionMinutes`（`0` = 無制限、既定 `0`）。
     分数を区切りたい場合はこのキーか `start-claude.sh --duration` で指定する。
