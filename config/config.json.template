@@ -142,15 +142,18 @@
     "ledgerPath": "/home/kensan/.claudeos/credits/ledger.jsonl"
   },
   "modelRouter": {
-    "_comment": "Opus 4.8 / Sonnet 5 自動使い分け。Security/architecture/release は Opus、通常実装/test/docs は Sonnet 5 (既定モデル・effort=max)。利用差が balanceThresholdPct 以上なら低利用モデルへ切替。",
+    "_comment": "既定は全タスク Opus 5 (2026-08-06 ユーザー指示)。高リスク (security/architecture/design/release 等) は xhigh、通常タスクは high (Opus 5 の recommended 既定)。Sonnet 5 は task に 'sonnet' を含めるか CLAUDEOS_MODEL_KEY=sonnet の明示 opt-in のみ。",
     "enabled": true,
+    "_balanceEnabled_comment": "利用量バランス機構 (低利用モデルへの自動切替)。既定 false — 有効化すると約半数のセッションが Sonnet へ流れ『既定 = Opus 5』と両立しないため opt-in。",
+    "balanceEnabled": false,
     "balanceThresholdPct": 5,
     "usageFile": "~/.claudeos/model-usage.jsonl",
     "models": {
-      "opus": { "id": "claude-opus-4-8", "effort": "xhigh" },
+      "opus": { "id": "claude-opus-5" },
       "sonnet": { "id": "claude-sonnet-5", "effort": "max" }
     },
-    "_taskEffort_comment": "フェーズ別 effort 上書き (opt-in)。キーが task 文字列に部分一致したら effort を上書き。値は low|medium|high|xhigh|max のみ有効。空 {} = 全タスクでモデル既定 (Sonnet 5=max / Opus=xhigh) を維持。例: { \"monitor\": \"high\", \"improve\": \"high\" } で Monitor/Improve フェーズのみ軽量化し Verify/Review は既定のまま。",
+    "_models_comment": "opus.effort は未設定なら高リスク=xhigh / 通常=high の2階層を自動適用。固定したい場合のみ明示 (例: { \"id\": \"claude-opus-5\", \"effort\": \"high\" })。",
+    "_taskEffort_comment": "フェーズ別 effort 上書き (opt-in)。キーが task 文字列に部分一致したら effort を上書き。値は low|medium|high|xhigh|max のみ有効。空 {} = 既定階層 (高リスク xhigh / 通常 high / sonnet=max) を維持。例: { \"monitor\": \"medium\" } で Monitor フェーズのみ軽量化。",
     "taskEffort": {}
   },
   "email": {

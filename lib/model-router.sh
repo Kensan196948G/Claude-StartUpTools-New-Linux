@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# model-router.sh — Opus 4.8 / Sonnet 5 自動選択
+# model-router.sh — Opus 5 既定 / Sonnet 5 opt-in
 #
-# 方針:
-#   - 高リスク/設計/Release/PR最終レビューは Opus 4.8 + xhigh
-#   - 通常実装/テスト/docs/軽微リファクタは Sonnet 5 + max (既定)
-#   - 利用比率差が閾値(既定5%)以上なら、低利用モデルへ寄せる
+# 方針 (2026-08-06 ユーザー指示「既定モデルは Opus 5 (Recommended)」):
+#   - 既定は全タスク Opus 5。高リスク/設計/Release/PR最終レビューは xhigh、
+#     通常タスクは high (Opus 5 の recommended 既定)
+#   - Sonnet 5 + max は明示 opt-in のみ (CLAUDEOS_MODEL_KEY=sonnet / task に sonnet)
+#   - 利用量バランス機構は既定無効 (balanceEnabled=true で従来の5%切替を復元)
 #   - 記録単位は session start。実 token/cost は stream-json から別途捕捉可能。
 # ============================================================
 
@@ -46,11 +47,40 @@ model_router__threshold_pct() {
   printf '%s' "$v"
 }
 
+# バランス機構は既定無効 (既定モデル = Opus 5 を固定するため)。
+# CLAUDEOS_MODEL_BALANCE=1 か config .modelRouter.balanceEnabled=true で従来動作を復元。
+model_router__balance_enabled() {
+  local v="${CLAUDEOS_MODEL_BALANCE:-$(model_router__config_get '.modelRouter.balanceEnabled' 'false')}"
+  [[ "$v" == "1" || "$v" == "true" ]]
+}
+
+# 高リスクタスク判定 (task_default のルート分類と effort 階層の両方で使用)
+model_router__task_is_high_risk() {
+  local task_lc
+  task_lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$task_lc" in
+    *security*|*architect*|*design*|*release*|*deploy*|*critical*|*incident*|*hotfix*|*pr-review*|*final-review*|cto|plan|opusplan)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
 model_router__model_for_key() {
   case "$1" in
     opus)
-      MODEL_ROUTER_MODEL="${CLAUDEOS_OPUS_MODEL:-$(model_router__config_get '.modelRouter.models.opus.id' 'claude-opus-4-8')}"
-      MODEL_ROUTER_EFFORT="${CLAUDEOS_OPUS_EFFORT:-$(model_router__config_get '.modelRouter.models.opus.effort' 'xhigh')}"
+      MODEL_ROUTER_MODEL="${CLAUDEOS_OPUS_MODEL:-$(model_router__config_get '.modelRouter.models.opus.id' 'claude-opus-5')}"
+      # effort 既定: env > config > 高リスク xhigh > 通常 high (Opus 5 recommended)
+      local opus_effort
+      opus_effort="${CLAUDEOS_OPUS_EFFORT:-$(model_router__config_get '.modelRouter.models.opus.effort' '')}"
+      if [[ -z "$opus_effort" ]]; then
+        if model_router__task_is_high_risk "${MODEL_ROUTER_TASK:-normal}"; then
+          opus_effort='xhigh'
+        else
+          opus_effort='high'
+        fi
+      fi
+      MODEL_ROUTER_EFFORT="$opus_effort"
       ;;
     sonnet)
       MODEL_ROUTER_MODEL="${CLAUDEOS_SONNET_MODEL:-$(model_router__config_get '.modelRouter.models.sonnet.id' 'claude-sonnet-5')}"
@@ -83,18 +113,16 @@ model_router__task_effort() {
   return 0
 }
 
+# 既定は全タスク opus (Opus 5)。sonnet は task 文字列での明示 opt-in のみ。
 model_router__task_default() {
   local task="${1:-${CLAUDEOS_MODEL_TASK:-normal}}"
   task="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
   case "$task" in
-    *security*|*architect*|*architecture*|*design*|*release*|*deploy*|*critical*|*incident*|*hotfix*|*pr-review*|*final-review*|cto|plan|opusplan)
-      printf 'opus'
-      ;;
-    *implement*|*developer*|*test*|*qa*|*doc*|*refactor*|*lint*|*format*|normal|sonnet)
+    *sonnet*)
       printf 'sonnet'
       ;;
     *)
-      printf 'sonnet'
+      printf 'opus'
       ;;
   esac
 }
@@ -110,6 +138,11 @@ model_router__balance_key() {
   local default_key="$1" threshold opus_count sonnet_count total diff less_key
   MODEL_ROUTER_BALANCE_KEY="$default_key"
   MODEL_ROUTER_BALANCED=0
+  MODEL_ROUTER_OPUS_COUNT=0
+  MODEL_ROUTER_SONNET_COUNT=0
+  MODEL_ROUTER_TOTAL_COUNT=0
+  MODEL_ROUTER_DIFF_PCT="0"
+  model_router__balance_enabled || return 0
   threshold="$(model_router__threshold_pct)"
   opus_count="$(model_router__count_key opus)"
   sonnet_count="$(model_router__count_key sonnet)"

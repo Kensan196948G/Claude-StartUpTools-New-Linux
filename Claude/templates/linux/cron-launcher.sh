@@ -419,7 +419,7 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
     _HL_PERM=( --permission-mode auto )
   fi
 
-  # Model routing: Opus 4.8=xhigh / Sonnet 5=max (default). Auto-selected by task/usage balance.
+  # Model routing: Opus 5 default (high-risk=xhigh / normal=high). Sonnet 5=max on explicit opt-in only.
   _HL_MODEL=()
   _HL_TASK="${CLAUDEOS_MODEL_TASK:-$RESUME_GOAL_TYPE}"
   if declare -F model_router__select >/dev/null 2>&1; then

@@ -15,6 +15,20 @@
 
 ### Changed
 
+- 🧠 既定 AI モデルを Sonnet 5 (max) から **Opus 5 (`claude-opus-5`・Recommended)** へ変更
+  （2026-08-06 ユーザー指示）。
+  - 全タスクが Opus 5 ルートへ。effort は 2 階層を自動適用:
+    高リスク（security/architecture/design/release/deploy/critical/incident/hotfix/
+    pr-review/final-review/cto/plan）= `xhigh`、通常タスク = `high`（Opus 5 の recommended 既定）。
+  - Sonnet 5 (max) は明示 opt-in のみ（task 文字列に `sonnet` を含めるか
+    `CLAUDEOS_MODEL_KEY=sonnet`）。
+  - 利用量バランス機構（5% 閾値の低利用モデル切替）は既定 OFF へ降格。
+    新設 `modelRouter.balanceEnabled`（既定 `false`）または `CLAUDEOS_MODEL_BALANCE=1` で
+    従来動作を復元可能。有効のままだと約半数のセッションが Sonnet へ流れ
+    「既定 = Opus 5」と矛盾するため。
+  - 対象: `lib/model-router.sh`、`config/config.json.template`、
+    `Claude/templates/linux/cron-launcher.sh`（コメント）、`docs/claude/13`（全面改訂）、
+    `docs/claude/11`、関連 bats テスト。
 - 🤖 開発体制ポリシーを「毎 PR の Y/N マージ承認」から「品質ゲート条件付き自動マージ」へ全面変更。
   - CTO 代行への全面権限委譲（例外なし）。§16 の品質ゲート 8 条件
     （CI 全 PASS・Critical/High 脆弱性ゼロ・secret/PII 露出なし・additive migration のみ・
