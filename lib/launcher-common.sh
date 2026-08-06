@@ -56,13 +56,15 @@ launcher__project_run_status() {
   printf 'ok'
 }
 
-# launcher__select_project [mode] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
-#   mode: foreground (既定) | background | deploy
+# launcher__select_project [mode] [group] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
+#   mode:  foreground (既定) | background | deploy
+#   group: projectGroups 内のグループ名。指定するとグループ選択を省略し、そのグループ
+#          配下のサブプロジェクト選択から直接始める (メニュー L<n> のグループ直結起動用)。
 #   config.projectGroups が設定されていれば「①グループ選択 → ②配下から選択」の 2 段階、
-#   未設定なら全プロジェクトをフラットに番号付き表示する (従来動作)。
+#   未設定なら全プロジェクトをフラットに番号付き表示する (従来動作。group 指定は無視)。
 launcher__select_project() {
   local -a _groups=(); mapfile -t _groups < <(config_project_groups)
-  if (( ${#_groups[@]} > 0 )); then launcher__select_grouped "${1:-foreground}"; else launcher__select_flat "${1:-foreground}"; fi
+  if (( ${#_groups[@]} > 0 )); then launcher__select_grouped "${1:-foreground}" "${2:-}"; else launcher__select_flat "${1:-foreground}"; fi
 }
 
 # launcher__select_mode_label <mode> — 表示用ラベル
@@ -86,15 +88,27 @@ launcher__print_project_row() {
   esac
 }
 
-# launcher__select_grouped [mode] — projectGroups 用の 2 段階選択 (グループ → 配下)
+# launcher__select_grouped [mode] [preset] — projectGroups 用の 2 段階選択 (グループ → 配下)
 #   戻り値 (stdout): "グループ名/サブ名"。0/q/exit で 1 つ前 (配下→グループ, グループ→終了) へ戻る。
 #   グループが 1 件のみの場合はグループ選択を省略して配下一覧を直接表示し (実質 1 段階)、
 #   その場合の 0/q は「戻る先のグループ選択が無い」ため空を返して終了する。
+#   preset: projectGroups 内のグループ名。一致すれば単一グループ扱いでグループ選択を省略
+#   (メニュー L<n> の直結起動)。不一致 (config 変更直後など) は警告して通常フローへ戻す。
 launcher__select_grouped() {
-  local mode="${1:-foreground}" mode_label
+  local mode="${1:-foreground}" preset="${2:-}" mode_label
   mode_label="$(launcher__select_mode_label "$mode")"
   local -a groups=(); mapfile -t groups < <(config_project_groups)
   local -a all=();    mapfile -t all    < <(launcher__project_list)
+  if [[ -n "$preset" ]]; then
+    local _g _hit=0
+    for _g in "${groups[@]}"; do [[ "$_g" == "$preset" ]] && _hit=1; done
+    if (( _hit )); then
+      groups=("$preset")
+    else
+      printf '  %s⚠️  グループ %s は projectGroups に存在しません。通常のグループ選択へ切り替えます。%s\n' \
+        "$C_YELLOW" "$preset" "$C_RESET" >&2
+    fi
+  fi
   local single=0; (( ${#groups[@]} == 1 )) && single=1
 
   while true; do

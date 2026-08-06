@@ -82,18 +82,27 @@ show_menu() {
   printf '  %s📋 フェーズ: %s%s%s%s\n' "$C_WHITE" "$C_RESET" "$phase_color" "$phase_label$deploy_badge" "$C_RESET"
   printf '  %s📂 %s%s%s\n' "$C_GREEN" "$C_DKGREEN" "$local_dir" "$C_RESET"
   local -a _mgroups=(); mapfile -t _mgroups < <(config_project_groups)
-  if (( ${#_mgroups[@]} > 0 )); then
-    local _gjoin; printf -v _gjoin '%s, ' "${_mgroups[@]}"; _gjoin="${_gjoin%, }"
-    printf '  %s   ▸ 実行グループ (%d): %s%s%s\n' "$C_GREEN" "${#_mgroups[@]}" "$C_DKGREEN" "$_gjoin" "$C_RESET"
-  fi
+  local _gi
+  for _gi in "${!_mgroups[@]}"; do
+    printf '  %s   ▸ 実行グループ (%d): %s%s%s\n' "$C_GREEN" "$((_gi + 1))" "$C_DKGREEN" "${_mgroups[$_gi]}" "$C_RESET"
+  done
   printf '\n'
 
   # 起動
+  #   projectGroups 設定時はグループごとに L1..Ln (各行がそのグループ配下の選択へ直結)、
+  #   未設定時は従来どおり L1 単独 (全プロジェクトのフラット選択)。
   local dur_label fg_label
   dur_label="$(menu__duration_label "$(menu__default_duration_min)")"
   fg_label="$(menu__duration_label "$(menu__foreground_duration_min)")"
   printf '  %s🚀 %s起動%s\n' "$C_CYAN" "$C_DKCYAN" "$C_RESET"
-  printf '   %s L1 %s  🖥️  ローカル即起動 (フォアグラウンド / %s)\n' "$C_BG_GREEN" "$C_RESET" "$fg_label"
+  if (( ${#_mgroups[@]} > 0 )); then
+    for _gi in "${!_mgroups[@]}"; do
+      printf '   %s L%d %s  🖥️  ローカル即起動 (フォアグラウンド / %s) %s%s/%s%s\n' \
+        "$C_BG_GREEN" "$((_gi + 1))" "$C_RESET" "$fg_label" "$C_DKGREEN" "$local_dir" "${_mgroups[$_gi]}" "$C_RESET"
+    done
+  else
+    printf '   %s L1 %s  🖥️  ローカル即起動 (フォアグラウンド / %s)\n' "$C_BG_GREEN" "$C_RESET" "$fg_label"
+  fi
   printf '   %s S1 %s  🌙 バックグラウンド起動 (自律 / %s)\n' "$C_BG_YELLOW" "$C_RESET" "$dur_label"
   printf '\n'
 
@@ -202,9 +211,10 @@ handle_running_project() {
   esac
 }
 
+# launch_claude <mode> [group] — group は projectGroups のグループ名 (L<n> 直結起動時のみ)
 launch_claude() {
-  local mode="$1" project mode_label run_status action_rc
-  project="$(launcher__select_project "$mode")"
+  local mode="$1" group="${2:-}" project mode_label run_status action_rc
+  project="$(launcher__select_project "$mode" "$group")"
   [[ -n "$project" ]] || { log_warn "プロジェクト未選択"; sleep 1; return 0; }
   run_status="$(launcher__project_run_status "$project")"
   if [[ "$run_status" == "running" ]]; then
@@ -293,7 +303,23 @@ menu_loop() {
     show_menu
     local choice; read -rp "  番号を入力してください: " choice
     case "${choice^^}" in
-      L1) launch_claude foreground ;;
+      L[0-9]*)
+        # L<n>: projectGroups 設定時は n 番目のグループへ直結、未設定時は L1 のみ有効 (フラット選択)。
+        # グループは config を毎回再読込し、show_menu 描画後に config が変わっても範囲検証で弾く。
+        local -a _lgroups=(); mapfile -t _lgroups < <(config_project_groups)
+        local _ln="${choice^^}"; _ln="${_ln#L}"
+        if ! [[ "$_ln" =~ ^[0-9]+$ ]]; then
+          printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET"; sleep 1
+        else
+          _ln=$((10#$_ln))
+          if (( ${#_lgroups[@]} == 0 && _ln == 1 )); then
+            launch_claude foreground
+          elif (( _ln >= 1 && _ln <= ${#_lgroups[@]} )); then
+            launch_claude foreground "${_lgroups[$((_ln - 1))]}"
+          else
+            printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET"; sleep 1
+          fi
+        fi ;;
       S1) launch_claude background ;;
       DP) deploy_prep_menu ;;
       M)  run_menu_script "$BIN/maintenance-mode.sh" ;;
