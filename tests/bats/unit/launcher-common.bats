@@ -390,3 +390,55 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" = "" ]
 }
+
+# ─── launcher__select_project: group 直結 (メニュー L<n> 用 preset) ─
+
+@test "select(preset): group 指定でグループ選択を省略し配下から直接選ぶ" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n' | launcher__select_project foreground GroupB 2>/dev/null
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "GroupB/App3" ]
+}
+
+@test "select(preset): group 指定時はグループ選択画面を表示しない" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '1\n' | launcher__select_project foreground GroupA
+  " 2>&1
+  [[ "$output" != *"グループ選択 ["* ]]
+  [[ "$output" == *"GroupA のプロジェクト"* ]]
+}
+
+@test "select(preset): group 指定 + 0 は空を返して終了する (グループ選択へ戻らない)" {
+  _setup_groups
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '0\n' | launcher__select_project foreground GroupB 2>/dev/null
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+}
+
+@test "select(preset): 存在しない group は警告して通常のグループ選択へフォールバック" {
+  _setup_groups
+  # 警告後は通常フロー: グループ2 → サブ1 = GroupB/App3
+  run bash -c "
+    export AI_STARTUP_CONFIG_PATH='$TEST_TEMP/gconfig.json'
+    export CCSU_SUP_DIR='$CCSU_SUP_DIR'
+    source '$REPO_ROOT/lib/launcher-common.sh'
+    printf '2\n1\n' | launcher__select_project foreground NoSuchGroup 2>'$TEST_TEMP/preset-err.txt'
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = "GroupB/App3" ]
+  grep -q "NoSuchGroup は projectGroups に存在しません" "$TEST_TEMP/preset-err.txt"
+}

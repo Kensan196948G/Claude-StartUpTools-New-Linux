@@ -15,6 +15,18 @@
 
 ### Changed
 
+- 📂 メニューの起動セクションを複数実行グループ対応へ変更（2026-08-06 ユーザー指示）。
+  - ヘッダーの実行グループ表示を旧カンマ結合 1 行から「▸ 実行グループ (N): 名前」の
+    番号付き複数行へ変更（配列の並び順 = 番号）。
+  - `projectGroups` 設定時は L1..Ln をグループごとに動的生成し、各行へフルパスを表示。
+    L<n> はそのグループ配下のサブプロジェクト選択へ直結（グループ選択を省略）。
+  - `launcher__select_project` に第 2 引数 `group` を追加（既存の単一グループ
+    スキップ機構へ preset として写像・0/q は即終了）。存在しないグループ指定は
+    警告して通常のグループ選択へフォールバック。
+  - S1（バックグラウンド起動）は従来どおり「グループ選択 → 配下選択」の 2 段階を維持。
+    `projectGroups` 未設定時は L1 単独のフラット選択（後方互換・L2 以降は無効入力）。
+  - 対象: `bin/menu.sh`、`lib/launcher-common.sh`、`config/config.json.template`
+    （コメント）、`docs/claude/11`、`menu.bats` / `launcher-common.bats`。
 - 🧠 既定 AI モデルを Sonnet 5 (max) から **Opus 5 (`claude-opus-5`・Recommended)** へ変更
   （2026-08-06 ユーザー指示）。
   - 全タスクが Opus 5 ルートへ。effort は 2 階層を自動適用:

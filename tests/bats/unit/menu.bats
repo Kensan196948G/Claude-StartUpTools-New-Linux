@@ -114,16 +114,32 @@ JSON
   [[ "$output" == *"SY"* ]]
 }
 
-@test "menu --render: projectGroups 設定時は実行グループ見出しを表示" {
+@test "menu --render: projectGroups 設定時は番号付き見出しとグループ別 L1/L2 直結行を表示" {
   export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-groups.json"
   cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
-{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-Project","Mirai-DX-Project"] }
+{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-DX-Project","Mirai-Project"] }
 JSON
   echo '{}' > "$CCSU_STATE_FILE"
   run bash "$SCRIPT" --render
   [ "$status" -eq 0 ]
-  [[ "$output" == *"実行グループ"* ]]
-  [[ "$output" == *"Mirai-Project, Mirai-DX-Project"* ]]
+  # ヘッダー: 1 グループ 1 行の番号付き見出し (旧: カンマ結合 1 行)
+  [[ "$output" == *"実行グループ (1): Mirai-DX-Project"* ]]
+  [[ "$output" == *"実行グループ (2): Mirai-Project"* ]]
+  [[ "$output" != *"Mirai-DX-Project, Mirai-Project"* ]]
+  # 起動: グループごとの L 行 (フルパス付き)
+  [[ "$output" == *"ローカル即起動 (フォアグラウンド / 無制限) /home/kensan/Projects/Mirai-DX-Project"* ]]
+  [[ "$output" == *"ローカル即起動 (フォアグラウンド / 無制限) /home/kensan/Projects/Mirai-Project"* ]]
+  [[ "$output" == *"L1"* ]]
+  [[ "$output" == *"L2"* ]]
+}
+
+@test "menu --render: projectGroups 未設定時は L1 単独で L2 行は無い" {
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"L1"* ]]
+  [[ "$output" != *"L2"* ]]
+  [[ "$output" != *"実行グループ"* ]]
 }
 
 @test "menu: 不明引数でエラー" {
@@ -180,4 +196,74 @@ JSON
   [ "$status" -eq 0 ]
   [[ "$output" == *"RUN_MENU_SCRIPT_CALLED"* ]]
   [[ "$output" == *"--project Alpha --background"* ]]
+}
+
+@test "launch_claude: 第2引数 group を launcher__select_project へ透過する" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launcher__select_project() { echo "SELECT mode=$1 group=${2:-}" >&2; printf "GroupB/App3\n"; }
+    run_menu_script() { echo "RUN_MENU_SCRIPT_CALLED $*"; }
+    confirm_yes_no() { return 0; }
+    launch_claude foreground GroupB
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SELECT mode=foreground group=GroupB"* ]]
+  [[ "$output" == *"--project GroupB/App3 --foreground"* ]]
+}
+
+@test "menu_loop: L2 は第2グループを引数に launch_claude foreground を呼ぶ (小文字 l2 も同様)" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-groups.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-DX-Project","Mirai-Project"] }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH mode=$1 group=${2:-none}"; exit 0; }
+    printf "L2\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LAUNCH mode=foreground group=Mirai-Project"* ]]
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH mode=$1 group=${2:-none}"; exit 0; }
+    printf "l1\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LAUNCH mode=foreground group=Mirai-DX-Project"* ]]
+}
+
+@test "menu_loop: 範囲外 L9 は無効入力扱いで launch_claude を呼ばない" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-groups.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-DX-Project","Mirai-Project"] }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH_CALLED"; exit 0; }
+    printf "L9\n0\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"無効な入力"* ]]
+  [[ "$output" != *"LAUNCH_CALLED"* ]]
+}
+
+@test "menu_loop: projectGroups 未設定時は L1 がフラット起動 (group なし)・L2 は無効" {
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH mode=$1 group=${2:-none}"; exit 0; }
+    printf "L1\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LAUNCH mode=foreground group=none"* ]]
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH_CALLED"; exit 0; }
+    printf "L2\n0\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"無効な入力"* ]]
+  [[ "$output" != *"LAUNCH_CALLED"* ]]
 }
