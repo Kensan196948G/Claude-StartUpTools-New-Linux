@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 🖥️ L1「ローカル即起動 (フォアグラウンド)」の一回 5 時間制限を撤廃し、既定を無制限へ変更。
+  - 新設定 `supervisor.defaults.foregroundSessionMinutes`（`0` = 無制限、既定 `0`）。
+    分数を区切りたい場合はこのキーか `start-claude.sh --duration` で指定する。
+  - foreground は `CCSU_MAX_SESSION_MINUTES`（300 分）の分数上限チェック対象外へ
+    （人間が対話する前提のため）。同時実行セッション数上限 (`CCSU_MAX_SESSIONS=4`) は維持。
+  - S1 / cron / supervisor の自律実行は従来どおり 300 分ガードを維持（省クレジット運用）。
+  - `duration=0` は GNU coreutils `timeout` の「0 = タイムアウト無効化」仕様で無制限として機能。
+    background への `--duration 0` 指定は明示エラーで拒否。
+
 ### Added
 
 - 🔁 検証ループのスキル化（Anthropic ブログ 2026-07-22 準拠、`docs/claude/18_検証ループ運用.md` 正本）。
