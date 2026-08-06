@@ -153,3 +153,32 @@ second
   run goal_extract__build whatever "$GOALS"
   [ "$status" -ne 0 ]
 }
+
+# ---- 実ファイル検証 (再発防止) ---------------------------
+# Claude Code 本体の /goal 条件は 4000 文字上限。超過すると
+# "Goal condition is limited to 4000 characters (got N)" で
+# 起動失敗する (2026-08-06 に got 4016 で実測)。
+# 計数 = 本文コードポイント数 + 引用符 2 文字。
+@test "START_PROMPT.md: /goal 本文が 4000 文字制限内 (引用符込み)" {
+  run node -e '
+    const fs = require("fs");
+    const raw = fs.readFileSync(process.argv[1], "utf8");
+    const m = raw.match(/^\/goal "([\s\S]*)"\s*$/);
+    if (!m) { console.error("no /goal block"); process.exit(1); }
+    const n = [...m[1]].length + 2;
+    console.error(`goal chars incl quotes: ${n}`);
+    process.exit(n <= 4000 ? 0 : 1);
+  ' "$REPO_ROOT/Claude/templates/claude/START_PROMPT.md"
+  [ "$status" -eq 0 ]
+}
+@test "START_PROMPT.md と CLAUDE.md §25 の /goal 本文が一致する" {
+  run node -e '
+    const fs = require("fs");
+    const sp = fs.readFileSync(process.argv[1], "utf8").match(/^\/goal "([\s\S]*)"\s*$/);
+    const cm = fs.readFileSync(process.argv[2], "utf8").match(/```markdown\n\/goal ([\s\S]*?)\n```/);
+    if (!sp) { console.error("START_PROMPT: no /goal block"); process.exit(1); }
+    if (!cm) { console.error("CLAUDE.md: no §25 block"); process.exit(1); }
+    process.exit(sp[1] === cm[1] ? 0 : 1);
+  ' "$REPO_ROOT/Claude/templates/claude/START_PROMPT.md" "$REPO_ROOT/CLAUDE.md"
+  [ "$status" -eq 0 ]
+}
