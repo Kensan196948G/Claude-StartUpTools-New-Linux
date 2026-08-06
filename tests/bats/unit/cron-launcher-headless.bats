@@ -55,7 +55,7 @@ setup() {
 printf '%s\n' "\$@" > "$CLAUDE_ARGV"
 if [[ -n "\${ANTHROPIC_API_KEY+x}" ]]; then printf 'SET\n'; else printf 'UNSET\n'; fi > "$CLAUDE_ENV_KEY"
 cat <<'JSON'
-{"type":"system","subtype":"init","session_id":"sess-headless-xyz","model":"claude-opus-4-8"}
+{"type":"system","subtype":"init","session_id":"sess-headless-xyz","model":"claude-opus-5"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"作業中"}]}}
 {"type":"result","subtype":"success","total_cost_usd":0.42,"num_turns":3,"session_id":"sess-headless-xyz"}
 JSON
@@ -98,7 +98,7 @@ _seed_state() {
   [[ "$output" == *"auto"* ]]
   [[ "$output" == *"--verbose"* ]]
   [[ "$output" == *"--model"* ]]
-  [[ "$output" == *"claude-opus-4-8"* ]]
+  [[ "$output" == *"claude-opus-5"* ]]
   [[ "$output" == *"--effort"* ]]
   [[ "$output" == *"xhigh"* ]]
   [[ "$output" != *"dontAsk"* ]]

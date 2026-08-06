@@ -50,7 +50,7 @@ setup() {
 printf '%s\n' "\$@" > "$CLAUDE_ARGV_DIR/argv-\$\$"
 if [[ -n "\${ANTHROPIC_API_KEY+x}" ]]; then printf 'PRESENT\n'; else printf 'ABSENT\n'; fi > "$CLAUDE_ENV_DIR/env-\$\$"
 cat <<'JSON'
-{"type":"system","subtype":"init","session_id":"sess-par-xyz","model":"claude-opus-4-8"}
+{"type":"system","subtype":"init","session_id":"sess-par-xyz","model":"claude-opus-5"}
 {"type":"result","subtype":"success","total_cost_usd":0.10,"num_turns":1,"session_id":"sess-par-xyz"}
 JSON
 exit 0

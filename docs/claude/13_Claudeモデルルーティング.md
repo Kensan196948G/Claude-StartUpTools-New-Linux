@@ -2,29 +2,41 @@
 
 ## 目的
 
-Opus 4.8 と Sonnet 5 を、品質優先のタスク分類と利用量バランスで自動的に使い分けます。
-既定モデルは **Sonnet 5 + effort `max`**（通常タスクの既定ルート。利用量差が閾値を超えた場合は
-5% バランス機構により低利用モデルへ切り替わることがあります）。
+既定モデルは **Opus 5（`claude-opus-5`・Recommended）** です（2026-08-06 ユーザー指示）。
+全タスクが Opus 5 ルートへ入り、タスクの高リスク度に応じて effort だけを 2 階層で
+自動調整します。Sonnet 5 は明示 opt-in のみで使用します。
 
 | 用途 | モデル | effort |
 |---|---|---|
-| 設計判断、アーキテクチャ、重大バグ、Security、PR最終レビュー | `claude-opus-4-8` | `xhigh` |
-| 通常実装、テスト修正、軽微なリファクタ、ドキュメント（既定） | `claude-sonnet-5` | `max` |
+| 高リスク: 設計判断、アーキテクチャ、Security、Release/Deploy、重大バグ、PR最終レビュー | `claude-opus-5` | `xhigh` |
+| 通常: 実装、テスト修正、リファクタ、ドキュメント（既定） | `claude-opus-5` | `high`（Opus 5 の recommended 既定） |
+| 明示 opt-in（task に `sonnet` を含める / `CLAUDEOS_MODEL_KEY=sonnet`） | `claude-sonnet-5` | `max` |
 
-Sonnet 5 は 1M context 対応（2026-08-31 まで $2/$10 per Mtok のプロモ価格）。
+Opus 5 の有効 effort は `low / medium / high / xhigh`（既定 `high`）。
+Sonnet 5 は `max` まで対応（1M context・2026-08-31 まで $2/$10 per Mtok のプロモ価格）。
 
-## 5% バランス
+## 高リスクタスク判定
 
-`~/.claudeos/model-usage.jsonl` にセッション開始時の選択結果を追記します。
+task 文字列（小文字化後）に次のいずれかが含まれる場合、effort は `xhigh` になります。
 
-利用比率差が `5%` 以上になった場合、次回起動では利用が少ないモデルを選びます。
+`security` / `architect` / `design` / `release` / `deploy` / `critical` /
+`incident` / `hotfix` / `pr-review` / `final-review` / `cto` / `plan` / `opusplan`
 
-例:
+判定ロジックは `lib/model-router.sh` の `model_router__task_is_high_risk()` です。
 
-- Opus 52.5% / Sonnet 47.5% 以上の差 → Sonnet へ寄せる
-- Sonnet 52.5% / Opus 47.5% 以上の差 → Opus へ寄せる
+## 利用量バランス機構（既定 OFF・opt-in）
 
-高リスクタスクは品質優先で Opus を既定にしますが、明示指定がある場合はそちらを優先します。
+旧方式（Opus/Sonnet の利用比率差が閾値を超えたら低利用モデルへ切替）は
+**既定で無効**です。有効化すると約半数のセッションが Sonnet へ流れ、
+「既定 = Opus 5」の方針と両立しないためです。
+
+従来動作へ戻す場合のみ、次のいずれかで有効化します。
+
+- 環境変数 `CLAUDEOS_MODEL_BALANCE=1`
+- config `modelRouter.balanceEnabled: true`
+
+有効時は `~/.claudeos/model-usage.jsonl` の select 記録を集計し、利用比率差が
+`balanceThresholdPct`（既定 5%）以上なら次回起動で低利用モデルを選びます。
 
 ## 設定
 
@@ -34,10 +46,11 @@ Sonnet 5 は 1M context 対応（2026-08-31 まで $2/$10 per Mtok のプロモ�
 {
   "modelRouter": {
     "enabled": true,
+    "balanceEnabled": false,
     "balanceThresholdPct": 5,
     "usageFile": "~/.claudeos/model-usage.jsonl",
     "models": {
-      "opus": { "id": "claude-opus-4-8", "effort": "xhigh" },
+      "opus": { "id": "claude-opus-5" },
       "sonnet": { "id": "claude-sonnet-5", "effort": "max" }
     },
     "taskEffort": {}
@@ -45,18 +58,21 @@ Sonnet 5 は 1M context 対応（2026-08-31 まで $2/$10 per Mtok のプロモ�
 }
 ```
 
+`models.opus.effort` は未設定（推奨）なら高リスク=`xhigh` / 通常=`high` の 2 階層を
+自動適用します。明示すると全 opus タスクでその値に固定されます。
+
 ### フェーズ別 effort（`taskEffort`・opt-in）
 
 `modelRouter.taskEffort` にキー（task 部分一致）→ effort のマップを書くと、該当タスクだけ
-effort を上書きできます。**空 `{}`（既定）なら挙動は従来どおり**（Sonnet 5=`max` / Opus=`xhigh`）。
-effort は「思考時間」だけでなく読むファイル数・検証量・チェックイン頻度を制御するため、
-軽量フェーズだけ下げる使い方を想定しています。
+effort を上書きできます。**空 `{}`（既定）なら既定階層**（高リスク `xhigh` / 通常 `high` /
+sonnet opt-in 時 `max`）を維持します。effort は「思考時間」だけでなく読むファイル数・
+検証量・チェックイン頻度を制御するため、軽量フェーズだけ下げる使い方を想定しています。
 
 ```json
-"taskEffort": { "monitor": "high", "improve": "high" }
+"taskEffort": { "monitor": "medium" }
 ```
 
-- 上例では Monitor / Improve フェーズのみ `high` へ軽量化し、Verify / Review / Security は既定を維持
+- 上例では Monitor フェーズのみ `medium` へ軽量化し、他フェーズは既定階層を維持
 - 値は `low|medium|high|xhigh|max` のみ有効（不正値は無視 = 起動失敗を予防）
 - 適用時は選択ログの `reason` に `+effort:task(<キー>)` が付く
 
@@ -68,9 +84,10 @@ effort は「思考時間」だけでなく読むファイル数・検証量・�
 | `CLAUDEOS_MODEL_KEY=opus` / `sonnet` | 強制モデル指定 |
 | `CLAUDEOS_MODEL_TASK=security` | タスク分類を明示 |
 | `CLAUDEOS_MODEL_EFFORT=high` | effort を強制上書き（taskEffort より優先・`reason` に `+effort:forced`） |
-| `CLAUDEOS_MODEL_BALANCE_THRESHOLD_PCT=5` | 切替閾値 |
+| `CLAUDEOS_MODEL_BALANCE=1` | 利用量バランス機構を有効化（既定 OFF） |
+| `CLAUDEOS_MODEL_BALANCE_THRESHOLD_PCT=5` | バランス切替閾値（バランス有効時のみ） |
 | `CLAUDEOS_MODEL_USAGE_FILE=/path/file.jsonl` | 利用台帳パス |
-| `CLAUDEOS_OPUS_MODEL` / `CLAUDEOS_OPUS_EFFORT` | Opus 側上書き |
+| `CLAUDEOS_OPUS_MODEL` / `CLAUDEOS_OPUS_EFFORT` | Opus 側上書き（effort 指定で 2 階層を固定値化） |
 | `CLAUDEOS_SONNET_MODEL` / `CLAUDEOS_SONNET_EFFORT` | Sonnet 側上書き |
 
 ## 確認
@@ -84,3 +101,11 @@ bash scripts/tools/launch-parallel-cron.sh <ProjectName> --roles cto,qa --dry-ru
 ```
 
 出力に `model` / `effort` / `model_reason` が表示されます。
+
+## 変更履歴
+
+- 2026-08-06: 既定を Sonnet 5 (max) + 5% バランスから **Opus 5 全タスク既定 +
+  effort 2 階層（高リスク xhigh / 通常 high）** へ変更。バランス機構は
+  `balanceEnabled`（既定 false）の opt-in へ降格。
+- 2026-07-11: フェーズ別 effort（`taskEffort`）を追加（PR #85）。
+- 2026-07-03: 既定モデルを Sonnet 5 (Max Effort) へ更新（PR #83）。
