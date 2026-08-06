@@ -30,7 +30,7 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"終了"* ]]
 }
 
-@test "menu --render: 起動時間ラベルは config.sessionMinutes を反映 (300→5h)" {
+@test "menu --render: S1 は config.sessionMinutes 反映 (300→5h)・L1 は既定無制限" {
   export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-dur5h.json"
   cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
 { "projects": "/home/kensan/Projects", "supervisor": { "defaults": { "sessionMinutes": 300 } } }
@@ -38,7 +38,19 @@ JSON
   echo '{}' > "$CCSU_STATE_FILE"
   run bash "$SCRIPT" --render
   [ "$status" -eq 0 ]
-  [[ "$output" == *"フォアグラウンド / 5h"* ]]
+  [[ "$output" == *"フォアグラウンド / 無制限"* ]]
+  [[ "$output" == *"自律 / 5h"* ]]
+}
+
+@test "menu --render: L1 は foregroundSessionMinutes を反映 (120→2h)" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-fg120.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "supervisor": { "defaults": { "sessionMinutes": 300, "foregroundSessionMinutes": 120 } } }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"フォアグラウンド / 2h"* ]]
   [[ "$output" == *"自律 / 5h"* ]]
 }
 

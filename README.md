@@ -72,8 +72,8 @@ cp config/config.json.template config/config.json
 
 | キー | アイコン | 動作 |
 |---|---|---|
-| `L1` | 🖥️ | Claude をフォアグラウンド起動 |
-| `S1` | 🌙 | Claude をバックグラウンド自律起動 |
+| `L1` | 🖥️ | Claude をフォアグラウンド起動（既定 無制限。`supervisor.defaults.foregroundSessionMinutes` で分数指定可） |
+| `S1` | 🌙 | Claude をバックグラウンド自律起動（既定 5h 上限） |
 | `15` | 📺 | セッション状態監視を開く |
 | `14` | ⏰ | cron登録・編集・削除 |
 

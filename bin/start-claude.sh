@@ -6,7 +6,7 @@
 #   多重起動防止: supervisor/flock。tmux は --tmux 明示時のみ fallback として使う。
 #
 # 使い方 (menu.sh から):
-#   start-claude.sh --project P --foreground [--duration 300] [--dry-run]          # L1: 新規端末タブで Claude TUI
+#   start-claude.sh --project P --foreground [--duration 300] [--dry-run]          # L1: 新規端末タブで Claude TUI (既定 0=無制限)
 #   start-claude.sh --project P --background [--duration 300] [--dry-run]          # S1: supervisor BG
 #   start-claude.sh --project P --safe-mode  [--duration 300] [--tmux] [--dry-run] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
@@ -146,14 +146,16 @@ session__running_count() {
 }
 
 session__enforce_launch_limits() {
-  local duration="$1"
+  local duration="$1" mode="${2:-background}"
   local max_sessions="${CCSU_MAX_SESSIONS:-4}"
   local max_minutes="${CCSU_MAX_SESSION_MINUTES:-300}"
 
   [[ "$max_minutes" =~ ^[0-9]+$ ]] || max_minutes=300
   [[ "$max_sessions" =~ ^[0-9]+$ ]] || max_sessions=4
 
-  if (( max_minutes > 0 && duration > max_minutes )); then
+  # foreground (L1 対話 TUI) は人間が席にいる前提のため分数上限を適用しない。
+  # BG/cron の自律実行だけ省クレジットガード (CCSU_MAX_SESSION_MINUTES) を維持する。
+  if [[ "$mode" != "foreground" ]] && (( max_minutes > 0 && duration > max_minutes )); then
     log_error "duration=${duration}m は上限 ${max_minutes}m を超えています"
     return 1
   fi
@@ -166,8 +168,14 @@ session__enforce_launch_limits() {
   fi
 }
 
+# duration (分) → ログ表示ラベル。0 = 無制限 (menu.sh 側の表示と同義)。
+session__duration_label() {
+  if (( $1 == 0 )); then printf '無制限'; else printf '%sm' "$1"; fi
+}
+
 direct__run_tui_foreground() {
   local project="$1" duration="$2" dur_sec project_dir safe stamp wrapper title prompt_file
+  # dur_sec=0 は GNU timeout の「タイムアウト無効化」= 無制限として機能する
   dur_sec=$((duration * 60))
   project_dir="$(launcher__project_dir "$project")"
   safe="$(ccsu_safe_name "$project")"
@@ -211,7 +219,7 @@ EOF
 
   if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project" "$prompt_file" "${CLAUDEOS_SELECTED_MODEL:-}" "${CLAUDEOS_SELECTED_EFFORT:-}"; then
     log_ok "🖥️  Claude プロンプトを新規端末タブで起動しました: $project"
-    log_info "  duration=${duration}m / tmux なし"
+    log_info "  duration=$(session__duration_label "$duration") / tmux なし"
     log_info "  START_PROMPT.md を初期プロンプトとして渡します"
     return 0
   fi
@@ -326,10 +334,20 @@ main() {
   done
 
   if [[ -z "$duration" ]]; then
-    duration="$(config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '300')")"
+    if [[ "$mode" == "foreground" ]]; then
+      # L1 即起動: 既定は 0 = 無制限 (GNU timeout は duration 0 でタイムアウト無効化)。
+      # 分数を区切りたい場合は config の foregroundSessionMinutes か --duration で指定する。
+      duration="$(config_get '.supervisor.defaults.foregroundSessionMinutes' '0')"
+    else
+      duration="$(config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '300')")"
+    fi
   fi
   [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください: $duration"; exit 1; }
-  session__enforce_launch_limits "$duration" || exit 1
+  if (( duration == 0 )) && [[ "$mode" != "foreground" ]]; then
+    log_error "duration=0 (無制限) は foreground のみ対応しています"
+    exit 1
+  fi
+  session__enforce_launch_limits "$duration" "$mode" || exit 1
 
   if (( dry_run )); then
     if ! has_cmd claude; then
@@ -368,7 +386,7 @@ main() {
     log_info "  project=$project"
     log_info "  project_dir=$(launcher__project_dir "$project")"
     log_info "  mode=$mode"
-    log_info "  duration=${duration}m"
+    log_info "  duration=$(session__duration_label "$duration")"
     log_info "  safe_mode=$safe_mode"
     log_info "  tmux=$use_tmux"
     if [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]]; then

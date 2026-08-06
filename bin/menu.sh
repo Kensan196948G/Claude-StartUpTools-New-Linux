@@ -36,15 +36,21 @@ menu__deploy_ready() { json_get "$CCSU_STATE_FILE" '.deploy.ready' 'false'; }
 
 # 既定セッション時間 (分)。start-claude.sh の duration 解決 (--duration 未指定時) と同一の出所を
 # 参照し、メニュー表示と実挙動を単一の真実へ揃える。
-#   supervisor.defaults.sessionMinutes → cron.defaultDurationMinutes → 300
+#   S1 (background): supervisor.defaults.sessionMinutes → cron.defaultDurationMinutes → 300
+#   L1 (foreground):  supervisor.defaults.foregroundSessionMinutes → 0 (= 無制限)
 menu__default_duration_min() {
   config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '300')"
 }
 
-# 分 → 人間可読ラベル (300→"5h" / 90→"1h30m" / 45→"45m")。非数値はそのまま返す。
+menu__foreground_duration_min() {
+  config_get '.supervisor.defaults.foregroundSessionMinutes' '0'
+}
+
+# 分 → 人間可読ラベル (0→"無制限" / 300→"5h" / 90→"1h30m" / 45→"45m")。非数値はそのまま返す。
 menu__duration_label() {
   local min="$1" h m
   [[ "$min" =~ ^[0-9]+$ ]] || { printf '%s' "$min"; return; }
+  (( min == 0 )) && { printf '無制限'; return; }
   h=$(( min / 60 )); m=$(( min % 60 ))
   if   (( h > 0 && m > 0 )); then printf '%dh%dm' "$h" "$m"
   elif (( h > 0 ));         then printf '%dh' "$h"
@@ -83,9 +89,11 @@ show_menu() {
   printf '\n'
 
   # 起動
-  local dur_label; dur_label="$(menu__duration_label "$(menu__default_duration_min)")"
+  local dur_label fg_label
+  dur_label="$(menu__duration_label "$(menu__default_duration_min)")"
+  fg_label="$(menu__duration_label "$(menu__foreground_duration_min)")"
   printf '  %s🚀 %s起動%s\n' "$C_CYAN" "$C_DKCYAN" "$C_RESET"
-  printf '   %s L1 %s  🖥️  ローカル即起動 (フォアグラウンド / %s)\n' "$C_BG_GREEN" "$C_RESET" "$dur_label"
+  printf '   %s L1 %s  🖥️  ローカル即起動 (フォアグラウンド / %s)\n' "$C_BG_GREEN" "$C_RESET" "$fg_label"
   printf '   %s S1 %s  🌙 バックグラウンド起動 (自律 / %s)\n' "$C_BG_YELLOW" "$C_RESET" "$dur_label"
   printf '\n'
 
@@ -207,10 +215,12 @@ launch_claude() {
       [[ "$action_rc" -eq 2 ]] || return 0
     fi
   fi
-  local dur_label; dur_label="$(menu__duration_label "$(menu__default_duration_min)")"
+  local dur_label
   case "$mode" in
-    foreground) mode_label="🖥️  フォアグラウンド即起動 (${dur_label})" ;;
-    background) mode_label="🌙 バックグラウンド自律起動 (${dur_label})" ;;
+    foreground) dur_label="$(menu__duration_label "$(menu__foreground_duration_min)")"
+                mode_label="🖥️  フォアグラウンド即起動 (${dur_label})" ;;
+    background) dur_label="$(menu__duration_label "$(menu__default_duration_min)")"
+                mode_label="🌙 バックグラウンド自律起動 (${dur_label})" ;;
     *)          mode_label="$mode" ;;
   esac
   printf '\n  %s🚀 %s%s%s を %s%s%s で実行します。%s\n' \

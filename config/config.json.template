@@ -122,11 +122,12 @@
     "headlessDefault": true
   },
   "supervisor": {
-    "_comment": "省クレジット運用の全体デフォルト。project/state.json の supervisor ブロックでプロジェクト別に上書き可能。",
+    "_comment": "省クレジット運用の全体デフォルト。project/state.json の supervisor ブロックでプロジェクト別に上書き可能。foregroundSessionMinutes は L1 (対話 TUI) 専用で 0 = 無制限。sessionMinutes (S1/BG 自律) とは独立。",
     "defaults": {
       "dailyMaxMinutes": 600,
       "maxRestartsPerDay": 1,
       "sessionMinutes": 300,
+      "foregroundSessionMinutes": 0,
       "cooldownSeconds": 30,
       "crashLoopThreshold": 3,
       "crashLoopMinSeconds": 120

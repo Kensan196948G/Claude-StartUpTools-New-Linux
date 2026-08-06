@@ -86,6 +86,35 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"上限 300m"* ]]
 }
 
+@test "start-claude: foreground の duration 未指定は無制限 (0)" {
+  run bash "$SCRIPT" --project MyProj --foreground --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"duration=無制限"* ]]
+}
+
+@test "start-claude: foreground は分数上限を適用しない (301m 許可)" {
+  run bash "$SCRIPT" --project MyProj --foreground --duration 301 --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"duration=301m"* ]]
+  [[ "$output" != *"上限 300m"* ]]
+}
+
+@test "start-claude: foreground は foregroundSessionMinutes を既定に使う" {
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "$TEST_TEMP/projects", "projectsDir": "$TEST_TEMP/projects",
+  "supervisor": { "defaults": { "foregroundSessionMinutes": 120 } } }
+JSON
+  run bash "$SCRIPT" --project MyProj --foreground --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"duration=120m"* ]]
+}
+
+@test "start-claude: background の duration 0 (無制限) は拒否する" {
+  run bash "$SCRIPT" --project MyProj --background --duration 0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"foreground のみ"* ]]
+}
+
 @test "start-claude: 実行中セッションが4件なら新規起動を拒否する" {
   mkdir -p "$CLAUDEOS_HOME/supervisor"
   local p
