@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 🎯 新 `/goal` 統合プロンプトが Claude Code 本体の goal 条件 4,000 文字制限を超過し
+  起動失敗する問題（`Goal condition is limited to 4000 characters (got 4016)`）を修正。
+  - 本文を意味保持の外科的短縮 7 箇所で 4,014 → 3,943 文字へ圧縮
+    （引用符込み 3,945 文字・余裕 55 文字）。丁寧体と指示内容は不変。
+  - 対象: `Claude/templates/claude/START_PROMPT.md` と CLAUDE.md §25（計 5 コピー +
+    Git 管理外のグローバル `~/.claude/CLAUDE.md`）。全コピー md5 一致を検証済み。
+  - 再発防止: `tests/bats/unit/goal-inject.bats` へ「/goal 本文 4,000 文字以内
+    （引用符込み）」「START_PROMPT.md と CLAUDE.md §25 の本文一致」の 2 テストを追加。
+
 ### Changed
 
 - 🤖 開発体制ポリシーを「毎 PR の Y/N マージ承認」から「品質ゲート条件付き自動マージ」へ全面変更。
