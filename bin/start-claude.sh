@@ -189,12 +189,16 @@ direct__run_tui_foreground() {
   prompt_file="$project_dir/.claude/START_PROMPT.md"
   local -a model_args=()
   [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
+  # クロスセッションメッセージング用の安定セッション名 (claude v2.1.196+ のみ付与)
+  local session_name=""
+  ccsu_claude_supports_name "$CLAUDE_BIN" && session_name="$(ccsu_claude_session_name "$project")"
   cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"; prompt_file="$7"; model="$8"; effort="$9"
+project_dir="$1"; dur="$2"; claude_bin="$3"; title="$4"; state_file="$5"; project="$6"; prompt_file="$7"; model="$8"; effort="$9"; session_name="${10:-}"
 model_args=()
 [[ -n "$model" ]] && model_args=(--model "$model" --effort "$effort")
+[[ -n "$session_name" ]] && model_args+=(--name "$session_name")
 started="$(date -Iseconds)"
 mkdir -p "$(dirname "$state_file")"
 printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
@@ -217,7 +221,7 @@ exit "$rc"
 EOF
   chmod +x "$wrapper"
 
-  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project" "$prompt_file" "${CLAUDEOS_SELECTED_MODEL:-}" "${CLAUDEOS_SELECTED_EFFORT:-}"; then
+  if terminal__open_tab "$title" "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$title" "$state_file" "$project" "$prompt_file" "${CLAUDEOS_SELECTED_MODEL:-}" "${CLAUDEOS_SELECTED_EFFORT:-}" "$session_name"; then
     log_ok "🖥️  Claude プロンプトを新規端末タブで起動しました: $project"
     log_info "  duration=$(session__duration_label "$duration") / tmux なし"
     log_info "  START_PROMPT.md を初期プロンプトとして渡します"
@@ -228,6 +232,7 @@ EOF
   log_warn "現在の端末で Claude プロンプトを起動します。"
   log_info "🖥️  Claude プロンプト起動: $project (tmux なし / Ctrl+C 可)"
   log_info "  START_PROMPT.md を初期プロンプトとして渡します"
+  [[ -n "$session_name" ]] && model_args+=(--name "$session_name")
   (
     started="$(date -Iseconds)"
     printf '{"project":"%s","status":"running","pid":%s,"started_at":"%s","mode":"foreground-tui"}\n' \
@@ -281,19 +286,22 @@ direct__run_headless_once() {
   [[ -f "$project_dir/.claude/START_PROMPT.md" ]] && prompt="$(cat "$project_dir/.claude/START_PROMPT.md")"
   local -a model_args=()
   [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
+  # クロスセッションメッセージング用の安定セッション名 (claude v2.1.196+ のみ付与)
+  local -a name_args=()
+  ccsu_claude_supports_name "$CLAUDE_BIN" && name_args=(--name "$(ccsu_claude_session_name "$project")")
 
   if [[ "$mode" == "foreground" ]]; then
     log_info "🔧 直接 headless 起動: $project (tmux なし / Ctrl+C 可)"
     if [[ -f "$SCRIPT_DIR/../libexec/stream-json-tail.sh" ]]; then
       local rc
       set +e
-      ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "${model_args[@]}" ) \
+      ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "${model_args[@]}" "${name_args[@]}" ) \
         | bash "$SCRIPT_DIR/../libexec/stream-json-tail.sh"
       rc="${PIPESTATUS[0]}"
       set -e
       return "$rc"
     fi
-    ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "${model_args[@]}" )
+    ( cd "$project_dir" && timeout --foreground "${dur_sec}s" "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose --permission-mode auto "${model_args[@]}" "${name_args[@]}" )
   else
     local prompt_file wrapper
     prompt_file="$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.prompt"
@@ -310,7 +318,7 @@ timeout --foreground "$dur" "$claude_bin" -p "$prompt" --output-format stream-js
 EOF
     chmod +x "$wrapper"
     if has_cmd setsid; then runner=setsid; else runner=nohup; fi
-    "$runner" bash "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$prompt_file" "${model_args[@]}" >>"$log_file" 2>&1 < /dev/null &
+    "$runner" bash "$wrapper" "$project_dir" "${dur_sec}s" "$CLAUDE_BIN" "$prompt_file" "${model_args[@]}" "${name_args[@]}" >>"$log_file" 2>&1 < /dev/null &
     disown 2>/dev/null || true
     log_ok "直接 headless BG 起動: $project (tmux なし)"
     log_info "  ログ: $log_file"

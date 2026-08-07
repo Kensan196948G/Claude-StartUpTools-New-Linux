@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- 📡 クロスセッションメッセージング基盤を全起動経路へ統合（2026-08-08 ユーザー指示）。
+  - 全起動経路（`lib/tmux-runner.sh`・`bin/start-claude.sh` の TUI/headless/BG・
+    `cron-launcher.sh` の headless/TUI/no-tmux）で claude 起動時に
+    `--name claudeos-<プロジェクトキー>[-<役割>]` を自動付与。`/list-agents` 上で
+    安定した宛先名になり、CTO/Backend/Frontend/QA の役割別セッション間通信が可能に。
+  - 命名ヘルパー `ccsu_claude_session_name` / `ccsu_claude_supports_name` を
+    `lib/common.sh` へ追加。起動前に `claude --help` で `--name` 対応を probe し、
+    未対応バージョン（v2.1.196 未満）には付与しない（起動失敗を防止）。
+    safe-mode 診断起動には意図的に付与しない。
+  - 役割サフィックスは `CCSU_SESSION_ROLE`（StartUpTools 経路）/
+    `CLAUDEOS_SESSION_ROLE`（cron-launcher 経路）で opt-in。
+    `CCSU_SESSION_NAME=0` / `CLAUDEOS_SESSION_NAME_ENABLED=0` で無効化可能。
+  - 通信統制: CLAUDE.md §27「クロスセッションメッセージング通信規約」を新設
+    （メッセージは人間の承認を代替しない・本番公開/Secrets/課金/破壊的削除/
+    main 直接 push/PR merge はメッセージだけを根拠に実行しない）。
+    4 コピー（ルート・`Claude/`・テンプレート・グローバル）へ md5 一致で配布。
+  - `Claude/templates/claude/settings.json` の `requiredMinimumVersion` を
+    `2.1.224`（クロスセッションメッセージング必須版）へ更新。
+  - 新規文書 `docs/claude/19_クロスセッションメッセージング.md`（前提条件・命名・
+    4役割トポロジ・受信ポリシー方針・監査・残課題）と `docs/claude/04_環境変数.md` の
+    4 変数追記。テスト `tests/bats/unit/session-name.bats`（14 件）を追加。
+
 ### Fixed
 
 - 🎯 新 `/goal` 統合プロンプトが Claude Code 本体の goal 条件 4,000 文字制限を超過し

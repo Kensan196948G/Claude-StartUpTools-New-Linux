@@ -8,7 +8,7 @@
   },
   "includeCoAuthoredBy": true,
   "fallbackModel": ["opus", "sonnet", "haiku"],
-  "requiredMinimumVersion": "2.1.166",
+  "requiredMinimumVersion": "2.1.224",
   "outputStyle": "Explanatory",
   "language": "日本語",
   "spinnerTipsEnabled": true,
