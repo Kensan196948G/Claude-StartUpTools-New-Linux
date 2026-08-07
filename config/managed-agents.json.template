@@ -37,5 +37,13 @@
   },
   "orchestratorId": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
   "orchestratorVersion": 1,
-  "lastSessionId": null
+  "lastSessionId": null,
+  "_comment_2026_08": "以下は 2026-08 新機能（docs/claude/07 §7）の適用値の記録用。読み手コードは無い（本テンプレートは全体が ID・設定の記録用プレースホルダ）。",
+  "sessionBudget": {
+    "_comment": "セッション作成 body の budget.max_list_cost へ渡す値。PoC 再開後はセッション作成時の budget 無指定を禁止（docs/claude/07 §7-1）",
+    "amount": null,
+    "currency": "USD"
+  },
+  "inferenceGeo": "global",
+  "advisorModel": null
 }

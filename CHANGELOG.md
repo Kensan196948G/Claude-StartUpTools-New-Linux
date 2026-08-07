@@ -4,6 +4,19 @@
 
 ### Added
 
+- 🆕 Managed Agents 2026-08 新機能 4 点の取り込み方針を PoC 手順書へ追加
+  （2026-08-08 ユーザー指示・docs/claude/07 §7 新設）。
+  - 対象: 💰 セッション予算（`budget.max_list_cost`・再開時必須適用）、
+    🌍 推論実行場所（`inference_geo`・更新時は全置換に注意）、
+    📚 リポジトリスキル自動読み込み（`<name>/SKILL.md` 形式は PR #87 で移行済み = 適合）、
+    🧠 アドバイザー（roster へ `advisor_20260301` エントリ・budget とセット導入）。
+  - 実在検証: anthropic-sdk-python v0.121.0（2026-08-07）の型定義 diff で 4 機能とも確認。
+    流布情報の訂正 3 点（`budget_reached` イベントは存在せず `session.usage` で追跡・
+    `inference_geo` は replace-all・advisor は roster 1 エントリ形式）を明記。
+  - `config/managed-agents.json.template` へ記録用キー
+    `sessionBudget` / `inferenceGeo` / `advisorModel` を additive 追加（読み手コード無し）。
+  - live 検証は PoC sandbox bug（docs/claude/07 §6-3・Anthropic case 返信待ち）と
+    課金 churn 防止方針により **BLOCKED**。コード追加禁止方針（docs/claude/09）は維持。
 - 📡 クロスセッションメッセージング基盤を全起動経路へ統合（2026-08-08 ユーザー指示）。
   - 全起動経路（`lib/tmux-runner.sh`・`bin/start-claude.sh` の TUI/headless/BG・
     `cron-launcher.sh` の headless/TUI/no-tmux）で claude 起動時に
