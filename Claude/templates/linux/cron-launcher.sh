@@ -101,6 +101,22 @@ TMUX_SESSION="claudeos-${SAFE_PROJECT}"
 CLAUDE_EXIT_FILE="$SESSIONS_DIR/${SESSION_ID}.exit"
 CLAUDE_WRAPPER="$SESSIONS_DIR/${SESSION_ID}.wrapper.sh"
 
+# クロスセッションメッセージング用の安定セッション名 (claude v2.1.196+ の --name)。
+# 役割サフィックスは CLAUDEOS_SESSION_ROLE (例: cto / backend / frontend / qa)。
+# CLAUDEOS_SESSION_NAME_ENABLED=0 で無効化。--name 未対応の claude には付与しない
+# (unknown option での起動失敗を防止)。
+CLAUDE_SESSION_NAME=""
+if [[ "${CLAUDEOS_SESSION_NAME_ENABLED:-1}" == "1" ]] \
+     && claude --help 2>/dev/null | grep -q -- '--name'; then
+  CLAUDE_SESSION_NAME="claudeos-${SAFE_PROJECT}"
+  if [[ -n "${CLAUDEOS_SESSION_ROLE:-}" ]]; then
+    _SAFE_ROLE="$(printf '%s' "$CLAUDEOS_SESSION_ROLE" | tr -c 'A-Za-z0-9_-' '_')"
+    CLAUDE_SESSION_NAME="${CLAUDE_SESSION_NAME}-${_SAFE_ROLE}"
+  fi
+fi
+_NAME_ARGS=()
+[[ -n "$CLAUDE_SESSION_NAME" ]] && _NAME_ARGS=( --name "$CLAUDE_SESSION_NAME" )
+
 # 終了時に status を更新するトラップ
 finalize() {
   local exit_code=$?
@@ -432,7 +448,7 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   fi
 
   _HL_CMD=( timeout --foreground "${DURATION_SEC}s" "${_HL_AUTH[@]}" claude -p "$PROMPT_ARG"
-            --output-format stream-json --verbose "${_HL_PERM[@]}" "${_HL_MODEL[@]}" )
+            --output-format stream-json --verbose "${_HL_PERM[@]}" "${_HL_MODEL[@]}" "${_NAME_ARGS[@]}" )
   # proactive output style があれば append (env 指定時のみ・既定は未使用)
   if [[ -n "${CLAUDEOS_PROACTIVE_STYLE_FILE:-}" ]] && [[ -f "$CLAUDEOS_PROACTIVE_STYLE_FILE" ]]; then
     _HL_CMD+=( --append-system-prompt-file "$CLAUDEOS_PROACTIVE_STYLE_FILE" )
@@ -507,13 +523,16 @@ cat > "$CLAUDE_WRAPPER" <<'WRAPPER_EOF'
 claude_exit=0
 _prompt_file="${_CLAUDEOS_PROMPT_FILE:-}"
 _model_args="${_CLAUDEOS_MODEL_ARGS:-}"
+# クロスセッションメッセージング用セッション名 (空なら付与しない = --name 未対応 claude)
+_name_args=()
+[[ -n "${_CLAUDEOS_SESSION_NAME:-}" ]] && _name_args=(--name "$_CLAUDEOS_SESSION_NAME")
 if [[ -f "$_prompt_file" ]] && [[ -s "$_prompt_file" ]]; then
   _prompt_content="$(cat "$_prompt_file")"
   # shellcheck disable=SC2086 # _model_args is generated with shell quoting.
-  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args --dangerously-skip-permissions "$_prompt_content" || claude_exit=$?
+  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args "${_name_args[@]}" --dangerously-skip-permissions "$_prompt_content" || claude_exit=$?
 else
   # shellcheck disable=SC2086 # _model_args is generated with shell quoting.
-  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args --dangerously-skip-permissions || claude_exit=$?
+  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args "${_name_args[@]}" --dangerously-skip-permissions || claude_exit=$?
 fi
 echo "$claude_exit" > "${_CLAUDEOS_EXIT_FILE}"
 # 終了コード書き込み後に親 shell へ通知（失敗時もここまで必ず到達する）
@@ -548,6 +567,7 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
     -e "_CLAUDEOS_TMUX_DONE=$_TMUX_DONE" \
     -e "_CLAUDEOS_PROMPT_FILE=$PROMPT_FILE" \
     -e "_CLAUDEOS_MODEL_ARGS=$_TUI_MODEL_ARGS" \
+    -e "_CLAUDEOS_SESSION_NAME=$CLAUDE_SESSION_NAME" \
     "$CLAUDE_WRAPPER" 2>>"$LOG_FILE"
   # セッション監視用メタデータ (best-effort)。
   #   安定したウィンドウ名 (= SAFE_PROJECT) を付与し、
@@ -573,7 +593,7 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
 else
   # tmux 無効時は TTY なし直実行。既定ではここも tmux を使わない。
   # shellcheck disable=SC2086 # _TUI_MODEL_ARGS is generated with shell quoting.
-  timeout --foreground "${DURATION_SEC}s" claude $_TUI_MODEL_ARGS --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
+  timeout --foreground "${DURATION_SEC}s" claude $_TUI_MODEL_ARGS "${_NAME_ARGS[@]}" --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
 fi
 fi  # CLAUDEOS_HEADLESS 分岐の終端
 

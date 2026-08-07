@@ -150,10 +150,16 @@ tmux_run() {
       log_info "🧠 model=$MODEL_ROUTER_MODEL effort=$MODEL_ROUTER_EFFORT reason=$MODEL_ROUTER_REASON"
     fi
   fi
+  # クロスセッションメッセージング用の安定セッション名 (claude v2.1.196+ のみ)。
+  # 未対応バージョンでは付与しない (unknown option での起動失敗を防止)。
+  local name_args=""
+  if ccsu_claude_supports_name "$CLAUDE_BIN"; then
+    name_args="--name '$(ccsu_claude_session_name "$project")' "
+  fi
   if [[ "${CCSU_CLAUDE_SAFE_MODE:-0}" == "1" ]]; then
     # safe-mode 診断起動 (claude 2.1.169+): hooks/MCP/カスタム設定を無効化した
     # 素の Claude Code で起動する。テンプレート配布・START_PROMPT 注入・
-    # --dangerously-skip-permissions は意図的にスキップ (環境起因の問題切り分け用)。
+    # --dangerously-skip-permissions・--name は意図的にスキップ (環境起因の問題切り分け用)。
     claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }--safe-mode"
     log_info "🩺 safe-mode 診断起動: テンプレート配布/START_PROMPT/権限スキップなし"
   else
@@ -162,9 +168,9 @@ tmux_run() {
 
     # START_PROMPT.md があれば claude に渡す (cat 展開を tmux コマンド内で実行)
     if [[ -f "$project_dir/.claude/START_PROMPT.md" ]]; then
-      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }--dangerously-skip-permissions \"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
+      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }${name_args}--dangerously-skip-permissions \"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
     else
-      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }--dangerously-skip-permissions"
+      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }${name_args}--dangerously-skip-permissions"
     fi
   fi
 

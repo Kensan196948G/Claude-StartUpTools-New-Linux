@@ -76,6 +76,33 @@ require_cmd() {
 # --- プロジェクト名を tmux/ファイル安全な文字列へ (cron-launcher.sh の SAFE_PROJECT と同一規則) ---
 ccsu_safe_name() { printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '_'; }
 
+# --- クロスセッションメッセージング用セッション名 (claude v2.1.196+ の --name) ---
+#   claudeos-<safe>[-<役割>]。役割は CCSU_SESSION_ROLE (例: cto / backend / frontend / qa)。
+#   tmux セッション名 (claudeos-<safe>) と同一規則で、/list-agents 上の宛先になる。
+ccsu_claude_session_name() {
+  local name
+  name="claudeos-$(ccsu_safe_name "$1")"
+  [[ -n "${CCSU_SESSION_ROLE:-}" ]] && name="${name}-$(ccsu_safe_name "$CCSU_SESSION_ROLE")"
+  printf '%s' "$name"
+}
+
+# ccsu_claude_supports_name [claude-bin] — claude CLI が --name フラグを持つか probe。
+#   旧バージョン claude へ --name を渡すと unknown option で起動失敗するため、
+#   --help 出力で事前判定する。CCSU_SESSION_NAME=0 で命名を無効化。
+#   結果は同一プロセス内で cache (probe は 1 回だけ)。
+CCSU_CLAUDE_NAME_SUPPORT=""
+ccsu_claude_supports_name() {
+  [[ "${CCSU_SESSION_NAME:-1}" == "1" ]] || return 1
+  if [[ -z "$CCSU_CLAUDE_NAME_SUPPORT" ]]; then
+    if "${1:-claude}" --help 2>/dev/null | grep -q -- '--name'; then
+      CCSU_CLAUDE_NAME_SUPPORT=1
+    else
+      CCSU_CLAUDE_NAME_SUPPORT=0
+    fi
+  fi
+  [[ "$CCSU_CLAUDE_NAME_SUPPORT" == "1" ]]
+}
+
 # --- LAN IP 取得 (Windows 等からアクセスする際のホスト IP。docker bridge を除外) ---
 #   デフォルトルートの src IP を優先 (= 物理 LAN の 192.168.0.x 等)。失敗時は hostname -I 先頭。
 ccsu_lan_ip() {
