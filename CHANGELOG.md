@@ -11,8 +11,11 @@
     📚 リポジトリスキル自動読み込み（`<name>/SKILL.md` 形式は PR #87 で移行済み = 適合）、
     🧠 アドバイザー（roster へ `advisor_20260301` エントリ・budget とセット導入）。
   - 実在検証: anthropic-sdk-python v0.121.0（2026-08-07）の型定義 diff で 4 機能とも確認。
-    流布情報の訂正 3 点（`budget_reached` イベントは存在せず `session.usage` で追跡・
-    `inference_geo` は replace-all・advisor は roster 1 エントリ形式）を明記。
+    流布情報の訂正 3 点（`budget_reached` は専用イベント型でなく idle イベントの
+    `stop_reason.type`・`inference_geo` は replace-all・advisor は roster 1 エントリ形式）を明記。
+  - budget の正確な形式は公式ドキュメント準拠へ修正（PR #94 CodeRabbit 指摘採用）:
+    `budget: {type: "limit", max_list_cost: {amount: "<セント整数の文字列>", currency: "USD"}}`・
+    budget 無しで作成したセッションへの後付け不可・budget 更新（引上げ/撤廃）で自動 resume。
   - `config/managed-agents.json.template` へ記録用キー
     `sessionBudget` / `inferenceGeo` / `advisorModel` を additive 追加（読み手コード無し）。
   - live 検証は PoC sandbox bug（docs/claude/07 §6-3・Anthropic case 返信待ち）と

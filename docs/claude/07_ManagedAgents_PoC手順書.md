@@ -260,19 +260,28 @@ jq -n --arg id "$TOOL_USE_ID" '{events: [{type: "user.tool_confirmation", tool_u
 
 ### 7-1. 💰 セッション予算（budget）— 再開時 **必須適用**
 
-- セッション作成時に `budget` パラメータ（SDK 型 `BetaManagedAgentsBudgetLimitParam`）を指定。
-  中身は `max_list_cost: {amount, currency}`（`BetaMonetaryAmount`、list 価格ベースの上限）。
-- 上限到達でセッションは**自動 pause**（状態は保持）。budget を引き上げれば同セッションで再開できる。
-- ⚠️ **訂正（一般記事の流布情報との差分）**: 専用の `budget_reached` イベント型は SDK に存在しない。
-  使用量の追跡は **`session.usage` イベント**で行う（イベント監視の実装はこれを前提にする）。
+- セッション作成時に `budget: {type: "limit", max_list_cost: {amount, currency}}` を指定
+  （list 価格ベースの上限。SDK 型 `BetaManagedAgentsBudgetLimitParam`）。
+  📖 正確な形式は公式ドキュメント準拠: `amount` は **US セント単位の整数を文字列で**渡す
+  （例 `"2500"` = $25.00）。`currency` は `"USD"` のみ。float のドル値（`5.00` 等）は拒否される。
+  出典: platform.claude.com/docs/en/managed-agents/sessions・session-operations（2026-08-08 参照）。
+- 上限到達でセッションは**自動 pause**（idle 化・状態は保持）。enforcement はモデルリクエスト間で
+  行われ、閾値を跨いだリクエスト自体は完走する。
+- ⚠️ **訂正（一般記事の流布情報との差分・2026-08-08 CodeRabbit 指摘で再訂正）**:
+  `budget_reached` は専用イベント型ではなく、`session.status_idle` /
+  `session.thread_status_idle` イベントの **`stop_reason.type`** として返る。
+  使用量の追跡は **`session.usage` イベント**の `usage.list_cost`（**累積値**）で行う。
+- 🔄 再開方法: budget の**更新（上限引き上げ or `null` で撤廃）で自動 resume**。
+  ⚠️ **budget 無しで作成したセッションへ後から budget は追加できない** —
+  これが「再開時のセッション作成は budget 無指定を禁止」とする決定的理由。
 - 🎯 本 PoC での位置づけ: §6-3 の billing_error 停止と、自動リトライ課金 churn を手動 `deny`
   （`sevt_01L75izFdq8i9ZGtGw64SsWG`）で止めた実績への**恒久対策**。再開後のセッション作成は
   budget 無指定を禁止し、少額（PoC 1 サイクル相当）から開始する。
 
 ```bash
 # 再開時のセッション作成 body（§6-2 の 2 段階ライフサイクル①へ budget を追加）
-# ⚠️ REST body 上の正確な位置は SDK 型定義からの推定。再開時に実測して本節を更新する（NOT RUN）
-jq -n '{agent: "agent_01Nnnk8HvvTiRet86CYm7Hhp", environment_id: "env_01TSmgmdcCeEGoscy2HkWurC", vault_ids: ["vlt_011CbwcTDqg1KetU7FtQ1Re8"], budget: {max_list_cost: {amount: 5.00, currency: "USD"}}}'
+# 形式は公式ドキュメント準拠（amount はセント整数の文字列: "500" = $5.00）。live 実測は NOT RUN（§7 冒頭）
+jq -n '{agent: "agent_01Nnnk8HvvTiRet86CYm7Hhp", environment_id: "env_01TSmgmdcCeEGoscy2HkWurC", vault_ids: ["vlt_011CbwcTDqg1KetU7FtQ1Re8"], budget: {type: "limit", max_list_cost: {amount: "500", currency: "USD"}}}'
 ```
 
 ### 7-2. 🌍 推論実行場所（inference_geo）— 任意（`global` 推奨）
