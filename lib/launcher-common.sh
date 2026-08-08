@@ -57,7 +57,7 @@ launcher__project_run_status() {
 }
 
 # launcher__select_project [mode] [group] — 対話的にプロジェクトを選ぶ。結果を stdout、案内は stderr
-#   mode:  foreground (既定) | background | deploy
+#   mode:  foreground (既定) | background | deploy | team
 #   group: projectGroups 内のグループ名。指定するとグループ選択を省略し、そのグループ
 #          配下のサブプロジェクト選択から直接始める (メニュー L<n> のグループ直結起動用)。
 #   config.projectGroups が設定されていれば「①グループ選択 → ②配下から選択」の 2 段階、
@@ -72,6 +72,7 @@ launcher__select_mode_label() {
   case "$1" in
     background) printf 'バックグラウンド' ;;
     deploy)     printf 'デプロイ準備' ;;
+    team)       printf '4役割一括' ;;
     *)          printf 'フォアグラウンド' ;;
   esac
 }
@@ -174,6 +175,7 @@ launcher__select_flat() {
   case "$mode" in
     background) mode_label="バックグラウンド" ;;
     deploy)     mode_label="デプロイ準備" ;;
+    team)       mode_label="4役割一括" ;;
     *)          mode_label="フォアグラウンド" ;;
   esac
 
