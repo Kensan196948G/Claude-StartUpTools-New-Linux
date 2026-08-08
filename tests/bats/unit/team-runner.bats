@@ -17,7 +17,7 @@ state="${TMUX_STATE:?}"; mkdir -p "$state"
 sub="${1:-}"; shift || true
 case "$sub" in
   has-session) [[ "${1:-}" == "-t" ]] && shift; [[ -f "$state/${1:-}" ]] && exit 0 || exit 1 ;;
-  new-session) name=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-s" ]] && { name="${2:-}"; shift 2; continue; }; shift; done; [[ -n "$name" ]] && touch "$state/$name"; exit 0 ;;
+  new-session) printf "%s\n" "$*" > "$state/new-session.log"; name=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-s" ]] && { name="${2:-}"; shift 2; continue; }; shift; done; [[ -n "$name" ]] && touch "$state/$name"; exit 0 ;;
   split-window) [[ -f "$state/fail-split" ]] && exit 1; printf "%s\n" "$*" >> "$state/split-window.log"; exit 0 ;;
   attach|pipe-pane) exit 0 ;;
   kill-session) [[ "${1:-}" == "-t" ]] && shift; rm -f "$state/${1:-}"; exit 0 ;;
@@ -108,6 +108,28 @@ teardown() { _bats_common_teardown; }
   [[ "$output" != *"--name"* ]]
 }
 
+@test "team__pane_cmd: prompt_file 指定時は遅延 cat の位置引数を付与する" {
+  run team__pane_cmd "$PROJ_DIR" cto MyProj 0 "" "$PROJ_DIR/.claude/TEAM_START_PROMPT.md"
+  [ "$status" -eq 0 ]
+  # ペイン内シェルが評価する時点で cat される遅延展開形式であること
+  [[ "$output" == *"\"\$(cat $PROJ_DIR/.claude/TEAM_START_PROMPT.md)\""* ]]
+  bash -n -c "$output"
+}
+
+@test "team__pane_cmd: prompt_file のパスも %q エスケープする" {
+  local pdir="$TEST_TEMP/projects/O'Reilly"
+  run team__pane_cmd "$pdir" cto "O'Reilly" 0 "" "$pdir/.claude/TEAM_START_PROMPT.md"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$(printf '%q' "$pdir/.claude/TEAM_START_PROMPT.md")"* ]]
+  bash -n -c "$output"
+}
+
+@test "team__pane_cmd: prompt_file 省略時は cat 注入を含まない" {
+  run team__pane_cmd "$PROJ_DIR" backend MyProj 0 ""
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'$(cat'* ]]
+}
+
 @test "team_run: claudeos-team-<safe> セッションと役割別 worktree を作成する" {
   run team_run MyProj 0
   [ "$status" -eq 0 ]
@@ -120,6 +142,37 @@ teardown() { _bats_common_teardown; }
   # cto の new-session に加えて 3 役割分の split-window が実行されている
   run grep -c . "$TMUX_STATE/split-window.log"
   [ "$output" = "3" ]
+}
+
+@test "team_run: CTO ペインのみ TEAM_START_PROMPT.md を初期プロンプト注入する" {
+  run team_run MyProj 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"初期プロンプトとして注入します"* ]]
+  # cto (new-session) には注入され、backend/frontend/qa (split-window) には注入されない
+  grep -q 'TEAM_START_PROMPT.md' "$TMUX_STATE/new-session.log"
+  run grep -c 'TEAM_START_PROMPT.md' "$TMUX_STATE/split-window.log"
+  [ "$output" = "0" ]
+}
+
+@test "team_run: CCSU_TEAM_PROMPT=0 なら注入しない" {
+  export CCSU_TEAM_PROMPT=0
+  run team_run MyProj 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"指示待ちで起動します"* ]]
+  [ -f "$TMUX_STATE/new-session.log" ]
+  run grep -c 'TEAM_START_PROMPT.md' "$TMUX_STATE/new-session.log"
+  [ "$output" = "0" ]
+}
+
+@test "team_run: 空の TEAM_START_PROMPT.md は注入しない (空ファイル opt-out・既存保護)" {
+  # 既存ファイルは template-sync が上書きしない → 空のままなら注入されない
+  : > "$PROJ_DIR/.claude/TEAM_START_PROMPT.md"
+  run team_run MyProj 0
+  [ "$status" -eq 0 ]
+  [ ! -s "$PROJ_DIR/.claude/TEAM_START_PROMPT.md" ]
+  [ -f "$TMUX_STATE/new-session.log" ]
+  run grep -c 'TEAM_START_PROMPT.md' "$TMUX_STATE/new-session.log"
+  [ "$output" = "0" ]
 }
 
 @test "team_run: ログディレクトリを作成する" {

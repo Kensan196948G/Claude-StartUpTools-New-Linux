@@ -52,6 +52,28 @@ teardown() { _bats_common_teardown; }
   grep -q "v1" "$proj/.claude/START_PROMPT.md"
 }
 
+# ---- TEAM_START_PROMPT.md --------------------------------------
+@test "template_sync__apply: TEAM_START_PROMPT.md を初回配布する" {
+  printf 'team cto prompt\n' > "$CCSU_ROOT/Claude/templates/claude/TEAM_START_PROMPT.md"
+  local proj="$TEST_TEMP/proj22"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ -f "$proj/.claude/TEAM_START_PROMPT.md" ]
+  grep -q "team cto prompt" "$proj/.claude/TEAM_START_PROMPT.md"
+}
+
+@test "template_sync__apply: 既存 TEAM_START_PROMPT.md は上書きしない" {
+  printf 'template version\n' > "$CCSU_ROOT/Claude/templates/claude/TEAM_START_PROMPT.md"
+  local proj="$TEST_TEMP/proj23"
+  mkdir -p "$proj/.claude"
+  printf 'project specific task\n' > "$proj/.claude/TEAM_START_PROMPT.md"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # プロジェクト固有タスク記載が保護されること
+  grep -q "project specific task" "$proj/.claude/TEAM_START_PROMPT.md"
+}
+
 # ---- CLAUDE.md -------------------------------------------------
 @test "template_sync__apply: CLAUDE.md を初回配布する" {
   # 100 bytes 以上のテンプレートが必要（サイズガード対応）
