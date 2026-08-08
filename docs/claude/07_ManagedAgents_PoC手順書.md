@@ -249,3 +249,73 @@ jq -n --arg id "$TOOL_USE_ID" '{events: [{type: "user.tool_confirmation", tool_u
 | ① | README.md 読み取り（PAT 経由アクセス確認） | 3 行要約が返る | 🟥 GitHub 側・PAT・MCP エンドポイントは**直接呼び出しで全グリーン実証**（initialize/tools/call 200・README 取得成功）。Agent 経由のみ crash＝**Managed Agents 実行サンドボックスの beta バグに真因再分類**・プラットフォーム修正待ち。**2026-07-11 再検証でも同一 crash 再現**（`get_file_contents` / `search_repositories` の 2 ツールで確認・ツール非依存） |
 | ② | 「main に直接 push して」と指示 | FORBIDDEN により**拒否** | ⬜ 未実施（①の Agent 経由 crash 解消後／プラットフォーム側修正待ち） |
 | ③ | feature ブランチ + Draft PR 作成 | Draft PR 作成・merge しない | ⬜ 未実施（①の Agent 経由 crash 解消後／プラットフォーム側修正待ち） |
+
+## 7. 🆕 2026-08 新機能と PoC 再開時の適用方針
+
+> 📅 追記: 2026-08-08
+> 🔬 検証根拠: anthropic-sdk-python **v0.121.0**（2026-08-07 リリース）の型定義 diff
+> （commit `193bae02` / `4297dca2`）で 4 機能すべての実在とフィールド形式を確認済み。
+> ⚠️ **live 検証は本 PoC の sandbox bug（§6-3）未解消 + 課金 churn 防止の再試行禁止方針により
+> 全項目 `BLOCKED`**。下記は PoC 再開時（Anthropic case 返信 = 再開トリガー）に適用する。
+
+### 7-1. 💰 セッション予算（budget）— 再開時 **必須適用**
+
+- セッション作成時に `budget: {type: "limit", max_list_cost: {amount, currency}}` を指定
+  （list 価格ベースの上限。SDK 型 `BetaManagedAgentsBudgetLimitParam`）。
+  📖 正確な形式は公式ドキュメント準拠: `amount` は **US セント単位の整数を文字列で**渡す
+  （例 `"2500"` = $25.00）。`currency` は `"USD"` のみ。float のドル値（`5.00` 等）は拒否される。
+  出典: platform.claude.com/docs/en/managed-agents/sessions・session-operations（2026-08-08 参照）。
+- 上限到達でセッションは**自動 pause**（idle 化・状態は保持）。enforcement はモデルリクエスト間で
+  行われ、閾値を跨いだリクエスト自体は完走する。
+- ⚠️ **訂正（一般記事の流布情報との差分・2026-08-08 CodeRabbit 指摘で再訂正）**:
+  `budget_reached` は専用イベント型ではなく、`session.status_idle` /
+  `session.thread_status_idle` イベントの **`stop_reason.type`** として返る。
+  使用量の追跡は **`session.usage` イベント**の `usage.list_cost`（**累積値**）で行う。
+- 🔄 再開方法: budget の**更新（上限引き上げ or `null` で撤廃）で自動 resume**。
+  ⚠️ **budget 無しで作成したセッションへ後から budget は追加できない** —
+  これが「再開時のセッション作成は budget 無指定を禁止」とする決定的理由。
+- 🎯 本 PoC での位置づけ: §6-3 の billing_error 停止と、自動リトライ課金 churn を手動 `deny`
+  （`sevt_01L75izFdq8i9ZGtGw64SsWG`）で止めた実績への**恒久対策**。再開後のセッション作成は
+  budget 無指定を禁止し、少額（PoC 1 サイクル相当）から開始する。
+
+```bash
+# 再開時のセッション作成 body（§6-2 の 2 段階ライフサイクル①へ budget を追加）
+# 形式は公式ドキュメント準拠（amount はセント整数の文字列: "500" = $5.00）。live 実測は NOT RUN（§7 冒頭）
+jq -n '{agent: "agent_01Nnnk8HvvTiRet86CYm7Hhp", environment_id: "env_01TSmgmdcCeEGoscy2HkWurC", vault_ids: ["vlt_011CbwcTDqg1KetU7FtQ1Re8"], budget: {type: "limit", max_list_cost: {amount: "500", currency: "USD"}}}'
+```
+
+### 7-2. 🌍 推論実行場所（inference_geo）— 任意（`global` 推奨）
+
+- セッション作成時の `inference_geo`（例: `"global"` = 容量のある場所で実行・標準料金）。
+- 未指定時は workspace の `default_inference_geo` へフォールバック。
+- ⚠️ **更新時は全置換（replace-all）セマンティクス**: §6-2 の配列フィールドと同様、
+  update で省略すると**削除**される。update 時は毎回明示する。
+
+### 7-3. 📚 リポジトリからのスキル自動読み込み — **既に適合済み**
+
+- attach したリポジトリの `.claude/skills/<name>/SKILL.md` をセッション開始時に自動読み込み。
+  Claude Code のスキルがそのまま使える（正確な API パラメータ名は SDK 上未確認・機能記述のみ）。
+- ✅ 本リポジトリと配布テンプレートは 2026-07-24（PR #87）で `<name>/SKILL.md`
+  ディレクトリ形式へ移行済みのため**追加作業なしで適合**（flat `.md` は認識されない）。
+- 📋 再開時タスク: PoC 対象 `Kensan196948G/Synapse-OS` 側の `.claude/skills/` が
+  同形式かを確認し、flat 形式ならディレクトリ形式へ移行する。
+
+### 7-4. 🧠 アドバイザー（advisor）— budget とセットで検討
+
+- roster へ 1 エントリ追加するだけで、強力なモデルへのセカンドオピニオン照会が有効になる:
+  `{type: "advisor_20260301", name: "advisor", model: "<model-id>"}`
+- 💸 advisor のトークンは**セッション budget 内で課金**されるため、§7-1 の budget
+  指定とセットで導入する（budget 無しでの advisor 有効化は課金 churn リスクを再導入する）。
+- 本 PoC の agent は `claude-sonnet-4-6`（§6-1）のため、advisor に上位モデルを 1 行
+  追加する構成が典型形。適用は受入①〜③ 通過後の Phase 1 で判断する。
+
+### 7-5. ⏰ 再開時の先行タスク（順序固定)
+
+1. 🔑 **PAT 再発行**: §6-1 の PAT は **2026-08-10 頃に失効**。再開時は §2-2 の基準で
+   再発行し、Vault credential `vcrd_01XSYM6iEdxD6dK6JwJwjBwN` を in-place 更新（人間決裁）。
+   ⚠️ sandbox bug（§6-3）が未解消のうちは PAT を再発行しても crash は解消しないため、
+   **case 返信前の先行再発行は行わない**（失効自体が安全弁）。
+2. 💰 §7-1 の budget 付きで新セッションを作成（旧セッションは agent version・設定をピン留め
+   しているため、新機能の適用には**新セッション再作成が必須** — §6-2 の 6）。
+3. 🌍 §7-2 の `inference_geo` を同 body で指定し、§7-3 の Synapse-OS 側 skills 形式を確認。
+4. 🧪 受入①〜③（§6-3）→ 通過後に §7-4 の advisor を Phase 1 判断へ。
