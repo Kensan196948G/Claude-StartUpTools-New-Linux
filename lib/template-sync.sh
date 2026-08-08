@@ -3,6 +3,8 @@
 # template-sync.sh — ClaudeOS テンプレート配布ライブラリ
 #
 # プロジェクト起動前に最新テンプレートを各プロジェクトへ配布する。
+# あわせて settings.json の autocompact thrashing 残骸を毎起動時に自動修復する
+# (sanitize-settings.js。L/S/cron/T 全経路が本関数を通るため、ここが恒久対策の要)。
 # 配布対象:
 #   START_PROMPT.md  : 毎回上書き (セッション開始プロンプト)
 #   TEAM_START_PROMPT.md : 存在しない場合のみ配布 (チーム起動 T<n> の CTO 初期
@@ -37,6 +39,16 @@ template_sync__apply() {
   local tmpl_dir; tmpl_dir="$(_tmpsync__tmpl_dir)"
 
   mkdir -p "$project_dir/.claude"
+
+  # settings.json sanitize: autocompact thrashing 残骸 (旧 env オーバーライド +
+  # SessionStart matcher "*" のコンテキスト注入 hook) を毎起動時に自動修復する。
+  # CLAUDE.md ガードの早期 return より前に置くこと (後段はスキップされ得る)。
+  # スクリプトは CCSU_ROOT でなく lib 相対で解決する (テスト sandbox の影響を受けない)。
+  local sanitize_js="$CCSU_LIB_DIR/../scripts/setup/sanitize-settings.js"
+  if [[ -f "$sanitize_js" ]] && command -v node >/dev/null 2>&1; then
+    node "$sanitize_js" "$project_dir/.claude/settings.json" \
+      || log_warn "⚠️ settings.json sanitize 失敗 (起動は継続): $project_dir"
+  fi
 
   # START_PROMPT.md: 常に上書き
   local src_sp="$tmpl_dir/START_PROMPT.md"
