@@ -112,7 +112,7 @@ JSON
 @test "start-claude: background の duration 0 (無制限) は拒否する" {
   run bash "$SCRIPT" --project MyProj --background --duration 0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"foreground のみ"* ]]
+  [[ "$output" == *"foreground / team のみ"* ]]
 }
 
 @test "start-claude: 実行中セッションが4件なら新規起動を拒否する" {
@@ -217,4 +217,22 @@ exit 0
   [ "$status" -eq 0 ]
   [ -f "$TMUX_STATE/claudeos-MyProj" ]
   [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
+}
+
+@test "start-claude: --team --dry-run は team quad ルートと worktree 計画を表示" {
+  run bash "$SCRIPT" --project MyProj --team --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"route=tmux team quad"* ]]
+  [[ "$output" == *"team_session=claudeos-team-MyProj"* ]]
+  [[ "$output" == *"worktree[backend]=$TEST_TEMP/projects/MyProj/.worktrees/backend"* ]]
+  [[ "$output" == *"worktree[frontend]="* ]]
+  [[ "$output" == *"worktree[qa]="* ]]
+  [[ "$output" == *"duration=無制限"* ]]
+}
+
+@test "start-claude: --team は分数上限を適用しない (301m 許可)" {
+  run bash "$SCRIPT" --project MyProj --team --duration 301 --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"duration=301m"* ]]
+  [[ "$output" != *"上限 300m"* ]]
 }

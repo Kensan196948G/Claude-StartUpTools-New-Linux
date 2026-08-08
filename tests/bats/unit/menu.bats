@@ -267,3 +267,67 @@ JSON
   [[ "$output" == *"無効な入力"* ]]
   [[ "$output" != *"LAUNCH_CALLED"* ]]
 }
+
+@test "menu --render: T1 4役割一括起動行 (projectGroups 未設定)" {
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"T1"* ]]
+  [[ "$output" == *"4役割一括起動 (tmux 4分割 / cto+backend+frontend+qa)"* ]]
+  [[ "$output" != *"T2"* ]]
+}
+
+@test "menu --render: projectGroups 設定時は T1/T2 グループ直結行を表示" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-groups.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-DX-Project","Mirai-Project"] }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash "$SCRIPT" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"T1"* ]]
+  [[ "$output" == *"T2"* ]]
+  [[ "$output" == *"4役割一括起動 (tmux 4分割 / cto+backend+frontend+qa) /home/kensan/Projects/Mirai-DX-Project"* ]]
+  [[ "$output" == *"4役割一括起動 (tmux 4分割 / cto+backend+frontend+qa) /home/kensan/Projects/Mirai-Project"* ]]
+}
+
+@test "menu_loop: T2 は第2グループを引数に launch_claude team を呼ぶ (小文字 t1 も同様)" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config-groups.json"
+  cat > "$AI_STARTUP_CONFIG_PATH" <<JSON
+{ "projects": "/home/kensan/Projects", "projectGroups": ["Mirai-DX-Project","Mirai-Project"] }
+JSON
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH mode=$1 group=${2:-none}"; exit 0; }
+    printf "T2\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LAUNCH mode=team group=Mirai-Project"* ]]
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH mode=$1 group=${2:-none}"; exit 0; }
+    printf "t1\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LAUNCH mode=team group=Mirai-DX-Project"* ]]
+}
+
+@test "menu_loop: projectGroups 未設定時は T1 がフラット起動 (group なし)・範囲外 T9 は無効" {
+  echo '{}' > "$CCSU_STATE_FILE"
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH mode=$1 group=${2:-none}"; exit 0; }
+    printf "T1\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LAUNCH mode=team group=none"* ]]
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launch_claude() { echo "LAUNCH_CALLED"; exit 0; }
+    printf "T9\n0\n" | menu_loop
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"無効な入力"* ]]
+  [[ "$output" != *"LAUNCH_CALLED"* ]]
+}
