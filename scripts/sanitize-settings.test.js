@@ -138,6 +138,53 @@ test('sanitizeSettingsFile: parse 失敗は parse-error でファイルへ触れ
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ---- CodeRabbit レビュー対応の回帰テスト (PR #97) ----
+
+test('sanitizeSettingsObject: 近似名 (session-start.js.disabled) は正規化しない', () => {
+  const cur = {
+    hooks: {
+      SessionStart: [
+        { matcher: '*', hooks: [{ type: 'command', command: 'node .claude/claudeos/scripts/hooks/session-start.js.disabled' }] },
+      ],
+    },
+  };
+  assert.equal(sanitizeSettingsObject(cur), 0);
+  assert.equal(cur.hooks.SessionStart[0].matcher, '*');
+});
+
+test('sanitizeSettingsObject: null ルート / env null / null エントリでも throw しない', () => {
+  assert.equal(sanitizeSettingsObject(null), 0);
+  assert.equal(sanitizeSettingsObject([]), 0);
+  assert.equal(sanitizeSettingsObject('text'), 0);
+  const cur = {
+    env: null,
+    hooks: {
+      SessionStart: [
+        null,
+        { matcher: '*', hooks: [null, { type: 'command', command: 'node .claude/claudeos/scripts/hooks/session-start.js' }] },
+      ],
+    },
+  };
+  assert.equal(sanitizeSettingsObject(cur), 1); // null をスキップして有効エントリは正規化
+  assert.equal(cur.hooks.SessionStart[1].matcher, 'startup|resume|clear');
+});
+
+test('sanitizeSettingsFile: JSON ルートが null でも clean (throw しない)', () => {
+  const { dir, file } = writeSettings('null');
+  const r = sanitizeSettingsFile(file);
+  assert.equal(r.status, 'clean');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'null');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('sanitizeSettingsFile: 権限ビット (0600) を修復後も保持する', () => {
+  const { dir, file } = writeSettings(RESIDUE);
+  fs.chmodSync(file, 0o600);
+  assert.equal(sanitizeSettingsFile(file).status, 'fixed');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('CLI: 修復・parse 失敗・不存在いずれでも exit 0 (起動を妨げない)', () => {
   const fixed = writeSettings(RESIDUE);
   const broken = writeSettings('{ broken json');

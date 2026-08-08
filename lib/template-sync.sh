@@ -44,8 +44,13 @@ template_sync__apply() {
   # SessionStart matcher "*" のコンテキスト注入 hook) を毎起動時に自動修復する。
   # CLAUDE.md ガードの早期 return より前に置くこと (後段はスキップされ得る)。
   # スクリプトは CCSU_ROOT でなく lib 相対で解決する (テスト sandbox の影響を受けない)。
-  local sanitize_js="$CCSU_LIB_DIR/../scripts/setup/sanitize-settings.js"
-  if [[ -f "$sanitize_js" ]] && command -v node >/dev/null 2>&1; then
+  # CCSU_SANITIZE_JS はテスト用オーバーライド。不在時も無言スキップにせず警告を残す。
+  local sanitize_js="${CCSU_SANITIZE_JS:-$CCSU_LIB_DIR/../scripts/setup/sanitize-settings.js}"
+  if [[ ! -f "$sanitize_js" ]]; then
+    log_warn "⚠️ sanitize-settings.js 不在のため settings.json sanitize をスキップ (起動は継続): $sanitize_js"
+  elif ! command -v node >/dev/null 2>&1; then
+    log_warn "⚠️ node 不在のため settings.json sanitize をスキップ (起動は継続)"
+  else
     node "$sanitize_js" "$project_dir/.claude/settings.json" \
       || log_warn "⚠️ settings.json sanitize 失敗 (起動は継続): $project_dir"
   fi

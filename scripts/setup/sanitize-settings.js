@@ -32,13 +32,24 @@ const SESSION_START_SAFE_MATCHER = "startup|resume|clear";
 const CONTEXT_INJECTING_HOOK_SCRIPTS = ["session-start.js", "verify-goal-set.js"];
 
 // hook エントリ内の実行対象を command / args 両形式から復元する
-// (旧配布には command:"node" + args:["...session-start.js"] 形式が混在する)
-const entryCommands = (e) => (e.hooks || []).map(
-  (h) => [h.command || "", ...(Array.isArray(h.args) ? h.args : [])].join(" ").trim()
+// (旧配布には command:"node" + args:["...session-start.js"] 形式が混在する)。
+// null エントリや想定外の形は空扱いにして throw しない
+const entryCommands = (e) => (e && Array.isArray(e.hooks) ? e.hooks : []).map(
+  (h) => [(h && h.command) || "", ...(h && Array.isArray(h.args) ? h.args : [])].join(" ").trim()
 );
+
+// 実行対象 script の basename 一覧 (引用符・パスを除去)。
+// 部分一致だと session-start.js.disabled 等の近似名まで誤検出するため完全一致で判定する
+const entryScriptBasenames = (e) => entryCommands(e)
+  .flatMap((c) => c.split(/\s+/))
+  .map((t) => t.replace(/^["']+|["']+$/g, ""))
+  .filter(Boolean)
+  .map((t) => t.split("/").pop());
 
 // settings オブジェクトを in-place で sanitize し、変更件数を返す
 function sanitizeSettingsObject(cur) {
+  // 想定外の形 (null / 配列 / 非オブジェクト) は無害に無変更で返す (起動を妨げない)
+  if (!cur || typeof cur !== "object" || Array.isArray(cur)) return 0;
   let changed = 0;
   if (cur.env && typeof cur.env === "object") {
     for (const k of DEPRECATED_ENV_KEYS) {
@@ -47,8 +58,9 @@ function sanitizeSettingsObject(cur) {
   }
   const ssEntries = (cur.hooks && Array.isArray(cur.hooks.SessionStart)) ? cur.hooks.SessionStart : [];
   for (const e of ssEntries) {
-    const cmds = entryCommands(e).join(" ");
-    if ((e.matcher || "*") === "*" && CONTEXT_INJECTING_HOOK_SCRIPTS.some((s) => cmds.includes(s))) {
+    if (!e || typeof e !== "object") continue;
+    const names = entryScriptBasenames(e);
+    if ((e.matcher || "*") === "*" && CONTEXT_INJECTING_HOOK_SCRIPTS.some((s) => names.includes(s))) {
       e.matcher = SESSION_START_SAFE_MATCHER;
       changed++;
     }
@@ -69,14 +81,23 @@ function sanitizeSettingsFile(file) {
   const bak = file + ".bak-autocompact-fix";
   if (!fs.existsSync(bak)) fs.copyFileSync(file, bak);
   const tmp = file + ".tmp." + process.pid;
-  fs.writeFileSync(tmp, JSON.stringify(cur, null, 2) + "\n", "utf8");
+  // tmp+rename は新規ファイル作成のため、元の権限ビット (0600 等) を明示的に引き継ぐ
+  const mode = fs.statSync(file).mode & 0o777;
+  fs.writeFileSync(tmp, JSON.stringify(cur, null, 2) + "\n", { encoding: "utf8", mode });
   fs.renameSync(tmp, file);
   return { status: "fixed", changed };
 }
 
 if (require.main === module) {
   for (const file of process.argv.slice(2)) {
-    const r = sanitizeSettingsFile(file);
+    let r;
+    try {
+      r = sanitizeSettingsFile(file);
+    } catch (e) {
+      // fs エラー (EACCES 等) でも exit 0 契約を守る
+      console.error(`WARN: settings sanitize 失敗、skip: ${file}: ${e.message}`);
+      continue;
+    }
     if (r.status === "fixed") {
       console.log(`🩹 settings sanitize: autocompact 残骸 ${r.changed} 件を修復 (${file})`);
     } else if (r.status === "parse-error") {

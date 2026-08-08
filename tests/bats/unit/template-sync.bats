@@ -328,3 +328,16 @@ EOF
   # ファイルへは触れないこと
   grep -q 'broken json' "$proj/.claude/settings.json"
 }
+
+@test "template_sync__apply: sanitize スクリプト不在は警告のみで起動継続" {
+  local proj="$TEST_TEMP/proj28"
+  mkdir -p "$proj/.claude"
+  printf '{ "env": { "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50" } }\n' > "$proj/.claude/settings.json"
+  export CCSU_SANITIZE_JS="$TEST_TEMP/no-such-sanitize.js"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # 無言スキップにせず警告を出すこと
+  [[ "$output" == *"sanitize をスキップ"* ]]
+  # sanitize が走らないので残骸はそのまま (スキップの証明)
+  grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$proj/.claude/settings.json"
+}
