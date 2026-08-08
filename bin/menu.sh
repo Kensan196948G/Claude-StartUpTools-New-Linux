@@ -103,6 +103,15 @@ show_menu() {
   else
     printf '   %s L1 %s  🖥️  ローカル即起動 (フォアグラウンド / %s)\n' "$C_BG_GREEN" "$C_RESET" "$fg_label"
   fi
+  # T<n>: 4役割一括起動 (tmux 4分割 + 役割別 --name + worktree 自動作成)。番号規則は L<n> と同一。
+  if (( ${#_mgroups[@]} > 0 )); then
+    for _gi in "${!_mgroups[@]}"; do
+      printf '   %s T%d %s  👥 4役割一括起動 (tmux 4分割 / cto+backend+frontend+qa) %s%s/%s%s\n' \
+        "$C_BG_DKCYAN" "$((_gi + 1))" "$C_RESET" "$C_DKGREEN" "$local_dir" "${_mgroups[$_gi]}" "$C_RESET"
+    done
+  else
+    printf '   %s T1 %s  👥 4役割一括起動 (tmux 4分割 / cto+backend+frontend+qa)\n' "$C_BG_DKCYAN" "$C_RESET"
+  fi
   printf '   %s S1 %s  🌙 バックグラウンド起動 (自律 / %s)\n' "$C_BG_YELLOW" "$C_RESET" "$dur_label"
   printf '\n'
 
@@ -229,6 +238,8 @@ launch_claude() {
   case "$mode" in
     foreground) dur_label="$(menu__duration_label "$(menu__foreground_duration_min)")"
                 mode_label="🖥️  フォアグラウンド即起動 (${dur_label})" ;;
+    team)       dur_label="$(menu__duration_label "$(menu__foreground_duration_min)")"
+                mode_label="👥 4役割一括起動 (tmux 4分割 / ${dur_label})" ;;
     background) dur_label="$(menu__duration_label "$(menu__default_duration_min)")"
                 mode_label="🌙 バックグラウンド自律起動 (${dur_label})" ;;
     *)          mode_label="$mode" ;;
@@ -316,6 +327,22 @@ menu_loop() {
             launch_claude foreground
           elif (( _ln >= 1 && _ln <= ${#_lgroups[@]} )); then
             launch_claude foreground "${_lgroups[$((_ln - 1))]}"
+          else
+            printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET"; sleep 1
+          fi
+        fi ;;
+      T[0-9]*)
+        # T<n>: L<n> と同じ番号規則で 4役割一括起動 (tmux 4分割) へ直結。
+        local -a _tgroups=(); mapfile -t _tgroups < <(config_project_groups)
+        local _tn="${choice^^}"; _tn="${_tn#T}"
+        if ! [[ "$_tn" =~ ^[0-9]+$ ]]; then
+          printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET"; sleep 1
+        else
+          _tn=$((10#$_tn))
+          if (( ${#_tgroups[@]} == 0 && _tn == 1 )); then
+            launch_claude team
+          elif (( _tn >= 1 && _tn <= ${#_tgroups[@]} )); then
+            launch_claude team "${_tgroups[$((_tn - 1))]}"
           else
             printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET"; sleep 1
           fi

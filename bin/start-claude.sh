@@ -7,6 +7,7 @@
 #
 # 使い方 (menu.sh から):
 #   start-claude.sh --project P --foreground [--duration 300] [--dry-run]          # L1: 新規端末タブで Claude TUI (既定 0=無制限)
+#   start-claude.sh --project P --team       [--duration 0]   [--dry-run]          # T1: tmux 4分割 4役割一括起動 (既定 0=無制限)
 #   start-claude.sh --project P --background [--duration 300] [--dry-run]          # S1: supervisor BG
 #   start-claude.sh --project P --safe-mode  [--duration 300] [--tmux] [--dry-run] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
@@ -23,6 +24,8 @@ source "$SCRIPT_DIR/../lib/config-loader.sh"
 source "$SCRIPT_DIR/../lib/launcher-common.sh"
 # shellcheck source=lib/tmux-runner.sh
 source "$SCRIPT_DIR/../lib/tmux-runner.sh"
+# shellcheck source=lib/team-runner.sh
+source "$SCRIPT_DIR/../lib/team-runner.sh"
 # shellcheck source=lib/notify.sh
 source "$SCRIPT_DIR/../lib/notify.sh"
 # shellcheck source=lib/model-router.sh
@@ -153,9 +156,10 @@ session__enforce_launch_limits() {
   [[ "$max_minutes" =~ ^[0-9]+$ ]] || max_minutes=300
   [[ "$max_sessions" =~ ^[0-9]+$ ]] || max_sessions=4
 
-  # foreground (L1 対話 TUI) は人間が席にいる前提のため分数上限を適用しない。
-  # BG/cron の自律実行だけ省クレジットガード (CCSU_MAX_SESSION_MINUTES) を維持する。
-  if [[ "$mode" != "foreground" ]] && (( max_minutes > 0 && duration > max_minutes )); then
+  # foreground (L1 対話 TUI) / team (T1 対話 4ペイン) は人間が席にいる前提のため
+  # 分数上限を適用しない。BG/cron の自律実行だけ省クレジットガード
+  # (CCSU_MAX_SESSION_MINUTES) を維持する。
+  if [[ "$mode" != "foreground" && "$mode" != "team" ]] && (( max_minutes > 0 && duration > max_minutes )); then
     log_error "duration=${duration}m は上限 ${max_minutes}m を超えています"
     return 1
   fi
@@ -331,6 +335,7 @@ main() {
     case "$1" in
       --project)    project="$2"; shift 2 ;;
       --foreground) mode="foreground"; shift ;;
+      --team)       mode="team"; shift ;;
       --background) mode="background"; shift ;;
       --duration)   duration="$2"; shift 2 ;;
       --safe-mode)  safe_mode=1; shift ;;
@@ -342,8 +347,8 @@ main() {
   done
 
   if [[ -z "$duration" ]]; then
-    if [[ "$mode" == "foreground" ]]; then
-      # L1 即起動: 既定は 0 = 無制限 (GNU timeout は duration 0 でタイムアウト無効化)。
+    if [[ "$mode" == "foreground" || "$mode" == "team" ]]; then
+      # L1/T1 即起動: 既定は 0 = 無制限 (GNU timeout は duration 0 でタイムアウト無効化)。
       # 分数を区切りたい場合は config の foregroundSessionMinutes か --duration で指定する。
       duration="$(config_get '.supervisor.defaults.foregroundSessionMinutes' '0')"
     else
@@ -351,8 +356,8 @@ main() {
     fi
   fi
   [[ "$duration" =~ ^[0-9]+$ ]] || { log_error "duration は数値で指定してください: $duration"; exit 1; }
-  if (( duration == 0 )) && [[ "$mode" != "foreground" ]]; then
-    log_error "duration=0 (無制限) は foreground のみ対応しています"
+  if (( duration == 0 )) && [[ "$mode" != "foreground" && "$mode" != "team" ]]; then
+    log_error "duration=0 (無制限) は foreground / team のみ対応しています"
     exit 1
   fi
   session__enforce_launch_limits "$duration" "$mode" || exit 1
@@ -404,6 +409,13 @@ main() {
     fi
     if (( safe_mode )); then
       log_info "  route=$([[ "$use_tmux" == "1" ]] && printf 'tmux safe-mode' || printf 'direct safe-mode')"
+    elif [[ "$mode" == "team" ]]; then
+      log_info "  route=tmux team quad (4 panes: cto/backend/frontend/qa)"
+      log_info "  team_session=$(team__session_name "$project")"
+      local _role
+      for _role in backend frontend qa; do
+        log_info "  worktree[$_role]=$(team__worktree_dir "$(launcher__project_dir "$project")" "$_role")"
+      done
     elif [[ "$mode" == "foreground" ]]; then
       log_info "  route=$([[ "$use_tmux" == "1" ]] && printf 'tmux foreground' || printf 'terminal/direct TUI')"
     else
@@ -425,6 +437,13 @@ main() {
     else
       direct__run_safe_mode "$project" "$duration" "$mode"
     fi
+    return 0
+  fi
+
+  # T系: 4役割一括起動 (tmux 4分割 + 役割別 --name + worktree 自動作成)。
+  # モデル選択・記録は team_run 内で行う (tmux_run と同一パターン)。
+  if [[ "$mode" == "team" ]]; then
+    team_run "$project" "$duration"
     return 0
   fi
 
