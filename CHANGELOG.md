@@ -4,6 +4,20 @@
 
 ### Added
 
+- 📨 チーム起動 T<n>: CTO ペインへ `TEAM_START_PROMPT.md` を初期プロンプトとして
+  自動注入（2026-08-08 ユーザー明示依頼・START_PROMPT 方式の常設ファイル化と起動時発火）。
+  - 新規テンプレート `Claude/templates/claude/TEAM_START_PROMPT.md`: CTO ハブ型の
+    統括手順（Monitor→計画分担→SendMessage 配信→検証統合→報告）+ §27/§16/§17
+    遵守事項 + 末尾「プロジェクト固有タスク」節（プロジェクト側で自由編集可）。
+  - template-sync: **存在しない場合のみ配布**（CLAUDE.md と同方針。プロジェクト
+    固有タスクの記載を上書きから保護）。
+  - team-runner: CTO ペイン（new-session）のみ遅延 `"$(cat <path>)"` 位置引数で
+    注入（パスは `printf %q` エスケープ）。backend/frontend/qa は従来どおり
+    SendMessage 指示待ちで開始（クレジット 1 倍を維持）。opt-out は
+    `CCSU_TEAM_PROMPT=0` またはファイルを空にする（`-s` 判定）。
+  - 🧪 テスト: team-runner.bats +6 件（遅延 cat 注入・%q エスケープ・省略時非注入・
+    CTO 限定注入・opt-out 2 系統）= 21 件、template-sync.bats +2 件
+    （初回配布・既存保護）= 44 件中。docs/claude/03・19 更新。
 - 👥 メニュー `T<n>`: 4役割一括起動（tmux 4分割 + 役割別 `--name` + worktree 自動作成）
   を新設（2026-08-08 ユーザー承認・方法B の自動化）。
   - 新規 `lib/team-runner.sh`: 1 tmux セッション `claudeos-team-<プロジェクト>` を

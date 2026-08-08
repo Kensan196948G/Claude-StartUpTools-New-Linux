@@ -5,6 +5,8 @@
 # プロジェクト起動前に最新テンプレートを各プロジェクトへ配布する。
 # 配布対象:
 #   START_PROMPT.md  : 毎回上書き (セッション開始プロンプト)
+#   TEAM_START_PROMPT.md : 存在しない場合のみ配布 (チーム起動 T<n> の CTO 初期
+#                      プロンプト。プロジェクト固有タスク記載を保護)
 #   CLAUDE.md        : 存在しない場合のみ配布 (プロジェクト固有設定を保護)
 #   selected commands : 存在しない場合のみ .claude/commands へ配布
 #   selected skills   : 存在しない場合のみ .claude/skills/<name>/SKILL.md へ配布
@@ -41,6 +43,14 @@ template_sync__apply() {
   if [[ -f "$src_sp" ]]; then
     cp "$src_sp" "$project_dir/.claude/START_PROMPT.md"
     log_info "📄 START_PROMPT.md 配布済み: $project_dir/.claude/"
+  fi
+
+  # TEAM_START_PROMPT.md: 存在しない場合のみ配布（チーム起動 T<n> の CTO ペイン用。
+  # プロジェクト固有タスクを書き込む運用のため上書きしない。team-runner.sh 参照）
+  local src_tp="$tmpl_dir/TEAM_START_PROMPT.md"
+  if [[ -f "$src_tp" && ! -f "$project_dir/.claude/TEAM_START_PROMPT.md" ]]; then
+    cp "$src_tp" "$project_dir/.claude/TEAM_START_PROMPT.md"
+    log_info "📄 TEAM_START_PROMPT.md 初回配布: $project_dir/.claude/"
   fi
 
   # CLAUDE.md: 存在しない場合のみ配布（プロジェクト固有設定を保護）

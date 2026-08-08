@@ -20,8 +20,11 @@
 #     クロスセッションメッセージングの受信が全て hold になり (docs/claude/19)、
 #     本機能の目的 (役割間メッセージング) と両立しないため。人間対話前提の
 #     L1 direct TUI と同じ通常権限で起動する。
-#   - START_PROMPT.md は注入しない。4 ペイン同時の自律実行はクレジット消費が
-#     4 倍になるため、各ペインは人間の指示待ちで開始する。
+#   - 初期プロンプトは CTO ペインのみ .claude/TEAM_START_PROMPT.md を注入する
+#     (2026-08-08 ユーザー明示依頼の方式1)。4 ペイン同時の自律実行はクレジット
+#     消費が 4 倍になるため、backend/frontend/qa は CTO からの SendMessage
+#     指示待ちで開始する。単独自律用 START_PROMPT.md (/goal) は注入しない。
+#     opt-out: CCSU_TEAM_PROMPT=0 または TEAM_START_PROMPT.md を空にする。
 #   - 名前空間: 'team-<X>' や '<X>-<役割>' という名前の通常プロジェクトとは
 #     セッション名/宛先が衝突し得る (命名規則 claudeos-<key>[-<役割>] は §27
 #     配布済み標準のため変更しない)。team_run が実在する衝突候補を検出して警告する。
@@ -94,7 +97,7 @@ team__ensure_worktree() {
 # team__shq <value> — tmux がシェル評価するコマンド文字列へ埋め込む値のエスケープ
 team__shq() { printf '%q' "$1"; }
 
-# team__pane_cmd <workdir> <role> <project> <dur_sec> <model_args>
+# team__pane_cmd <workdir> <role> <project> <dur_sec> <model_args> [prompt_file]
 #   1 ペイン分の起動コマンド文字列を組み立てる。
 #   - 役割別 --name は claude v2.1.196+ のみ (未対応版は unknown option 防止で省略)
 #   - hooks 環境変数はペインごとの作業ディレクトリを指す (env 前置で per-pane 化)
@@ -102,15 +105,21 @@ team__shq() { printf '%q' "$1"; }
 #   - 動的値 (project / workdir / CLAUDE_BIN) は printf %q でシェル語エスケープ
 #     (プロジェクト名の ' や空白でコマンドが壊れないように)。model_args は
 #     model_router__shell_args が組み立て済みの引数列のためそのまま連結する。
+#   - prompt_file 指定時は "$(cat <path>)" を位置引数として付与する (tmux-runner.sh
+#     と同型の遅延展開。ペイン内シェルが評価する時点でファイル内容が初期プロンプト
+#     になる)。パス自体は %q エスケープする。
 team__pane_cmd() {
-  local workdir="$1" role="$2" project="$3" dur_sec="$4" model_args="$5"
-  local name_args=""
+  local workdir="$1" role="$2" project="$3" dur_sec="$4" model_args="$5" prompt_file="${6:-}"
+  local name_args="" prompt_arg=""
   if ccsu_claude_supports_name "$CLAUDE_BIN"; then
     name_args="--name $(team__shq "$(CCSU_SESSION_ROLE="$role" ccsu_claude_session_name "$project")") "
   fi
-  printf 'CLAUDE_PROJECT=%s CLAUDEOS_HOOKS_DIR=%s timeout --foreground %ss %s %s%s' \
+  if [[ -n "$prompt_file" ]]; then
+    prompt_arg="\"\$(cat $(team__shq "$prompt_file"))\""
+  fi
+  printf 'CLAUDE_PROJECT=%s CLAUDEOS_HOOKS_DIR=%s timeout --foreground %ss %s %s%s%s' \
     "$(team__shq "$project")" "$(team__shq "$workdir/.claude/claudeos/scripts/hooks")" \
-    "$dur_sec" "$(team__shq "$CLAUDE_BIN")" "${model_args:+$model_args }" "$name_args"
+    "$dur_sec" "$(team__shq "$CLAUDE_BIN")" "${model_args:+$model_args }" "$name_args" "$prompt_arg"
 }
 
 # team__attach_or_switch <session> — tmux 外なら attach、tmux 内なら switch-client
@@ -177,11 +186,21 @@ team_run() {
     log_info "🌿 worktree[$role]: $dir (branch claudeos/$role)"
   done
 
-  # テンプレート (CLAUDE.md / hooks) を各作業ディレクトリへ配布。
-  # START_PROMPT.md は配布されても起動プロンプトとしては注入しない (ヘッダ注記参照)。
+  # テンプレート (CLAUDE.md / TEAM_START_PROMPT.md / hooks) を各作業ディレクトリへ配布。
+  # 単独自律用 START_PROMPT.md (/goal) は配布されても起動プロンプトとしては注入しない。
   for role in "${TEAM_ROLES[@]}"; do
     template_sync__apply "${role_dirs[$role]}" || true
   done
+
+  # CTO ペインの初期プロンプト: プロジェクト本体の .claude/TEAM_START_PROMPT.md を
+  # 起動時に注入する (ヘッダ設計判断参照)。空ファイルまたは CCSU_TEAM_PROMPT=0 で無効。
+  local cto_prompt=""
+  if [[ "${CCSU_TEAM_PROMPT:-1}" == "1" && -s "$project_dir/.claude/TEAM_START_PROMPT.md" ]]; then
+    cto_prompt="$project_dir/.claude/TEAM_START_PROMPT.md"
+    log_info "📨 CTO ペインへ TEAM_START_PROMPT.md を初期プロンプトとして注入します"
+  else
+    log_info "📨 TEAM_START_PROMPT.md 注入なし — CTO ペインは指示待ちで起動します"
+  fi
 
   # モデル選択 (tmux-runner.sh と同一パターン)
   local model_args=""
@@ -204,7 +223,7 @@ team_run() {
   # split-window はウィンドウ指定だと直前に作られたアクティブペインを割るため、
   # ペイン index は作成順 (0=cto,1=backend,2=frontend,3=qa) で安定する。
   "$TMUX_BIN" new-session -d -s "$session" -n team -c "${role_dirs[cto]}" -x 220 -y 50 \
-    "$(team__pane_cmd "${role_dirs[cto]}" cto "$project" "$dur_sec" "$model_args")" \
+    "$(team__pane_cmd "${role_dirs[cto]}" cto "$project" "$dur_sec" "$model_args" "$cto_prompt")" \
     || { log_error "tmux セッション作成に失敗しました: $session"; return 1; }
   for role in backend frontend qa; do
     # 部分起動を成功扱いしない: 1 ペインでも失敗したら作成済みセッションを畳んで中断
