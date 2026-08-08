@@ -4,6 +4,27 @@
 
 ### Added
 
+- 👥 メニュー `T<n>`: 4役割一括起動（tmux 4分割 + 役割別 `--name` + worktree 自動作成）
+  を新設（2026-08-08 ユーザー承認・方法B の自動化）。
+  - 新規 `lib/team-runner.sh`: 1 tmux セッション `claudeos-team-<プロジェクト>` を
+    tiled 4 ペイン（0=cto / 1=backend / 2=frontend / 3=qa）に分割し、各ペインで
+    役割別セッション名 `claudeos-<プロジェクト>-<役割>`（§27 命名・docs/claude/19 §3
+    CTO ハブ型）付きの Claude TUI を起動。
+  - 🌿 worktree 自動作成: backend/frontend/qa は `<プロジェクト>/.worktrees/<役割>`
+    （ブランチ `claudeos/<役割>`）で作業し cto は本体で作業。配置を project 内に
+    したのは兄弟ディレクトリだと auto-init が独立プロジェクト誤登録するため。
+    `.git/info/exclude` へ `.worktrees/` を冪等追記して status 汚染を防止。
+  - セッション名は `claudeos-team-` **接頭辞**（`tmux has-session` の前方一致で
+    通常セッション `claudeos-<プロジェクト>` と誤照合しない配置。`^claudeos-`
+    監視 grep には引き続き一致）。
+  - 🔐 `--dangerously-skip-permissions` 不使用（skip-permissions 起動は受信全 hold =
+    メッセージング目的と両立しない）・START_PROMPT 不注入（4 ペイン同時自律実行の
+    クレジット 4 倍消費を回避）。各ペインは通常権限・指示待ちで開始。
+  - `bin/start-claude.sh --team [--duration 0] [--dry-run]`（既定 0=無制限・
+    分数上限 free は foreground と同格）、`bin/menu.sh` に `T1`（グループ設定時
+    `T1..Tn` 直結）、`lib/launcher-common.sh` に team モードラベル追加。
+  - 🧪 テスト: 新規 `tests/bats/unit/team-runner.bats`（12 件）+ menu/start-claude
+    への T 系追加。docs/claude/03・11・19 更新。
 - 🆕 Managed Agents 2026-08 新機能 4 点の取り込み方針を PoC 手順書へ追加
   （2026-08-08 ユーザー指示・docs/claude/07 §7 新設）。
   - 対象: 💰 セッション予算（`budget.max_list_cost`・再開時必須適用）、
