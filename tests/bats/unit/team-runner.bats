@@ -18,7 +18,7 @@ sub="${1:-}"; shift || true
 case "$sub" in
   has-session) [[ "${1:-}" == "-t" ]] && shift; [[ -f "$state/${1:-}" ]] && exit 0 || exit 1 ;;
   new-session) name=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-s" ]] && { name="${2:-}"; shift 2; continue; }; shift; done; [[ -n "$name" ]] && touch "$state/$name"; exit 0 ;;
-  split-window) printf "%s\n" "$*" >> "$state/split-window.log"; exit 0 ;;
+  split-window) [[ -f "$state/fail-split" ]] && exit 1; printf "%s\n" "$*" >> "$state/split-window.log"; exit 0 ;;
   attach|pipe-pane) exit 0 ;;
   kill-session) [[ "${1:-}" == "-t" ]] && shift; rm -f "$state/${1:-}"; exit 0 ;;
   *) exit 0 ;;
@@ -85,10 +85,20 @@ teardown() { _bats_common_teardown; }
 @test "team__pane_cmd: 役割別 --name と per-pane 環境変数を含む" {
   run team__pane_cmd "$PROJ_DIR" backend MyProj 0 ""
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--name 'claudeos-MyProj-backend'"* ]]
-  [[ "$output" == *"CLAUDE_PROJECT='MyProj'"* ]]
-  [[ "$output" == *"CLAUDEOS_HOOKS_DIR='$PROJ_DIR/.claude/claudeos/scripts/hooks'"* ]]
+  [[ "$output" == *"--name claudeos-MyProj-backend"* ]]
+  [[ "$output" == *"CLAUDE_PROJECT=MyProj "* ]]
+  [[ "$output" == *"CLAUDEOS_HOOKS_DIR=$PROJ_DIR/.claude/claudeos/scripts/hooks"* ]]
   [[ "$output" == *"timeout --foreground 0s"* ]]
+}
+
+@test "team__pane_cmd: シェル特殊文字を含む値を %q エスケープする" {
+  # O'Reilly のような単一引用符入りプロジェクト名でもコマンド文字列が壊れない
+  run team__pane_cmd "$TEST_TEMP/projects/O'Reilly" backend "O'Reilly" 0 ""
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CLAUDE_PROJECT=$(printf '%q' "O'Reilly")"* ]]
+  [[ "$output" == *"CLAUDEOS_HOOKS_DIR=$(printf '%q' "$TEST_TEMP/projects/O'Reilly/.claude/claudeos/scripts/hooks")"* ]]
+  # 生成文字列がシェルとして構文妥当 (エスケープ漏れなら bash -n が失敗する)
+  bash -n -c "$output"
 }
 
 @test "team__pane_cmd: CCSU_SESSION_NAME=0 なら --name を付けない" {
@@ -124,6 +134,22 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"既に起動中"* ]]
   # 起動中パスでは worktree を新規作成しない
   [ ! -d "$PROJ_DIR/.worktrees/backend" ]
+}
+
+@test "team_run: ペイン作成失敗時はセッションを畳んで非ゼロ終了する" {
+  touch "$TMUX_STATE/fail-split"
+  run team_run MyProj 0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"役割ペインの作成に失敗しました"* ]]
+  # kill-session により部分起動セッションは残らない
+  [ ! -f "$TMUX_STATE/claudeos-team-MyProj" ]
+}
+
+@test "team_run: 名前空間衝突候補の通常プロジェクトが実在すれば警告する" {
+  mkdir -p "$TEST_TEMP/projects/MyProj-backend"
+  run team_run MyProj 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"通常プロジェクト 'MyProj-backend' が存在します"* ]]
 }
 
 @test "team_run: Git リポジトリでないプロジェクトはエラー" {

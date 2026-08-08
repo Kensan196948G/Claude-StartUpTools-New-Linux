@@ -23,8 +23,13 @@
   - `bin/start-claude.sh --team [--duration 0] [--dry-run]`（既定 0=無制限・
     分数上限 free は foreground と同格）、`bin/menu.sh` に `T1`（グループ設定時
     `T1..Tn` 直結）、`lib/launcher-common.sh` に team モードラベル追加。
-  - 🧪 テスト: 新規 `tests/bats/unit/team-runner.bats`（12 件）+ menu/start-claude
+  - 🧪 テスト: 新規 `tests/bats/unit/team-runner.bats`（15 件）+ menu/start-claude
     への T 系追加。docs/claude/03・11・19 更新。
+  - 🛡️ レビュー強化（PR #95 CodeRabbit 指摘採用）: ペインコマンドの動的値を
+    `printf %q` でシェルエスケープ（`O'Reilly` 等でも安全）・ペイン作成失敗時は
+    セッションを畳んで非ゼロ終了（部分起動を成功扱いしない）・`team-<X>` /
+    `<X>-<役割>` 名の通常プロジェクトが実在する場合の名前空間衝突を起動前に
+    検出して警告（命名規則 §27 は配布済み標準のため不変更）。
 - 🆕 Managed Agents 2026-08 新機能 4 点の取り込み方針を PoC 手順書へ追加
   （2026-08-08 ユーザー指示・docs/claude/07 §7 新設）。
   - 対象: 💰 セッション予算（`budget.max_list_cost`・再開時必須適用）、
