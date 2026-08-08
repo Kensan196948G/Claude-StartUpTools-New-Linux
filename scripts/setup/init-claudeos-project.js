@@ -49,13 +49,13 @@ const STATE_TEMPLATE    = "Claude/templates/claude/claudeos/templates/state.json
 const SKILLS_DIRTY       = ".claude/claudeos/.skills-dirty";
 
 // autocompact thrashing 対策 (#78 のテンプレート修正の配布側フォロー)。
-// merge は追加専用のため、配布済みプロジェクトに残る旧設定は明示的に除去する:
-// - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: 50% 強制 compact の旧オーバーライド (全層撤去済み)
-// - SessionStart matcher "*": compact 直後にも session-start.js 等の大型コンテキストを
-//   再注入し context を即再充填させるため startup|resume|clear へ正規化する
-const DEPRECATED_ENV_KEYS = ["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"];
-const SESSION_START_SAFE_MATCHER = "startup|resume|clear";
-const CONTEXT_INJECTING_HOOK_SCRIPTS = ["session-start.js", "verify-goal-set.js"];
+// merge は追加専用のため、配布済みプロジェクトに残る旧設定は明示的に除去する。
+// sanitize の実体は sanitize-settings.js へ切り出し (起動経路 template-sync.sh と共有)。
+const {
+  DEPRECATED_ENV_KEYS,
+  entryCommands,
+  sanitizeSettingsObject,
+} = require("./sanitize-settings.js");
 
 // ──────────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
@@ -195,28 +195,8 @@ function mergeSettings(srcPath, destPath, plan, dryRun) {
   try { tmpl = JSON.parse(fs.readFileSync(srcPath, "utf8")); cur = JSON.parse(fs.readFileSync(destPath, "utf8")); }
   catch (e) { console.error(`  WARN: settings.json parse 失敗、merge skip: ${e.message}`); plan.skip++; return; }
 
-  // hook エントリ内の実行対象を command / args 両形式から復元する
-  // (旧配布には command:"node" + args:["...session-start.js"] 形式が混在する)
-  const entryCommands = (e) => (e.hooks || []).map(
-    (h) => [h.command || "", ...(Array.isArray(h.args) ? h.args : [])].join(" ").trim()
-  );
-
-  let sanitized = 0;
-  // 旧 env オーバーライドの除去
-  if (cur.env && typeof cur.env === "object") {
-    for (const k of DEPRECATED_ENV_KEYS) {
-      if (k in cur.env) { delete cur.env[k]; sanitized++; }
-    }
-  }
-  // SessionStart matcher "*" でコンテキスト注入 hook を実行するエントリを正規化
-  const ssEntries = (cur.hooks && Array.isArray(cur.hooks.SessionStart)) ? cur.hooks.SessionStart : [];
-  for (const e of ssEntries) {
-    const cmds = entryCommands(e).join(" ");
-    if ((e.matcher || "*") === "*" && CONTEXT_INJECTING_HOOK_SCRIPTS.some((s) => cmds.includes(s))) {
-      e.matcher = SESSION_START_SAFE_MATCHER;
-      sanitized++;
-    }
-  }
+  // 旧 env オーバーライドの除去 + SessionStart matcher 正規化 (sanitize-settings.js と共有)
+  const sanitized = sanitizeSettingsObject(cur);
 
   let added = 0;
   // top-level キー (hooks/env/permissions 以外): 欠けていれば追加、既存は保護

@@ -271,3 +271,73 @@ teardown() { _bats_common_teardown; }
   [ "$status" -eq 0 ]
   [ ! -d "$proj/.claude/skills" ]
 }
+
+# ---- settings.json sanitize (autocompact thrashing 恒久対策) ----
+# CCSU_ROOT は sandbox 化されているが、sanitize スクリプトは lib 相対
+# ($CCSU_LIB_DIR/../scripts/setup/sanitize-settings.js) で解決されるため
+# 実リポジトリのコードがそのまま検証される。
+@test "template_sync__apply: settings.json の autocompact 残骸を修復する" {
+  local proj="$TEST_TEMP/proj24"
+  mkdir -p "$proj/.claude"
+  cat > "$proj/.claude/settings.json" <<'EOF'
+{
+  "env": { "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50", "MY_CUSTOM": "keep" },
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node .claude/claudeos/scripts/hooks/session-start.js" }] }
+    ]
+  }
+}
+EOF
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # 残骸が除去され、カスタム env と安全 matcher が残ること
+  ! grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$proj/.claude/settings.json"
+  grep -q 'MY_CUSTOM' "$proj/.claude/settings.json"
+  grep -qF 'startup|resume|clear' "$proj/.claude/settings.json"
+  # 修復前の原本がバックアップされていること
+  [ -f "$proj/.claude/settings.json.bak-autocompact-fix" ]
+  grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$proj/.claude/settings.json.bak-autocompact-fix"
+}
+
+@test "template_sync__apply: 残骸のない settings.json には触れない" {
+  local proj="$TEST_TEMP/proj25"
+  mkdir -p "$proj/.claude"
+  printf '{ "env": { "MY_CUSTOM": "keep" } }\n' > "$proj/.claude/settings.json"
+  local before; before="$(cat "$proj/.claude/settings.json")"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$proj/.claude/settings.json")" = "$before" ]
+  [ ! -f "$proj/.claude/settings.json.bak-autocompact-fix" ]
+}
+
+@test "template_sync__apply: settings.json 不存在でも正常終了" {
+  local proj="$TEST_TEMP/proj26"
+  mkdir -p "$proj"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  [ ! -f "$proj/.claude/settings.json" ]
+}
+
+@test "template_sync__apply: settings.json が壊れた JSON でも起動を妨げない" {
+  local proj="$TEST_TEMP/proj27"
+  mkdir -p "$proj/.claude"
+  printf '{ broken json\n' > "$proj/.claude/settings.json"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # ファイルへは触れないこと
+  grep -q 'broken json' "$proj/.claude/settings.json"
+}
+
+@test "template_sync__apply: sanitize スクリプト不在は警告のみで起動継続" {
+  local proj="$TEST_TEMP/proj28"
+  mkdir -p "$proj/.claude"
+  printf '{ "env": { "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50" } }\n' > "$proj/.claude/settings.json"
+  export CCSU_SANITIZE_JS="$TEST_TEMP/no-such-sanitize.js"
+  run template_sync__apply "$proj"
+  [ "$status" -eq 0 ]
+  # 無言スキップにせず警告を出すこと
+  [[ "$output" == *"sanitize をスキップ"* ]]
+  # sanitize が走らないので残骸はそのまま (スキップの証明)
+  grep -q 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$proj/.claude/settings.json"
+}

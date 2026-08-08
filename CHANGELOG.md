@@ -4,6 +4,35 @@
 
 ### Added
 
+- 🩹 起動時 settings.json sanitize（autocompact thrashing 恒久対策・#78/#81 の
+  ギャップ解消）: 全起動経路（L / S / cron / T + チーム worktree）が通る
+  `template_sync__apply` に settings.json 自動修復を組み込み（2026-08-08
+  Open-BIM-Information-Platform の T1 チーム 4 セッション同時 stall で再発を実測。
+  #81 の sanitize は init/merge 時のみで、後から登録されたプロジェクトの残骸は
+  起動しても回収されなかった）。
+  - 新規 `scripts/setup/sanitize-settings.js`: 旧 env
+    `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` の除去 + SessionStart matcher `*` の
+    コンテキスト注入 hook（session-start.js / verify-goal-set.js。command 文字列 /
+    command+args[] 両形式対応）を `startup|resume|clear` へ正規化。修復時のみ
+    原本を `.bak-autocompact-fix` へ退避（初回のみ保持・冪等）し atomic write。
+    CLI は parse 失敗・不存在でも exit 0（起動を妨げない fail-soft）。
+  - `init-claudeos-project.js` の merge 時 sanitize を同モジュールへ委譲
+    （定数・ロジックの二重管理を解消。挙動は不変）。
+  - `lib/template-sync.sh`: CLAUDE.md サイズガードの早期 return より前に配置。
+    スクリプトは `CCSU_LIB_DIR` 相対で解決（テスト sandbox の `CCSU_ROOT`
+    差し替えと独立、`CCSU_SANITIZE_JS` でテスト用オーバーライド可）。
+    スクリプト不在・node 不在・実行失敗のいずれも警告のみで起動継続
+    （無言スキップなし）。
+  - CodeRabbit レビュー対応（PR #97）: hook script 判定を部分一致から basename
+    完全一致へ変更（`session-start.js.disabled` 等の近似名を誤検出しない）、
+    null ルート / null エントリ等の想定外形状ガード、修復時の権限ビット
+    （0600 等）保持、CLI の fs エラー時も exit 0 を保証。
+  - 🧪 テスト: 新規 `scripts/sanitize-settings.test.js`（14 件: 3 形式の matcher
+    正規化・カスタム env 保護・clean 無変更・冪等 + 初回バックアップ保持・
+    missing / parse-error・CLI exit 0・近似名非検出・null 形状・権限保持）+
+    template-sync.bats +5 件（修復 + バックアップ・clean 不変・不存在・
+    壊れ JSON fail-soft・スクリプト不在警告）。docs/claude/03 に
+    「起動時の自動処理」節を新設。
 - 📨 チーム起動 T<n>: CTO ペインへ `TEAM_START_PROMPT.md` を初期プロンプトとして
   自動注入（2026-08-08 ユーザー明示依頼・START_PROMPT 方式の常設ファイル化と起動時発火）。
   - 新規テンプレート `Claude/templates/claude/TEAM_START_PROMPT.md`: CTO ハブ型の
