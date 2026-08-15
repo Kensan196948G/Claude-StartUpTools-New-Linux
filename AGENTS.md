@@ -21,3 +21,13 @@
 - SSH/Windows/PowerShell 起動経路を復活させない。
 - 全プロジェクト適用は必ず `--dry-run` で対象を確認してから行う。
 - 失敗時は原因、再現手順、次の修正案を短く残す。
+
+<!-- central-github-policy -->
+## GitHub運用ポリシー（中央配布）
+
+GitHub運用はこのWorkspaceの記述ではなく、中央ポリシーに従います。
+
+- 正本: /home/kensan/Projects/Deep-Seek-Harness-Project/GITHUB_POLICY.md
+- 詳細: /home/kensan/Projects/Deep-Seek-Harness-Project/docs/architecture/CloudflareNeonGitHub自動化仕様.md
+- 優先順位: 中央GitHub Policy > GitHub Rulesets > GitHub Actions/CI > Workspace AGENTS.md / CLAUDE.md / README
+- main直接push禁止、Required Checks PASS後のSquash Merge、merge後branch削除
