@@ -157,6 +157,10 @@
             },
             "ci": {
               "type": "string"
+            },
+            "runtime_health": {
+              "type": "string",
+              "description": "ok|down|unknown (state.runtime.health_url の直近判定)"
             }
           }
         },
@@ -181,6 +185,45 @@
               "trigger": {
                 "type": "string"
               }
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Runtime Evidence sources for the Goal Router (v10.1). All optional; when set, lib/goal-router.sh probes them at launch (curl / log grep / wrangler) and routes runtime incidents to deep-debug (+hotfix in production).",
+      "properties": {
+        "health_url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "HTTP(S) health check URL. 2xx/3xx=ok, otherwise down (timeout CLAUDEOS_GOAL_HEALTH_TIMEOUT=5s)"
+        },
+        "error_log": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path to an application error log; the last 500 lines are counted for ERROR/FATAL/Traceback/panic/Unhandled/CRITICAL"
+        },
+        "cloudflare": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Cloudflare Pages project name (wrangler pages deployment list --project-name … --environment production --json)"
+            },
+            "worker": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Cloudflare Worker name (wrangler deployments list --name … --json)"
             }
           }
         }

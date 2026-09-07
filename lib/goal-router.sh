@@ -32,6 +32,12 @@
 #   CLAUDEOS_GOAL_LOCK_MINUTES    session lock の有効時間 (既定 720)
 #   CLAUDEOS_GOAL_REROUTE=1       lock を無視して再判定 (explicit reroute)
 #   CLAUDEOS_GOAL_ROUTER_GH=0     gh (PR / CI) Evidence 収集を無効化
+#   CLAUDEOS_GOAL_ROUTER_RUNTIME=0 Runtime Evidence (state.runtime.health_url / error_log) を無効化
+#   CLAUDEOS_GOAL_ROUTER_CF=0     Cloudflare Evidence (wrangler deployments) を無効化
+#   CLAUDEOS_GOAL_INTENT_LLM      auto(既定)|1|0  キーワード表で判定不能な intent を claude -p (haiku) で分類。
+#                                 auto は Claude Code セッション内 (CLAUDECODE=1) では呼ばない。1 で強制、0 で無効
+#   CLAUDEOS_GOAL_INTENT_LLM_MODEL / _TIMEOUT   既定 haiku / 45 秒 (課金は headless と同じ subscription 経路)
+#   CLAUDEOS_GOAL_RUNTIME_ERROR_THRESHOLD       error_log の直近 500 行中のエラー件数閾値 (既定 5)
 #   CLAUDEOS_GOAL_ROUTER_DISABLE=1 Router を無効化 (従来 goal_type のみで動作)
 # ============================================================
 
@@ -140,11 +146,12 @@ print("blocker_count=" + s(kpi.get("blocker_count")))
 print("ci_success_rate=" + s(kpi.get("ci_success_rate")))
 bi = d.get("blocked_issues"); print("blocked_issues=" + (str(len(bi)) if isinstance(bi, list) else ""))
 print("last_summary=" + s(g("execution", "last_session_summary"))[:200])
+print("deploy_executed=" + ("true" if g("deploy", "executed_at") else ""))
 gr = d.get("goal_router") if isinstance(d.get("goal_router"), dict) else {}
 for k in ("mode", "primary_goal", "specialized_goal", "locked_by_user", "session_locked", "last_routed_at", "reason"):
     print("prev_" + k + "=" + s(gr.get(k)))
 snap = gr.get("evidence_snapshot") if isinstance(gr.get("evidence_snapshot"), dict) else {}
-for k in ("deploy_ready", "phase_mode", "security_critical", "ci"):
+for k in ("deploy_ready", "phase_mode", "security_critical", "ci", "runtime_health"):
     print("prev_snap_" + k + "=" + s(snap.get(k)))
 PYEOF
   elif [[ -f "$state_file" ]] && command -v jq >/dev/null 2>&1 && jq -e . "$state_file" >/dev/null 2>&1; then
@@ -195,6 +202,141 @@ PYEOF
   fi
   printf 'pr_open=%s\n' "$prs"
   printf 'ci=%s\n' "$ci"
+
+  # --- Runtime Evidence (state.runtime.* が設定されている Project のみ。失敗は unknown) ---
+  goal_router__runtime_evidence "$state_file"
+
+  # --- LLM intent (キーワード表で判定不能なときだけ。外部呼び出しは evidence 側に閉じ込め、route は純粋関数のまま) ---
+  if [[ -n "$intent" ]] && [[ -z "$(goal_router__intent_class "$intent")" ]]; then
+    printf 'intent_llm=%s\n' "$(goal_router__intent_llm "$intent")"
+  else
+    printf 'intent_llm=\n'
+  fi
+  return 0
+}
+
+# ------------------------------------------------------------
+# goal_router__runtime_evidence <state_file>
+#   state.runtime.health_url  → runtime_health=ok|down|unknown   (curl、timeout 5s)
+#   state.runtime.error_log   → runtime_errors=<直近 500 行のエラー件数>
+#   state.runtime.cloudflare.{project|worker} → cf_deploy=success|failure|none|unknown (wrangler --json、timeout 15s)
+#   設定が無ければ unknown / 空。CLAUDEOS_GOAL_ROUTER_RUNTIME=0 / _CF=0 で無効化。常に 0。
+# ------------------------------------------------------------
+goal_router__runtime_evidence() {
+  local state_file="$1" url="" elog="" cfp="" cfw="" health="unknown" errors="" cf="unknown"
+  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+    local line k v
+    while IFS= read -r line; do
+      k="${line%%=*}"; v="${line#*=}"
+      case "$k" in
+        rt_health_url) url="$v" ;; rt_error_log) elog="$v" ;; rt_cf_project) cfp="$v" ;; rt_cf_worker) cfw="$v" ;;
+      esac
+    done < <(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1])); rt = d.get("runtime") or {}
+    if not isinstance(rt, dict): rt = {}
+    cf = rt.get("cloudflare") if isinstance(rt.get("cloudflare"), dict) else {}
+    for k, v in (("rt_health_url", rt.get("health_url")), ("rt_error_log", rt.get("error_log")),
+                 ("rt_cf_project", cf.get("project")), ("rt_cf_worker", cf.get("worker"))):
+        print(f"{k}={chr(39)[:0] if v is None else str(v).strip()}")
+except Exception:
+    pass' "$state_file" 2>/dev/null || true)
+  fi
+  if [[ "${CLAUDEOS_GOAL_ROUTER_RUNTIME:-1}" != "0" ]]; then
+    if [[ -n "$url" && "$url" =~ ^https?:// ]] && command -v curl >/dev/null 2>&1; then
+      local code
+      code="$(curl -s -o /dev/null -w '%{http_code}' -m "${CLAUDEOS_GOAL_HEALTH_TIMEOUT:-5}" "$url" 2>/dev/null || printf '000')"
+      if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then health="ok"; else health="down"; fi
+    fi
+    if [[ -n "$elog" ]]; then
+      elog="${elog/#\~/$HOME}"
+      if [[ -f "$elog" ]]; then
+        errors="$(tail -n 500 "$elog" 2>/dev/null | grep -cE 'ERROR|FATAL|Traceback|panic:|Unhandled|CRITICAL' || true)"
+        [[ "$errors" =~ ^[0-9]+$ ]] || errors=0
+      fi
+    fi
+  fi
+  if [[ "${CLAUDEOS_GOAL_ROUTER_CF:-1}" != "0" ]] && command -v wrangler >/dev/null 2>&1 && [[ -n "$cfp" || -n "$cfw" ]]; then
+    local -a _t=(); command -v timeout >/dev/null 2>&1 && _t=(timeout 15)
+    if [[ -n "$cfp" ]]; then
+      # Cloudflare Pages: 直近の production deployment の latest_stage.status (wrangler 4.x: --project-name / --environment / --json を実機 help で確認)
+      cf="$("${_t[@]}" wrangler pages deployment list --project-name "$cfp" --environment production --json 2>/dev/null \
+            | python3 -c '
+import json, sys
+try:
+    arr = json.load(sys.stdin)
+    if not isinstance(arr, list) or not arr: print("none"); sys.exit(0)
+    st = str(((arr[0].get("latest_stage") or {}).get("status") or "")).lower()
+    print(st if st in ("success", "failure") else ("failure" if "fail" in st else (st or "unknown")))
+except Exception:
+    print("unknown")' 2>/dev/null || printf 'unknown')"
+      [[ -n "$cf" ]] || cf="unknown"
+    else
+      # Cloudflare Workers: deployments を列挙できれば success (一覧に status フィールドが無いため存在確認のみ)
+      if "${_t[@]}" wrangler deployments list --name "$cfw" --json >/dev/null 2>&1; then cf="success"; else cf="failure"; fi
+    fi
+  fi
+  local has=0; [[ -n "$url" || -n "$elog" || -n "$cfp" || -n "$cfw" ]] && has=1
+  printf 'runtime_health=%s\n' "$health"
+  printf 'runtime_errors=%s\n' "$errors"
+  printf 'cf_deploy=%s\n' "$cf"
+  printf 'has_runtime=%s\n' "$has"
+  return 0
+}
+
+# ------------------------------------------------------------
+# goal_router__intent_llm <intent>  → "primary [specialized]" (判定不能・無効・失敗は空)
+#   claude -p (haiku、--output-format json、--bare) でラベル 1 語を得る。キーワード表の補完用。
+#   - CLAUDEOS_GOAL_INTENT_LLM=0 で無効、1 で強制、auto (既定) は Claude Code セッション内では呼ばない
+#     (ネスト起動を避ける)。timeout 付き、出力はホワイトリストで検証し不正値は捨てる (fail-safe)。
+#   - 課金経路は headless と同じ: 既定 subscription (env -u ANTHROPIC_API_KEY)。CLAUDEOS_HEADLESS_AUTH=api-key で鍵を保持。
+# ------------------------------------------------------------
+goal_router__intent_llm() {
+  local intent="$1" mode="${CLAUDEOS_GOAL_INTENT_LLM:-auto}"
+  [[ -n "$intent" ]] || return 0
+  [[ "$mode" == "0" ]] && return 0
+  [[ "$mode" == "auto" && -n "${CLAUDECODE:-}" ]] && return 0
+  command -v claude >/dev/null 2>&1 || return 0
+  local help; help="$(claude --help 2>/dev/null || true)"
+  local prompt
+  prompt="You are the ClaudeOS Goal Router. Classify the user's request into exactly one label.
+Primary labels: development (feature/improvement of an existing product), mvp-release (new project / prototype / PoC / MVP),
+assessment (evaluate / review / audit / compare / readiness), deep-debug (bug / CI failure / error / regression / outage root cause),
+product-assurance (release readiness QA: golden tests, contract, recovery, security, performance, accessibility).
+Optional specialized suffix after a slash: hotfix, security-emergency, refactoring, production-release, safe-auto-merge, pr-babysit.
+Reply with the label only (e.g. deep-debug/hotfix or development). If unclear reply: none.
+
+Request: $(_gr__sanitize "$intent")"
+  local -a cmd=( claude -p "$prompt" --model "${CLAUDEOS_GOAL_INTENT_LLM_MODEL:-haiku}" --output-format json )
+  [[ "$help" == *"--bare"* ]] && cmd+=( --bare )
+  [[ "$help" == *"--no-session-persistence"* ]] && cmd+=( --no-session-persistence )
+  local -a pre=( env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT )
+  [[ "${CLAUDEOS_HEADLESS_AUTH:-subscription}" != "api-key" ]] && pre+=( -u ANTHROPIC_API_KEY )
+  local -a _t=(); command -v timeout >/dev/null 2>&1 && _t=( timeout "${CLAUDEOS_GOAL_INTENT_LLM_TIMEOUT:-45}" )
+  local raw label
+  raw="$("${_t[@]}" "${pre[@]}" "${cmd[@]}" 2>/dev/null || printf '')"
+  [[ -n "$raw" ]] || return 0
+  label="$(printf '%s' "$raw" | python3 -c '
+import json, sys, re
+raw = sys.stdin.read(); txt = ""
+try:
+    d = json.loads(raw)
+    if isinstance(d, dict): txt = str(d.get("result") or "")
+    elif isinstance(d, list):
+        for it in d:
+            if isinstance(it, dict) and it.get("type") == "result": txt = str(it.get("result") or "")
+except Exception:
+    txt = raw
+m = re.findall(r"[a-z][a-z-]+(?:/[a-z][a-z-]+)?", txt.strip().lower())
+print(m[-1] if m else "")' 2>/dev/null || printf '')"
+  [[ -n "$label" && "$label" != "none" ]] || return 0
+  local p="${label%%/*}" s=""; [[ "$label" == */* ]] && s="${label#*/}"
+  if goal_router__is_primary "$p"; then
+    if [[ -n "$s" ]] && goal_router__is_specialized "$s" && goal_router__allows "$p" "$s"; then printf '%s %s' "$p" "$s"; else printf '%s' "$p"; fi
+  elif goal_router__is_specialized "$p"; then
+    printf '%s %s' "$(goal_router__primary_for "$p")" "$p"
+  fi
   return 0
 }
 
@@ -271,6 +413,10 @@ goal_router__route() {
   local blocked="${ev[blocked_issues]:-}"; [[ "$blocked" =~ ^[0-9]+$ ]] || blocked=0
   local blockers="${ev[blocker_count]:-}"; [[ "$blockers" =~ ^[0-9]+$ ]] || blockers=0
   local rate="${ev[ci_success_rate]:-}"
+  local rt_health="${ev[runtime_health]:-unknown}" cf="${ev[cf_deploy]:-unknown}"
+  local rt_errors="${ev[runtime_errors]:-}"; [[ "$rt_errors" =~ ^[0-9]+$ ]] || rt_errors=0
+  local rt_threshold="${CLAUDEOS_GOAL_RUNTIME_ERROR_THRESHOLD:-5}"; [[ "$rt_threshold" =~ ^[0-9]+$ ]] || rt_threshold=5
+  local in_prod=0; [[ "$pm" == "maintenance" || "$pm" == "released" || "${ev[deploy_executed]:-}" == "true" ]] && in_prod=1
   local ci_bad=0
   [[ "$ci" == "failure" ]] && ci_bad=1
   if [[ "$ci" == "unknown" && "$rate" =~ ^0?\.[0-9]+$ ]] && awk "BEGIN{exit (${rate} < 0.5) ? 0 : 1}" 2>/dev/null; then ci_bad=1; fi
@@ -324,14 +470,27 @@ goal_router__route() {
     if (( sec > 0 )); then
       primary="deep-debug"; specialized="security-emergency"; confidence="0.95"
       reason="security-critical"; used+=("security_critical:$sec")
+    elif [[ "$rt_health" == "down" ]]; then
+      # Runtime incident (health check 失敗) は CI 失敗より優先。本番運用中なら hotfix で範囲を狭める
+      primary="deep-debug"; confidence="0.90"; reason="runtime-incident (health check down)"; used+=("runtime_health:down")
+      (( in_prod )) && { specialized="hotfix"; used+=("in_production:true"); }
     elif (( ci_bad )); then
       primary="deep-debug"; confidence="0.85"; reason="ci-failure"; used+=("ci:$ci")
       [[ "$pm" == "maintenance" || "$pm" == "released" ]] && { specialized="hotfix"; used+=("phase_mode:$pm"); }
+    elif [[ "$cf" == "failure" ]]; then
+      primary="deep-debug"; confidence="0.80"; reason="cloudflare-deploy-failure"; used+=("cf_deploy:failure")
     else
       local ic; ic="$(goal_router__intent_class "$intent")"
+      local il="${ev[intent_llm]:-}"
       if [[ -n "$ic" ]]; then
         primary="${ic%% *}"; specialized="${ic#* }"; [[ "$specialized" == "$primary" ]] && specialized=""
         confidence="0.80"; reason="user-intent:$primary${specialized:+/$specialized}"; used+=("user_intent:$primary")
+      elif [[ -n "$il" ]] && goal_router__is_primary "${il%% *}"; then
+        primary="${il%% *}"; specialized="${il#* }"; [[ "$specialized" == "$primary" ]] && specialized=""
+        confidence="0.70"; reason="user-intent-llm:$primary${specialized:+/$specialized}"; used+=("user_intent_llm:$primary")
+      elif (( rt_errors >= rt_threshold )); then
+        primary="deep-debug"; confidence="0.75"; reason="runtime errors in log ($rt_errors >= $rt_threshold)"; used+=("runtime_errors:$rt_errors")
+        (( in_prod )) && specialized="hotfix"
       elif [[ "${ev[deploy_ready]:-}" == "true" ]]; then
         primary="product-assurance"; specialized="production-release"; confidence="0.80"
         reason="deploy.ready=true (human signoff wait)"; used+=("deploy_ready:true")
@@ -374,6 +533,7 @@ goal_router__route() {
     # 重大変化 = reroute 条件 (§17): Security / major CI failure / deploy.ready / phase_mode 変化 / 新指示 / 明示 reroute
     (( sec > 0 )) && [[ "${ev[prev_snap_security_critical]:-0}" == "0" || -z "${ev[prev_snap_security_critical]:-}" ]] && critical=1
     (( ci_bad )) && [[ "${ev[prev_snap_ci]:-}" != "failure" ]] && critical=1
+    [[ "$rt_health" == "down" && "${ev[prev_snap_runtime_health]:-}" != "down" ]] && critical=1
     [[ -n "${ev[prev_snap_deploy_ready]:-}" && "${ev[prev_snap_deploy_ready]}" != "${ev[deploy_ready]:-}" ]] && critical=1
     [[ -n "${ev[prev_snap_phase_mode]:-}" && "${ev[prev_snap_phase_mode]}" != "$pm" ]] && critical=1
     [[ -n "$intent" ]] && critical=1
@@ -425,6 +585,7 @@ goal_router__route() {
   printf 'snap_phase_mode=%s\n' "$pm"
   printf 'snap_security_critical=%s\n' "$sec"
   printf 'snap_ci=%s\n' "$ci"
+  printf 'snap_runtime_health=%s\n' "$rt_health"
   return 0
 }
 
@@ -445,6 +606,7 @@ goal_router__persist() {
   GR_TRIGGER="${GOAL_ROUTER_TRIGGER:-auto}" GR_VERSION="$GOAL_ROUTER_VERSION" GR_NOW="$(_gr__now_iso)" \
   GR_SNAP_DR="${GOAL_ROUTER_SNAP_DEPLOY_READY:-}" GR_SNAP_PM="${GOAL_ROUTER_SNAP_PHASE_MODE:-}" \
   GR_SNAP_SEC="${GOAL_ROUTER_SNAP_SECURITY_CRITICAL:-0}" GR_SNAP_CI="${GOAL_ROUTER_SNAP_CI:-unknown}" \
+  GR_SNAP_RT="${GOAL_ROUTER_SNAP_RUNTIME_HEALTH:-unknown}" \
   python3 - "$state_file" <<'PYEOF' 2>/dev/null || true
 import json, os, sys
 f = sys.argv[1]; e = os.environ
@@ -472,7 +634,8 @@ gr.update({
     "route_version": int(e["GR_VERSION"]), "last_routed_at": e["GR_NOW"],
     "last_transition_reason": f"{e['GR_TRANSITION']}:{e['GR_TRIGGER']}",
     "evidence_snapshot": {"deploy_ready": e["GR_SNAP_DR"], "phase_mode": e["GR_SNAP_PM"],
-                          "security_critical": e["GR_SNAP_SEC"], "ci": e["GR_SNAP_CI"]},
+                          "security_critical": e["GR_SNAP_SEC"], "ci": e["GR_SNAP_CI"],
+                          "runtime_health": e["GR_SNAP_RT"]},
     "history": hist,
 })
 d["goal_router"] = gr
@@ -528,6 +691,7 @@ except Exception: print('mvp-release')" "$state_file" 2>/dev/null || printf 'mvp
   GOAL_ROUTER_REASON="" GOAL_ROUTER_EVIDENCE="" GOAL_ROUTER_TRANSITION="" GOAL_ROUTER_MODE="auto"
   GOAL_ROUTER_LOCKED_BY_USER="false" GOAL_ROUTER_SESSION_LOCKED="true" GOAL_ROUTER_FALLBACK="0"
   GOAL_ROUTER_SNAP_DEPLOY_READY="" GOAL_ROUTER_SNAP_PHASE_MODE="" GOAL_ROUTER_SNAP_SECURITY_CRITICAL="0" GOAL_ROUTER_SNAP_CI="unknown"
+  GOAL_ROUTER_SNAP_RUNTIME_HEALTH="unknown"
   while IFS= read -r line; do
     k="${line%%=*}"; v="${line#*=}"
     case "$k" in
@@ -546,6 +710,7 @@ except Exception: print('mvp-release')" "$state_file" 2>/dev/null || printf 'mvp
       snap_phase_mode) GOAL_ROUTER_SNAP_PHASE_MODE="$v" ;;
       snap_security_critical) GOAL_ROUTER_SNAP_SECURITY_CRITICAL="$v" ;;
       snap_ci) GOAL_ROUTER_SNAP_CI="$v" ;;
+      snap_runtime_health) GOAL_ROUTER_SNAP_RUNTIME_HEALTH="$v" ;;
     esac
   done <<< "$out"
 

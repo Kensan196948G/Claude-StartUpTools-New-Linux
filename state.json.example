@@ -24,9 +24,18 @@
       "deploy_ready": "",
       "phase_mode": "development",
       "security_critical": "0",
-      "ci": "unknown"
+      "ci": "unknown",
+      "runtime_health": "unknown"
     },
     "history": []
+  },
+  "runtime": {
+    "health_url": null,
+    "error_log": null,
+    "cloudflare": {
+      "project": null,
+      "worker": null
+    }
   },
   "project": {
     "registration_date": null,
