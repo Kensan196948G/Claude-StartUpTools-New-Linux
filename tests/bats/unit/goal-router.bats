@@ -310,7 +310,8 @@ _gr() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['goal_ro
   run grep -c goal_router "$PROJ/state.json"; [ "$output" = "0" ]
 }
 @test "evidence: git / CI / tests の有無を収集し gh 無効時は ci=unknown" {
-  git -C "$PROJ" init -q; git -C "$PROJ" commit -q --allow-empty -m init
+  git -C "$PROJ" init -q
+  git -C "$PROJ" -c user.email=test@example.com -c user.name=test commit -q --allow-empty -m init   # CI には global identity がない
   mkdir -p "$PROJ/.github/workflows" "$PROJ/tests"
   out="$(goal_router__evidence "$PROJ" 'hello')"
   [ "$(_field "$out" git_repo)" = "1" ]; [ "$(_field "$out" has_ci)" = "1" ]; [ "$(_field "$out" has_tests)" = "1" ]
