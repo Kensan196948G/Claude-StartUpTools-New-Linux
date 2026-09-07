@@ -317,6 +317,33 @@ if [[ -n "${CLAUDEOS_GOAL_TYPE_OVERRIDE:-}" ]]; then
   echo "🎯 [cron-launcher] goal_type override: $RESUME_GOAL_TYPE" >> "$LOG_FILE"
 fi
 
+# --- v10 統合 Goal Router (lib/goal-router.sh: 単一モジュール) ---
+# state.json + Repository/Runtime Evidence から Primary/Specialized Goal を判定し、
+# 既存 goal-extract が解決できる 1 つの effective goal_type へ収束させる。
+#   - CLAUDEOS_GOAL_TYPE_OVERRIDE (cron 行の one-shot) は明示指定として尊重し、state を lock しない
+#   - Router 不在/失敗時は従来の RESUME_GOAL_TYPE (state.goal_type) のまま起動する (fail-safe)
+#   - Supervisor は CLAUDEOS_GOAL_TRIGGER=supervisor-start|supervisor-resume を渡す (再開は lock 維持)
+GOAL_ROUTER_LIB="${GOAL_ROUTER_LIB:-$PROJECTS_BASE/Claude-StartUpTools-New-Linux/lib/goal-router.sh}"
+GOAL_ROUTER_SUMMARY=""
+if [[ -f "$GOAL_ROUTER_LIB" ]]; then
+  # shellcheck source=lib/goal-router.sh
+  source "$GOAL_ROUTER_LIB"
+  _GR_ARGS=( --trigger "${CLAUDEOS_GOAL_TRIGGER:-cron}" )
+  [[ -n "${CLAUDEOS_GOAL_TYPE_OVERRIDE:-}" ]] && _GR_ARGS+=( --goal "$CLAUDEOS_GOAL_TYPE_OVERRIDE" --one-shot )
+  [[ -n "${CLAUDEOS_GOAL_INTENT:-}" ]] && _GR_ARGS+=( --intent "$CLAUDEOS_GOAL_INTENT" )
+  goal_router__resolve "$PROJECT_DIR" "${_GR_ARGS[@]}" >/dev/null 2>>"$LOG_FILE" || true
+  if [[ -n "${GOAL_ROUTER_EFFECTIVE:-}" ]]; then
+    RESUME_GOAL_TYPE="$GOAL_ROUTER_EFFECTIVE"
+    export CLAUDEOS_GOAL_TYPE="$RESUME_GOAL_TYPE"
+    GOAL_ROUTER_SUMMARY="$(goal_router__summary)"
+    echo "🧭 [cron-launcher] goal router: $GOAL_ROUTER_SUMMARY" >> "$LOG_FILE"
+  else
+    echo "⚠️  [cron-launcher] goal router 判定なし — 従来 goal_type=${RESUME_GOAL_TYPE} で起動" >> "$LOG_FILE"
+  fi
+else
+  echo "ℹ️  [cron-launcher] goal-router.sh 不在 — 従来 goal_type=${RESUME_GOAL_TYPE} で起動" >> "$LOG_FILE"
+fi
+
 export CLAUDE_RESUME_PHASE="$RESUME_PHASE"
 export CLAUDE_RESUME_CONSECUTIVE="$RESUME_CONSECUTIVE"
 
@@ -349,7 +376,7 @@ if [[ -f "$STATE_FILE" ]]; then
   if [[ "${PHASE_MODE:-development}" == "maintenance" ]]; then
     MAINT_NOTE=" [maintenance mode: max ${DURATION_MIN}min, loop=maintenance-loop.md, KPI=SLA/MTTR]"
   fi
-  RESUME_HEADER="[Cron Session Resume] phase=${RESUME_PHASE} phase_mode=${PHASE_MODE:-development}${MAINT_NOTE} goal_type=${RESUME_GOAL_TYPE} goals_dir=${CLAUDEOS_GOALS_DIR} consecutive_success=${RESUME_CONSECUTIVE} last_summary=${RESUME_SUMMARY}
+  RESUME_HEADER="[Cron Session Resume] phase=${RESUME_PHASE} phase_mode=${PHASE_MODE:-development}${MAINT_NOTE} goal_type=${RESUME_GOAL_TYPE}${GOAL_ROUTER_SUMMARY:+ goal_router=[${GOAL_ROUTER_SUMMARY}]} goals_dir=${CLAUDEOS_GOALS_DIR} consecutive_success=${RESUME_CONSECUTIVE} last_summary=${RESUME_SUMMARY}
 
 "
   PROMPT_ARG="${RESUME_HEADER}${PROMPT_ARG}"
@@ -363,15 +390,12 @@ _CCSU_GOAL_EXTRACT="$PROJECTS_BASE/Claude-StartUpTools-New-Linux/libexec/goal-ex
 if [[ -f "$_CCSU_GOAL_EXTRACT" ]]; then
   # shellcheck source=/dev/null
   source "$_CCSU_GOAL_EXTRACT"
-  if _GOAL_DIRECTIVE="$(goal_extract__build "$RESUME_GOAL_TYPE" "$CLAUDEOS_GOALS_DIR")" \
-       && [[ -n "$_GOAL_DIRECTIVE" ]]; then
-    # START_PROMPT 等に元から埋め込まれた canonical /goal ブロックを除去し、
-    # 注入する権威 /goal と二重化させない。二重 /goal は claude -p が貪欲パースで
-    # 条件を 4000 字超へ膨張させ (got N>4000) → 0 ターン即終了 crash-loop を招く。
-    PROMPT_ARG="$(printf '%s' "$PROMPT_ARG" | goal_extract__strip_block)"
-    PROMPT_ARG="${_GOAL_DIRECTIVE}
-
-${PROMPT_ARG}"
+  # goal_extract__compose (単一合成点、L1/S1 と共用): 抽出成功なら START_PROMPT 等に
+  # 元から埋め込まれた canonical /goal ブロックを除去して注入 /goal を唯一にする。
+  # 二重 /goal は claude -p が貪欲パースで条件を 4000 字超へ膨張させ (got N>4000)
+  # → 0 ターン即終了 crash-loop を招く。抽出失敗 (rc=1) は PROMPT_ARG 不変で降格。
+  if _COMPOSED="$(goal_extract__compose "$RESUME_GOAL_TYPE" "$CLAUDEOS_GOALS_DIR" "$PROMPT_ARG")"; then
+    PROMPT_ARG="$_COMPOSED"
     echo "🎯 [cron-launcher] /goal 注入 (埋込 /goal 除去・二重化防止): goal_type=${RESUME_GOAL_TYPE} dir=${CLAUDEOS_GOALS_DIR}" >> "$LOG_FILE"
   else
     echo "ℹ️  [cron-launcher] /goal 抽出なし — START_PROMPT のみで起動 (goal_type=${RESUME_GOAL_TYPE})" >> "$LOG_FILE"

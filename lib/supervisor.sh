@@ -348,6 +348,9 @@ sup__loop() {
     # throttle tier/bias を子セッションへ伝播 (cron-launcher / goal 注入が任意で参照)
     export CLAUDEOS_THROTTLE_TIER="$SUP_THROTTLE_TIER"
     export CLAUDEOS_THROTTLE_BIAS="$(sup__throttle_goal_bias "$SUP_THROTTLE_TIER")"
+    # v10 Goal Router: 初回は start、再開は resume (通常再開は前回 Goal を維持し、
+    # Security / CI 重大失敗 / deploy.ready / phase_mode 変化のみ reroute。判定は cron-launcher 内)
+    if (( SUP_RESTARTS == 0 )); then export CLAUDEOS_GOAL_TRIGGER="supervisor-start"; else export CLAUDEOS_GOAL_TRIGGER="supervisor-resume"; fi
     # クレジット回収用の安定パスを渡す (cron-launcher が SESSION_ID.cost をここへ鏡写し)。
     # 前回値の混入を防ぐため起動前に必ず除去する。
     rm -f "$session_cost_file"

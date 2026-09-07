@@ -11,6 +11,8 @@
 #   start-claude.sh --project P --background [--duration 300] [--dry-run]          # S1: supervisor BG
 #   start-claude.sh --project P --safe-mode  [--duration 300] [--tmux] [--dry-run] # 診断: hooks/MCP 無効の素起動
 #   --local は互換用 (ローカル一本化のため常にローカル)
+#   --goal auto|<primary|specialized>  v10 Goal Router の手動 override (auto=Evidence から自動判定・lock 解除)
+#   --intent "<要求テキスト>"           ユーザー要求を Router の Evidence として渡す (新指示 = reroute 条件)
 # ============================================================
 
 set -euo pipefail
@@ -30,6 +32,56 @@ source "$SCRIPT_DIR/../lib/team-runner.sh"
 source "$SCRIPT_DIR/../lib/notify.sh"
 # shellcheck source=lib/model-router.sh
 source "$SCRIPT_DIR/../lib/model-router.sh"
+# shellcheck source=lib/goal-router.sh
+source "$SCRIPT_DIR/../lib/goal-router.sh"
+# shellcheck source=libexec/goal-extract.sh
+source "$SCRIPT_DIR/../libexec/goal-extract.sh"
+
+# claude__route_goal <project> <trigger> [goal] [intent] [persist(1|0)]
+#   v10 統合 Goal Router (lib/goal-router.sh、cron-launcher と同一モジュール)。
+#   Effective Goal を GOAL_ROUTER_* / CLAUDEOS_GOAL_TYPE / CLAUDEOS_GOAL_HEADER として公開する。
+#   常に 0 (fail-safe: Router 失敗時も起動を止めない)。
+claude__route_goal() {
+  local project="$1" trigger="$2" goal="${3:-}" intent="${4:-}" persist="${5:-1}"
+  local -a args=( --trigger "$trigger" )
+  [[ -n "$goal" ]] && args+=( --goal "$goal" )
+  [[ -n "$intent" ]] && args+=( --intent "$intent" )
+  (( persist )) || args+=( --no-persist )
+  goal_router__resolve "$(launcher__project_dir "$project")" "${args[@]}" >/dev/null || true
+  [[ -n "${GOAL_ROUTER_EFFECTIVE:-}" ]] || return 0
+  export CLAUDEOS_GOAL_TYPE="$GOAL_ROUTER_EFFECTIVE"
+  export CLAUDEOS_GOAL_EFFECTIVE="$GOAL_ROUTER_EFFECTIVE"
+  CLAUDEOS_GOAL_HEADER="$(goal_router__header)"; export CLAUDEOS_GOAL_HEADER
+  return 0
+}
+
+# claude__goals_dir — goals テンプレートディレクトリ (cron-launcher と同じ既定)
+claude__goals_dir() { printf '%s' "${CLAUDEOS_GOALS_DIR:-$SCRIPT_DIR/../Claude/templates/claudeos/goals}"; }
+
+# claude__compose_prompt <project_dir> <out_file>
+#   START_PROMPT.md を base に、Router が決めた effective goal の /goal を goal_extract__compose で
+#   合成しサイドカーへ書く (cron-launcher と同じ単一合成点)。合成できなければ START_PROMPT をそのまま。
+#   結果: CLAUDE_PROMPT_FILE に使用するプロンプトファイルのパスを設定 (log 出力と混ざらないよう変数で返す)。
+claude__compose_prompt() {
+  local project_dir="$1" out="$2" base="" header=""
+  local sp="$project_dir/.claude/START_PROMPT.md"
+  CLAUDE_PROMPT_FILE="$sp"
+  [[ -f "$sp" && -s "$sp" ]] || return 0
+  [[ -n "${GOAL_ROUTER_EFFECTIVE:-}" ]] || return 0
+  base="$(cat "$sp")"
+  header="${CLAUDEOS_GOAL_HEADER:-}"; [[ -n "$header" ]] && header="$header
+"
+  local composed
+  if composed="$(goal_extract__compose "$GOAL_ROUTER_EFFECTIVE" "$(claude__goals_dir)" "$base" "$header")"; then
+    mkdir -p "$(dirname "$out")"
+    printf '%s' "$composed" > "$out"
+    CLAUDE_PROMPT_FILE="$out"
+    log_info "🎯 /goal 注入: effective_goal_type=$GOAL_ROUTER_EFFECTIVE (primary=${GOAL_ROUTER_PRIMARY:-?} specialized=${GOAL_ROUTER_SPECIALIZED:-none})"
+  else
+    log_info "ℹ️  /goal 抽出なし — START_PROMPT のみで起動 (goal_type=$GOAL_ROUTER_EFFECTIVE)"
+  fi
+  return 0
+}
 
 claude__select_model() {
   local project="$1" task="$2" source="$3" record="${4:-0}"
@@ -190,7 +242,9 @@ direct__run_tui_foreground() {
   local state_file; state_file="$(session__foreground_dir)/${safe}.json"
 
   template_sync__apply "$project_dir"
-  prompt_file="$project_dir/.claude/START_PROMPT.md"
+  # v10 Goal Router: effective goal の /goal を合成したサイドカーを初期プロンプトにする
+  claude__compose_prompt "$project_dir" "$CCSU_HOME/logs/manual-tui-${stamp}-${safe}.prompt"
+  prompt_file="$CLAUDE_PROMPT_FILE"
   local -a model_args=()
   [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
   # クロスセッションメッセージング用の安定セッション名 (claude v2.1.196+ のみ付与)
@@ -287,7 +341,9 @@ direct__run_headless_once() {
   log_file="$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.log"
 
   template_sync__apply "$project_dir"
-  [[ -f "$project_dir/.claude/START_PROMPT.md" ]] && prompt="$(cat "$project_dir/.claude/START_PROMPT.md")"
+  # v10 Goal Router: effective goal の /goal を合成 (cron-launcher と同一の合成点)
+  claude__compose_prompt "$project_dir" "$CCSU_HOME/logs/manual-direct-${stamp}-${safe}.routed.prompt"
+  [[ -f "$CLAUDE_PROMPT_FILE" ]] && prompt="$(cat "$CLAUDE_PROMPT_FILE")"
   local -a model_args=()
   [[ -n "${CLAUDEOS_SELECTED_MODEL:-}" ]] && model_args=(--model "$CLAUDEOS_SELECTED_MODEL" --effort "$CLAUDEOS_SELECTED_EFFORT")
   # クロスセッションメッセージング用の安定セッション名 (claude v2.1.196+ のみ付与)
@@ -330,10 +386,12 @@ EOF
 }
 
 main() {
-  local project="" mode="foreground" duration="" safe_mode=0 use_tmux=0 dry_run=0
+  local project="" mode="foreground" duration="" safe_mode=0 use_tmux=0 dry_run=0 goal="" intent=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project)    project="$2"; shift 2 ;;
+      --goal)       goal="$2"; shift 2 ;;
+      --intent)     intent="$2"; shift 2 ;;
       --foreground) mode="foreground"; shift ;;
       --team)       mode="team"; shift ;;
       --background) mode="background"; shift ;;
@@ -345,6 +403,10 @@ main() {
       *) log_error "不明な引数: $1"; exit 1 ;;
     esac
   done
+  if [[ -n "$goal" && "$goal" != "auto" ]] && ! goal_router__is_goal "$goal"; then
+    log_error "--goal は auto / ${GOAL_ROUTER_PRIMARY_GOALS[*]} / ${GOAL_ROUTER_SPECIALIZED_GOALS[*]} のいずれかで指定してください: $goal"
+    exit 1
+  fi
 
   if [[ -z "$duration" ]]; then
     if [[ "$mode" == "foreground" || "$mode" == "team" ]]; then
@@ -400,6 +462,18 @@ main() {
   fi
   claude__select_model "$project" "$model_task" "start-claude" "$record_model" || true
 
+  # v10 統合 Goal Router: 全経路 (L1/S1/T1/safe-mode 除く) で同一の Goal resolution を通す。
+  # --goal / --intent はユーザーの新指示 (trigger=user、--goal <name> は manual lock、auto で解除)。
+  # dry-run は判定のみで state.json を更新しない。safe-mode は診断起動のため Router を通さない。
+  if (( ! safe_mode )); then
+    local goal_trigger="$mode"
+    [[ -n "$goal" || -n "$intent" ]] && goal_trigger="user"
+    claude__route_goal "$project" "$goal_trigger" "$goal" "$intent" "$(( dry_run ? 0 : 1 ))"
+    if [[ -n "${GOAL_ROUTER_EFFECTIVE:-}" ]]; then
+      log_info "🧭 Goal Router: $(goal_router__summary)"
+    fi
+  fi
+
   if (( dry_run )); then
     log_info "dry-run: Claude 起動計画"
     log_info "  project=$project"
@@ -412,6 +486,14 @@ main() {
       log_info "  model=$CLAUDEOS_SELECTED_MODEL"
       log_info "  effort=$CLAUDEOS_SELECTED_EFFORT"
       log_info "  model_reason=$CLAUDEOS_SELECTED_MODEL_REASON"
+    fi
+    if [[ -n "${GOAL_ROUTER_EFFECTIVE:-}" ]]; then
+      log_info "  goal_primary=$GOAL_ROUTER_PRIMARY"
+      log_info "  goal_specialized=${GOAL_ROUTER_SPECIALIZED:-none}"
+      log_info "  goal_effective=$GOAL_ROUTER_EFFECTIVE"
+      log_info "  goal_confidence=$GOAL_ROUTER_CONFIDENCE"
+      log_info "  goal_mode=$GOAL_ROUTER_MODE"
+      log_info "  goal_reason=$GOAL_ROUTER_REASON"
     fi
     if (( safe_mode )); then
       log_info "  route=$([[ "$use_tmux" == "1" ]] && printf 'tmux safe-mode' || printf 'direct safe-mode')"
@@ -457,7 +539,13 @@ main() {
   # 新規端末タブで通常の Claude TUI を開く。
   if [[ "$mode" == "foreground" ]]; then
     if (( use_tmux )); then
-      tmux_run "$project" "$duration" "$mode"
+      # tmux fallback も同じ合成点を通す (template sync は tmux_run 内で再実行されるが START_PROMPT は不変)
+      local _pdir _routed
+      _pdir="$(launcher__project_dir "$project")"
+      template_sync__apply "$_pdir" >/dev/null 2>&1 || true
+      claude__compose_prompt "$_pdir" "$CCSU_HOME/logs/manual-tmux-$(date +%Y%m%d-%H%M%S)-$(ccsu_safe_name "$project").prompt"
+      _routed="$CLAUDE_PROMPT_FILE"
+      CCSU_PROMPT_FILE="$_routed" tmux_run "$project" "$duration" "$mode"
     else
       direct__run_tui_foreground "$project" "$duration"
     fi
