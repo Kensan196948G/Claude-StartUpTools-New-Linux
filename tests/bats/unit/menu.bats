@@ -331,3 +331,41 @@ JSON
   [[ "$output" == *"無効な入力"* ]]
   [[ "$output" != *"LAUNCH_CALLED"* ]]
 }
+
+# ---- v10.1 Goal Router: L1/S1 確認画面の Goal / 要求入力 ----------------
+@test "launch_claude: Goal / 要求を入力すると --goal / --intent を start-claude.sh へ渡す" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launcher__select_project() { printf "Alpha\n"; }
+    run_menu_script() { echo "RUN_MENU_SCRIPT_CALLED $*"; }
+    confirm_yes_no() { return 0; }
+    menu__ask_goal() { printf "deep-debug"; }
+    menu__ask_intent() { printf "CI が失敗しているので直して"; }
+    launch_claude foreground </dev/null
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--project Alpha --foreground --goal deep-debug --intent CI が失敗しているので直して"* ]]
+}
+@test "launch_claude: Enter (未入力) なら --goal / --intent を付けない (自動判定・後方互換)" {
+  run bash -c '
+    source "'"$SCRIPT"'"
+    launcher__select_project() { printf "Alpha\n"; }
+    run_menu_script() { echo "RUN_MENU_SCRIPT_CALLED $*"; }
+    confirm_yes_no() { return 0; }
+    launch_claude background </dev/null
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RUN_MENU_SCRIPT_CALLED"* ]]
+  [[ "$output" == *"--project Alpha --background"* ]]
+  [[ "$output" != *"--goal"* ]]; [[ "$output" != *"--intent"* ]]
+}
+@test "menu__ask_goal: 名前と auto は受理、不明な値は警告して空 (自動判定)、CCSU_ASSUME_YES=1 は問い合わせない" {
+  run bash -c 'source "'"$SCRIPT"'"; printf "deep-debug\n" | menu__ask_goal 2>/dev/null'
+  [ "$output" = "deep-debug" ]
+  run bash -c 'source "'"$SCRIPT"'"; printf "AUTO\n" | menu__ask_goal 2>/dev/null'
+  [ "$output" = "auto" ]
+  run bash -c 'source "'"$SCRIPT"'"; printf "bogus\n" | menu__ask_goal 2>&1'
+  [[ "$output" == *"不明な Goal: bogus"* ]]; [[ "$output" != *$'\n'"bogus" ]]
+  run bash -c 'source "'"$SCRIPT"'"; CCSU_ASSUME_YES=1 menu__ask_goal < /dev/null'
+  [ -z "$output" ]
+}

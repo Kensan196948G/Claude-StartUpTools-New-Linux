@@ -35,17 +35,22 @@ T1 は CTO ペインにだけ `[Goal Router] …` ヘッダを付けた TEAM_STA
 
 1. **explicit**: `--goal <name>`（manual lock）/ `CLAUDEOS_PRIMARY_GOAL`（one-shot）/ 前回 `mode=manual`。confidence 1.00。Security Critical は明示指定を上書きして security-emergency
 2. `kpi.security_critical>0` → deep-debug / security-emergency（0.95）
-3. CI failure（gh 最新 run failure、または `ci_success_rate<0.5`）→ deep-debug（0.85、maintenance/released なら + hotfix）
-4. intent（§6.1 キーワード表、§7 順で解決）→ 0.80
-5. `deploy.ready=true` / `execution.phase=Release` → product-assurance / production-release（0.80 / 0.75）
-6. maintenance/released + Blocker → deep-debug / hotfix（0.70）
-7. `stable_achieved=true`（development）→ product-assurance（0.70）
-8. `phase_mode=maintenance|released` → development（0.70）
-9. 旧 `goal_type` → 写像（0.60）
-10. state 不在 / CI・テスト未整備 / コミット ≤ 5 → mvp-release（0.55）、それ以外 → development（0.50）
+3. Runtime incident（`state.runtime.health_url` down）→ deep-debug（0.90、本番運用中 = maintenance/released or deploy.executed_at なら + hotfix）
+4. CI failure（gh 最新 run failure、または `ci_success_rate<0.5`）→ deep-debug（0.85、maintenance/released なら + hotfix）
+5. Cloudflare deploy failure（`state.runtime.cloudflare.*` を wrangler --json で判定）→ deep-debug（0.80）
+6. intent（§6.1 キーワード表、§7 順で解決）→ 0.80。判定不能なら LLM 分類（`goal_router__intent_llm`、haiku、0.70）
+7. error_log の直近エラー件数 ≥ 閾値（5）→ deep-debug（0.75）
+8. `deploy.ready=true` / `execution.phase=Release` → product-assurance / production-release（0.80 / 0.75）
+9. maintenance/released + Blocker → deep-debug / hotfix（0.70）
+10. `stable_achieved=true`（development）→ product-assurance（0.70）
+11. `phase_mode=maintenance|released` → development（0.70）
+12. 旧 `goal_type` → 写像（0.60）
+13. state 不在 / CI・テスト未整備 / コミット ≤ 5 → mvp-release（0.55）、それ以外 → development（0.50）
+
+外部呼び出し（gh / curl / wrangler / claude -p）はすべて `goal_router__evidence` 側に閉じ込め、`goal_router__route` は純粋関数のまま（テストは Evidence 行を直接与える）。
 
 **Lock**: 前回 `session_locked=true` かつ `last_routed_at` から `CLAUDEOS_GOAL_LOCK_MINUTES`（720）以内なら維持（`transition=kept`）。
-reroute 条件: Security Critical の新規発生 / CI failure の新規発生 / deploy.ready 変化 / phase_mode 変化 / intent あり / trigger ∈ {user, reroute, goal-reached} / `CLAUDEOS_GOAL_REROUTE=1` / `--goal auto`。
+reroute 条件: Security Critical の新規発生 / CI failure の新規発生 / Runtime health の down への遷移 / deploy.ready 変化 / phase_mode 変化 / intent あり / trigger ∈ {user, reroute, goal-reached} / `CLAUDEOS_GOAL_REROUTE=1` / `--goal auto`。
 
 **Fail-safe**: Router 出力が不正 → explicit → goal_type → phase_mode → mvp-release。state.json が壊れていても起動を止めず、書き換えない。
 
@@ -89,6 +94,8 @@ deploy signoff / destructive gate は Router 導入前と同一。`production-re
 
 ## 9. 既知の制限
 
-- gh Evidence は `origin` remote と認証がある場合のみ（timeout 8 秒、失敗は unknown）。Runtime Evidence（health / logs / Cloudflare）は未統合（Mission Control 側で別途）
-- intent はキーワード表による分類（LLM 分類ではない）。判定不能は状態ベースへ委譲
+- gh Evidence は `origin` remote と認証がある場合のみ（timeout 8 秒、失敗は unknown）
+- Runtime Evidence は `state.runtime.*` を設定した Project のみ。health は HTTP status のみで内容は見ない。Cloudflare の deploy failure 判定は Pages の `latest_stage.status` からのみ確定し、Worker（deployments 一覧に status が無い）は listed / none / unknown の観測に留めて routing に使わない
+- LLM intent 分類はキーワード表で判定不能なときの補完。Claude Code セッション内（CLAUDECODE=1）では auto で呼ばない。2026-09-08 の実機検証は subscription ログイン不在で `Not logged in` のためライブ動作は UNVERIFIED（stub による単体テストのみ）
+- メニューの Goal / 要求入力は tty またはパイプ入力があるときだけ（cron / stdin 閉塞では自動判定）
 - Goal 達成の自動検出は Supervisor の `goal-reached`（deploy.ready / phase_mode）に依存。セッション内の Goal 達成による reroute はユーザー新指示か次回起動で反映

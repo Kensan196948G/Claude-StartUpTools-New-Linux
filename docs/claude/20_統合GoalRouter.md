@@ -25,17 +25,54 @@ Project を選ぶ → 状態を読む → Goal を自動決定 → 必要な Age
 ## 3. 判定の優先順位
 
 1. Security Critical（`kpi.security_critical>0`）→ security-emergency（明示指定より優先）
-2. CI 失敗（最新 run failure / `ci_success_rate<0.5`）→ deep-debug（保守期は + hotfix）
-3. ユーザー要求（`--intent`）のキーワード: 作って・実装 → development、MVP・PoC → mvp-release、評価・監査 → assessment、直して・バグ → deep-debug、総合テスト・リリース判定 → product-assurance
-4. `deploy.ready=true` / `execution.phase=Release` → product-assurance + production-release
+2. Runtime incident（`state.runtime.health_url` の health check が down）→ deep-debug（本番運用中は + hotfix）
+3. CI 失敗（最新 run failure / `ci_success_rate<0.5`）→ deep-debug（保守期は + hotfix）
+4. Cloudflare deploy failure（`state.runtime.cloudflare.project|worker` の wrangler 判定）→ deep-debug
+5. ユーザー要求（`--intent`）のキーワード: 作って・実装 → development、MVP・PoC → mvp-release、評価・監査 → assessment、直して・バグ → deep-debug、総合テスト・リリース判定 → product-assurance。キーワードで判定不能なら LLM 分類（§3.1）
+6. error_log の直近エラー件数が閾値以上（既定 5、`CLAUDEOS_GOAL_RUNTIME_ERROR_THRESHOLD`）→ deep-debug
+7. `deploy.ready=true` / `execution.phase=Release` → product-assurance + production-release
 5. `stable_achieved=true` → product-assurance、`phase_mode=maintenance|released` → development
-6. 旧 `goal_type` → そのまま写像（後方互換）
-7. state 不在・CI / テスト未整備・コミット ≤ 5 → mvp-release、それ以外 → development
+8. `stable_achieved=true` → product-assurance、`phase_mode=maintenance|released` → development
+9. 旧 `goal_type` → そのまま写像（後方互換）
+10. state 不在・CI / テスト未整備・コミット ≤ 5 → mvp-release、それ以外 → development
+
+### 3.1 LLM ベースの intent 分類（キーワード表の補完）
+
+キーワード表で判定できない要求（例:「このプロダクトの現状はどう？」）は、`claude -p --model haiku --output-format json --bare` でラベル 1 語（Primary または Primary/Specialized）を得て confidence 0.70 で採用します。
+
+| 設定 | 値 |
+|---|---|
+| `CLAUDEOS_GOAL_INTENT_LLM` | `auto`（既定: Claude Code セッション内では呼ばない）/ `1`（強制）/ `0`（無効） |
+| `CLAUDEOS_GOAL_INTENT_LLM_MODEL` / `_TIMEOUT` | 既定 `haiku` / 45 秒 |
+| 課金 | headless と同じ subscription 経路（`env -u ANTHROPIC_API_KEY`）。`CLAUDEOS_HEADLESS_AUTH=api-key` で API キー |
+| fail-safe | timeout・認証失敗・不正ラベル・`none` は捨てて状態ベース判定へ。ラベルはホワイトリスト検証 |
+
+※ 2026-09-08 時点の実機検証は Claude Code セッション内からのため subscription ログイン不在で `Not logged in` となり、LLM 分類の**ライブ動作は UNVERIFIED**（単体テストは stub で網羅）。cron / メニューなど通常の起動環境で `libexec/goal-router.sh <project> --intent "…" --dry-run --explain` を実行して `intent_llm=` を確認してください。
+
+### 3.2 Runtime Evidence（state.json の `runtime` ブロック）
+
+```json
+"runtime": {
+  "health_url": "http://localhost:8080/health",
+  "error_log": "~/apps/<app>/logs/error.log",
+  "cloudflare": { "project": "<pages-project>", "worker": null }
+}
+```
+
+| 項目 | 判定 | 影響 |
+|---|---|---|
+| `health_url` | curl（5 秒）、2xx/3xx = ok、それ以外 = down | down → deep-debug（+hotfix）。down への遷移は lock を破る |
+| `error_log` | 直近 500 行の ERROR / FATAL / Traceback / panic / Unhandled / CRITICAL 件数 | 閾値以上 → deep-debug |
+| `cloudflare.project` | `wrangler pages deployment list --project-name … --environment production --json` の `latest_stage.status` | failure → deep-debug |
+| `cloudflare.worker` | `wrangler deployments list --name … --json` の一覧（listed / none / unknown） | 観測のみ。Worker の一覧には status が無いため routing には使わない |
+
+未設定なら unknown（判定に影響しない）。`CLAUDEOS_GOAL_ROUTER_RUNTIME=0` / `CLAUDEOS_GOAL_ROUTER_CF=0` で無効化できます。
 
 ## 4. Manual Override
 
 | やりたいこと | コマンド |
 |---|---|
+| メニュー（L1 / T1 / S1） | Yes 確認の後に「🎯 Goal [自動]」と「📝 要求」を聞く。Enter で自動判定、名前で固定、`auto` で固定解除。cron / stdin 閉塞時は問い合わせない |
 | Goal を固定して起動（manual lock） | `bin/start-claude.sh --project P --foreground --goal deep-debug` |
 | 固定を解除して自動判定に戻す | `bin/start-claude.sh --project P --foreground --goal auto` |
 | 要求を伝えて判定させる | `bin/start-claude.sh --project P --background --intent "全体を評価して改善案を出して"` |

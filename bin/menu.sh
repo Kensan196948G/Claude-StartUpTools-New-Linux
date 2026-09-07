@@ -24,6 +24,8 @@ source "$SCRIPT_DIR/../lib/json.sh"
 source "$SCRIPT_DIR/../lib/config-loader.sh"
 # shellcheck source=lib/launcher-common.sh
 source "$SCRIPT_DIR/../lib/launcher-common.sh"
+# shellcheck source=lib/goal-router.sh
+source "$SCRIPT_DIR/../lib/goal-router.sh"
 # shellcheck source=lib/project-autoinit.sh
 source "$SCRIPT_DIR/../lib/project-autoinit.sh"
 
@@ -195,7 +197,38 @@ confirm_yes_no() {
   [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
 }
 
-# L1/S1: プロジェクト選択 → Yes/No 確認 → start-claude.sh
+# menu__ask_goal — v10 Goal Router の手動 override 入力。
+#   Enter = 自動判定 (前回の固定があればそれを維持) / 名前 = その Goal で固定 / auto = 固定解除して再判定。
+#   stdout には選択値のみ (案内は stderr)。CCSU_ASSUME_YES=1 や stdin 閉塞時は空 (自動判定)。
+menu__ask_goal() {
+  [[ "${CCSU_ASSUME_YES:-0}" == "1" ]] && return 0
+  # 対話端末かパイプ入力があるときだけ問い合わせる (cron / headless / stdin 閉塞ではハングさせず自動判定)
+  [[ -t 0 || -p /dev/stdin ]] || return 0
+  local ans
+  printf '  🎯 Goal Router: Enter=自動判定 / 名前で固定 (%s / %s) / auto=固定解除\n' \
+    "${GOAL_ROUTER_PRIMARY_GOALS[*]}" "${GOAL_ROUTER_SPECIALIZED_GOALS[*]}" >&2
+  read -rp "  Goal [自動]: " ans || ans=""
+  ans="${ans// /}"; ans="${ans,,}"
+  [[ -z "$ans" ]] && return 0
+  if [[ "$ans" == "auto" ]] || goal_router__is_goal "$ans"; then
+    printf '%s' "$ans"
+  else
+    log_warn "不明な Goal: $ans (自動判定で起動します)"
+  fi
+  return 0
+}
+
+# menu__ask_intent — ユーザー要求 (任意)。Router の Evidence (新指示 = reroute 条件) になる。
+menu__ask_intent() {
+  [[ "${CCSU_ASSUME_YES:-0}" == "1" ]] && return 0
+  [[ -t 0 || -p /dev/stdin ]] || return 0
+  local ans
+  read -rp "  📝 要求 (任意、例: CI が失敗しているので直して / Enter で省略): " ans || ans=""
+  printf '%s' "$ans"
+  return 0
+}
+
+# L1/S1: プロジェクト選択 → Yes/No 確認 → Goal / 要求入力 → start-claude.sh
 handle_running_project() {
   local project="$1"
   printf '\n  %s🔴 %s は実行中です。%s\n' "$C_YELLOW" "$project" "$C_RESET"
@@ -253,7 +286,13 @@ launch_claude() {
     sleep 1
     return 0
   fi
-  run_menu_script "$BIN/start-claude.sh" --project "$project" "--$mode"
+  local goal intent
+  goal="$(menu__ask_goal)"
+  intent="$(menu__ask_intent)"
+  local -a extra=()
+  [[ -n "$goal" ]] && extra+=(--goal "$goal")
+  [[ -n "$intent" ]] && extra+=(--intent "$intent")
+  run_menu_script "$BIN/start-claude.sh" --project "$project" "--$mode" "${extra[@]}"
 }
 
 deploy_prep_menu() {
