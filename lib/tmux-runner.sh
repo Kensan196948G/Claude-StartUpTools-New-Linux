@@ -79,6 +79,11 @@ tmux__send_report() {
   [[ "${CLAUDEOS_MANUAL_EMAIL:-1}" == "1" ]]   || return 0   # 手動メールだけ無効化する余地
   has_cmd python3            || { log_warn "python3 不在: レポートメール skip"; return 0; }
   [[ -f "$CCSU_REPORT_SCRIPT" ]] || { log_warn "report-and-mail.py 不在: skip ($CCSU_REPORT_SCRIPT)"; return 0; }
+  # v10: SMTP 資格情報はこのメール送信プロセスでだけ読み込む (claude 環境には渡さない)
+  if [[ "${CCSU_SKIP_ENV_FILE:-0}" != "1" && -f "$HOME/.env-claudeos" ]]; then
+    # shellcheck disable=SC1091
+    set -a; source "$HOME/.env-claudeos"; set +a
+  fi
   python3 "$CCSU_REPORT_SCRIPT" \
     --session "$sid" --log "$log" --status "$status" \
     --start "$start" --end "$end" --duration-min "$dur" \
@@ -166,11 +171,17 @@ tmux_run() {
     # 最新テンプレート (START_PROMPT.md / CLAUDE.md) をプロジェクトへ配布
     template_sync__apply "$project_dir"
 
+    # 権限 (v10 §8): 既定は auto mode (classifier)。--dangerously-skip-permissions は
+    # CCSU_TMUX_SKIP_PERMS=1 の緊急脱出時のみ (標準運用では使わない)。
+    local perm_args="--permission-mode auto "
+    [[ "${CCSU_TMUX_SKIP_PERMS:-0}" == "1" ]] && perm_args="--dangerously-skip-permissions "
+    # メール資格情報 (SMTP) を claude プロセス環境へ持ち込まない (watcher は tmux__send_report で自前再読込)
+    local env_prefix="env -u CLAUDEOS_SMTP_USER -u CLAUDEOS_SMTP_PASS "
     # START_PROMPT.md があれば claude に渡す (cat 展開を tmux コマンド内で実行)
     if [[ -f "$project_dir/.claude/START_PROMPT.md" ]]; then
-      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }${name_args}--dangerously-skip-permissions \"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
+      claude_cmd="timeout ${dur_sec}s ${env_prefix}$CLAUDE_BIN ${model_args:+$model_args }${name_args}${perm_args}\"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
     else
-      claude_cmd="timeout ${dur_sec}s $CLAUDE_BIN ${model_args:+$model_args }${name_args}--dangerously-skip-permissions"
+      claude_cmd="timeout ${dur_sec}s ${env_prefix}$CLAUDE_BIN ${model_args:+$model_args }${name_args}${perm_args}"
     fi
   fi
 

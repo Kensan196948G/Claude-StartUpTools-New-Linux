@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stop hook (ClaudeOS v9.0)
+// Stop hook (ClaudeOS v10: async + heavy-sync throttle)
 // セッション終了時に state.json を最終更新し、続けて notify-stable を同期実行する。
 // v9.0: learning パターン記録（成功/失敗パターンを state.learning へ追記）を追加。
 // 並列実行による state.json への race condition を避けるため、両者は単一 hook エントリに統合する。
@@ -9,10 +9,6 @@
 
 const fs = require("fs");
 const path = require("path");
-
-// Stop hook の stdout は「単一の valid JSON」である必要がある (hookSpecificOutput 出力)。
-// 進行ログはすべて stderr へ逃がし、stdout は末尾の JSON 1 行に限定する。
-const log = (...args) => console.error(...args);
 
 const STATE_FILE = path.join(process.cwd(), "state.json");
 
@@ -31,6 +27,23 @@ function writeJsonAtomic(file, data) {
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
   fs.renameSync(tmp, file);
 }
+
+
+// v10: 重い同期処理 (gh を伴う KPI / Projects 同期 / CMDB / Audit) は毎ターン (Stop) ではなく
+// CLAUDEOS_HEAVY_SYNC_INTERVAL_SEC (既定 900 秒) に 1 回だけ実行する。Stop hook は settings で async にする。
+const HEAVY_STAMP = path.join(process.cwd(), ".claude", "claudeos", "data", ".heavy-sync.stamp");
+function heavySyncDue() {
+  if (process.env.CLAUDEOS_HEAVY_SYNC === "0") return false;
+  if (process.env.CLAUDEOS_HEAVY_SYNC === "1") return true;
+  const interval = Number(process.env.CLAUDEOS_HEAVY_SYNC_INTERVAL_SEC || 900) * 1000;
+  try {
+    const st = fs.statSync(HEAVY_STAMP);
+    if (Date.now() - st.mtimeMs < interval) return false;
+  } catch { /* no stamp yet */ }
+  try { fs.mkdirSync(path.dirname(HEAVY_STAMP), { recursive: true }); fs.writeFileSync(HEAVY_STAMP, new Date().toISOString()); } catch { /* fail-soft */ }
+  return true;
+}
+const HEAVY = heavySyncDue();
 
 let dreamingEnabled = false;
 
@@ -53,42 +66,15 @@ try {
 
     dreamingEnabled = !!state.dreaming.dreaming_enabled;
 
-    // Verify フェーズで必須 SubAgent が起動されたかを検証する。
-    // qa / security-reviewer / e2e-runner のいずれも当該セッションで呼ばれていない場合は警告。
-    try {
-      const exec = state.execution || {};
-      const phase = exec.phase;
-      if (phase === "Verify") {
-        const sessionStart = exec.current_session_start_at;
-        const agentHist = ((state.learning || {}).usage_history || {}).agents || {};
-        const required = ["qa", "security-reviewer", "e2e-runner"];
-        const startMs = sessionStart ? Date.parse(sessionStart) : 0;
-        const launched = required.filter((k) => {
-          const last = agentHist[k] && agentHist[k].last_used;
-          return last && Date.parse(last) >= startMs;
-        });
-        if (launched.length === 0) {
-          state.warnings = state.warnings || [];
-          state.warnings.push({
-            at: new Date().toISOString(),
-            kind: "verify_subagent_missing",
-            message: "Verify フェーズで qa / security-reviewer / e2e-runner SubAgent が一度も起動されませんでした。STABLE 判定の必要条件を満たしていない可能性があります。",
-            phase,
-            required,
-          });
-          log("[SessionEnd][WARN] Verify phase ended without required SubAgent invocation");
-        }
-      }
-    } catch (verifyErr) {
-      console.error(`[SessionEnd] verify-subagent-check failed: ${verifyErr.message}`);
-    }
+    // v10: 旧 "verify_subagent_missing" 判定 (qa / security-reviewer / e2e-runner の起動確認) は
+    // 当該 agent が Claude Code に読み込まれない (.claude/agents 不在) ため phantom 判定となっていたので削除。
 
     // Quality gate: lint / coverage の閾値違反を state.warnings へ追記する。
     try {
       const qg = require("./quality-gate-check.js");
       const breaches = qg.evaluate(process.cwd(), state);
       if (qg.appendWarnings(state, breaches)) {
-        log(`[SessionEnd][WARN] Quality gates breached: ${breaches.map(b => b.gate).join(", ")}`);
+        console.log(`[SessionEnd][WARN] Quality gates breached: ${breaches.map(b => b.gate).join(", ")}`);
       }
     } catch (qgErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] quality-gate skipped: ${qgErr.message}`);
@@ -101,11 +87,54 @@ try {
         const script = path.join(process.cwd(), "scripts", "release", "generate-deploy-runbook.js");
         if (fs.existsSync(script)) {
           const r = spawnSync(process.execPath, [script], { cwd: process.cwd(), encoding: "utf8" });
-          if (r.status === 0) log("[SessionEnd] deploy runbook generated (reports/deploy-runbook.md)");
+          if (r.status === 0) console.log("[SessionEnd] deploy runbook generated (reports/deploy-runbook.md)");
         }
       }
     } catch (drErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] deploy-runbook skipped: ${drErr.message}`);
+    }
+
+    // CMDB スキャン: Monitor フェーズ末尾で構成アイテムの差分を記録。
+    if (HEAVY) try {
+      const phase = (state.execution || {}).phase;
+      const cmdbScript = path.join(process.cwd(), "scripts", "tools", "run-cmdb-scan.js");
+      if (fs.existsSync(cmdbScript) && (phase === "Monitor" || !phase)) {
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, [cmdbScript], { cwd: process.cwd(), encoding: "utf8", timeout: 20000 });
+        if (r.stdout) console.log(r.stdout.split("\n").slice(-3).map(l => `[CMDB] ${l}`).join("\n"));
+      }
+    } catch (cmdbErr) {
+      if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] cmdb-scan skipped: ${cmdbErr.message}`);
+    }
+
+    // Audit スキャン: Verify フェーズ末尾で変更証跡を収集。
+    if (HEAVY) try {
+      const phase = (state.execution || {}).phase;
+      const auditScript = path.join(process.cwd(), "scripts", "tools", "run-audit-scan.js");
+      if (fs.existsSync(auditScript) && phase === "Verify") {
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, [auditScript], { cwd: process.cwd(), encoding: "utf8", timeout: 30000 });
+        const lastLines = (r.stdout || "").split("\n").filter(Boolean).slice(-4);
+        lastLines.forEach(l => console.log(`[Audit] ${l}`));
+        if (r.status !== 0) {
+          state.warnings = state.warnings || [];
+          state.warnings.push({ at: new Date().toISOString(), kind: "audit_fail", message: "Audit スキャンで FAIL 項目が検出されました。reports/audit/ を確認してください。" });
+        }
+      }
+    } catch (auditErr) {
+      if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] audit-scan skipped: ${auditErr.message}`);
+    }
+
+    // GitHub Projects 同期: completed_issues / blocked_issues のラベルを自動更新。
+    if (HEAVY) try {
+      const syncScript = path.join(process.cwd(), "scripts", "tools", "sync-github-projects.js");
+      if (fs.existsSync(syncScript)) {
+        const { spawnSync } = require("child_process");
+        const r = spawnSync(process.execPath, [syncScript], { cwd: process.cwd(), encoding: "utf8", timeout: 30000 });
+        if (r.stdout) console.log(r.stdout.trim().split("\n").map(l => `[Projects] ${l}`).join("\n"));
+      }
+    } catch (projErr) {
+      if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] projects-sync skipped: ${projErr.message}`);
     }
 
     // TDD coverage scan: 直近の変更ファイルに対応テストが無ければ warning 追加。
@@ -121,7 +150,7 @@ try {
           files: untested.slice(0, 30),
           truncated: untested.length > 30,
         });
-        log(`[SessionEnd][WARN] tdd_required: ${untested.length} untested file(s)`);
+        console.log(`[SessionEnd][WARN] tdd_required: ${untested.length} untested file(s)`);
       }
     } catch (tddErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] tdd-scan skipped: ${tddErr.message}`);
@@ -143,7 +172,7 @@ try {
         const entry = { at: new Date().toISOString(), summary: summary.slice(0, 200) };
         state.learning.success_patterns.unshift(entry);
         if (state.learning.success_patterns.length > 20) state.learning.success_patterns.length = 20;
-        log("[SessionEnd][Learning] success_pattern recorded");
+        console.log("[SessionEnd][Learning] success_pattern recorded");
       } else if (blockedCount > 0 || warnings.some(w => w.kind === "verify_subagent_missing")) {
         // 失敗パターン: blocked_issues / verify warning を記録
         const reasons = [
@@ -153,7 +182,36 @@ try {
         const entry = { at: new Date().toISOString(), reasons, summary: summary.slice(0, 200) };
         state.learning.failure_patterns.unshift(entry);
         if (state.learning.failure_patterns.length > 20) state.learning.failure_patterns.length = 20;
-        log(`[SessionEnd][Learning] failure_pattern recorded (reasons: ${reasons.join(", ")})`);
+        console.log(`[SessionEnd][Learning] failure_pattern recorded (reasons: ${reasons.join(", ")})`);
+
+        // ④ negative_patterns: Blocked が 2 回以上発生したパターンを reasoning-bank に書き込む
+        try {
+          const rbMod    = require("./reasoning-bank.js");
+          const dataDir  = path.join(__dirname, "..", "..", "data");
+          const bank     = rbMod.loadBank(dataDir);
+          const projectName = path.basename(process.cwd());
+          const negText  = reasons.join(" / ");
+          const existing = (bank.negative_patterns || []).find(
+            n => n.project === projectName && rbMod.detectProblemPattern(n.pattern) === rbMod.detectProblemPattern(negText)
+          );
+          if (existing) {
+            existing.failure_count = (existing.failure_count || 1) + 1;
+            existing.last_seen = new Date().toISOString();
+            // 2 回以上の場合は採用禁止フラグを立てる
+            if (existing.failure_count >= 2) existing.prohibited = true;
+          } else {
+            bank.negative_patterns = bank.negative_patterns || [];
+            bank.negative_patterns.push({
+              project: projectName, pattern: negText.slice(0, 150),
+              failure_count: 1, prohibited: false, last_seen: new Date().toISOString(),
+            });
+          }
+          if (bank.negative_patterns.length > 50) bank.negative_patterns = bank.negative_patterns.slice(-50);
+          rbMod.saveBank(dataDir, bank);
+          console.log(`[ReasoningBank] negative_pattern recorded: ${negText.slice(0, 60)}`);
+        } catch (negErr) {
+          if (process.env.CLAUDEOS_DEBUG) console.error(`[ReasoningBank] negative_pattern write failed: ${negErr.message}`);
+        }
       }
     } catch (learnErr) {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] learning-record skipped: ${learnErr.message}`);
@@ -161,7 +219,7 @@ try {
 
     // measure-kpi: セッション終了前に KPI を同期収集して state.json.metrics を更新。
     // GitHub CLI (gh) が利用可能な場合のみ実行し、失敗してもブロックしない。
-    try {
+    if (HEAVY) try {
       // このプロジェクト: scripts/tools/、他プロジェクト（テンプレ展開後）: .claude/claudeos/scripts/tools/
       const kpiScript = [
         path.join(process.cwd(), "scripts", "tools", "measure-kpi.js"),
@@ -170,7 +228,7 @@ try {
       if (kpiScript) {
         const { spawnSync } = require("child_process");
         const r = spawnSync(process.execPath, [kpiScript], { cwd: process.cwd(), encoding: "utf8", timeout: 30000 });
-        if (r.stdout && r.stdout.trim()) log(r.stdout.trim());
+        if (r.stdout && r.stdout.trim()) console.log(r.stdout.trim());
         // measure-kpi は独自に state.json を atomic 更新するため、
         // ここでは最新の metrics だけ再取得してマージする
         const refreshed = readJson(STATE_FILE);
@@ -181,7 +239,46 @@ try {
     }
 
     writeJsonAtomic(STATE_FILE, state);
-    log("[SessionEnd] state.json updated (last_stop_at + learning recorded)");
+    console.log("[SessionEnd] state.json updated (last_stop_at + learning recorded)");
+
+    // ① Trust Ledger: stable_achievements をセッション終了時に更新（formula 完全版）
+    // GitHub Actions の trust-score-update.yml は CI runs のみ追跡するため
+    // stable_bonus (30%) の反映にはこの hook からの書き込みが必要。
+    try {
+      const stableAchieved = !!((state.stable || {}).stable_achieved);
+      const tsFile = path.join(process.cwd(), ".claude", "claudeos", "data", "trust-score.json");
+      const ts = readJson(tsFile) || {
+        schema_version: "1.0", score: 0.0, level: 1, auto_merge_enabled: false, history: {}
+      };
+      const h = ts.history || {};
+      h.total_sessions     = (h.total_sessions     || 0) + 1;
+      h.stable_achievements = stableAchieved ? (h.stable_achievements || 0) + 1 : (h.stable_achievements || 0);
+      h.last_updated        = new Date().toISOString();
+      ts.history = h;
+
+      // 完全版 formula（trust-ledger.md 準拠）
+      const total    = h.total_ci_runs        || 0;
+      const success  = h.successful_ci_runs   || 0;
+      const streak   = h.ci_success_streak    || 0;
+      const blocked  = h.blocked_events       || 0;
+      const stableN  = h.stable_achievements  || 0;
+      const sessN    = Math.max(h.total_sessions || 1, 1);
+
+      const base_score    = total > 0 ? (success / total) * 0.5 : 0;
+      const stable_bonus  = (stableN / sessN) * 0.3;
+      const streak_bonus  = Math.min(streak / 10, 1.0) * 0.1;
+      const block_penalty = Math.min(blocked * 0.05, 0.2);
+      const score = Math.max(0, Math.min(1, base_score + stable_bonus + streak_bonus - block_penalty));
+
+      ts.score              = Math.round(score * 10000) / 10000;
+      ts.level              = score >= 0.87 ? 3 : score >= 0.75 ? 2 : 1;
+      ts.auto_merge_enabled = score >= 0.75;
+      ts.updated_at         = h.last_updated;
+      writeJsonAtomic(tsFile, ts);
+      console.log(`[TrustLedger] sess=${h.total_sessions} stable=${stableN} score=${ts.score.toFixed(4)} level=${ts.level}`);
+    } catch (tsErr) {
+      if (process.env.CLAUDEOS_DEBUG) console.error(`[TrustLedger] update failed: ${tsErr.message}`);
+    }
 
     // Webhook: session_end イベントを外部へ通知（detached spawn）
     try {
@@ -201,7 +298,7 @@ try {
       }
     } catch { /* fail-soft */ }
   } else {
-    log("[SessionEnd] state.json not found — skip");
+    console.log("[SessionEnd] state.json not found — skip");
   }
 } catch (err) {
   console.error(`[SessionEnd] state update failed: ${err.message}`);
@@ -224,7 +321,20 @@ try {
       rb.pruneBank(bank);
       rb.saveBank(dataDir, bank);
       const sonaUpdated = bank.entries.filter(e => e.id !== entry.id).length;
-      log(`[ReasoningBank] Saved: ${entry.id} conf=${entry.confidence.toFixed(2)} tags=[${entry.tags.join(",")}] | SONA updated ${sonaUpdated} existing entries`);
+      console.log(`[ReasoningBank] Saved: ${entry.id} conf=${entry.confidence.toFixed(2)} tags=[${entry.tags.join(",")}] | SONA updated ${sonaUpdated} existing entries`);
+
+      // Cross-project: グローバルバンクにも同じエントリを書き込む
+      try {
+        const globalBank = rb.loadGlobalBank();
+        rb.updateSONAWeights(globalBank, projectName, entry.tags, entry.stable_achieved);
+        rb.upsertEntry(globalBank, entry);
+        rb.pruneGlobalBank(globalBank);
+        rb.saveGlobalBank(globalBank);
+        const globalCount = globalBank.entries.length;
+        console.log(`[ReasoningBank] Global bank updated: ${globalCount} entries total`);
+      } catch (globalErr) {
+        if (process.env.CLAUDEOS_DEBUG) console.error(`[ReasoningBank] Global bank write failed: ${globalErr.message}`);
+      }
     } else {
       // 低信頼でも既存エントリの時間減衰だけは実行する
       const stateRBStab = (stateRB.stable || {});
@@ -233,7 +343,7 @@ try {
       rb.updateSONAWeights(bank, path.basename(process.cwd()), fallbackTags, !!stateRBStab.stable_achieved);
       rb.pruneBank(bank);
       rb.saveBank(dataDir, bank);
-      log("[ReasoningBank] Entry skipped (confidence < 0.30 or no summary) | SONA decay applied");
+      console.log("[ReasoningBank] Entry skipped (confidence < 0.30 or no summary) | SONA decay applied");
     }
   }
 } catch (rbErr) {
@@ -256,7 +366,7 @@ try {
 if (dreamingEnabled) {
   try {
     const { spawn } = require("child_process");
-    const runner = path.join(__dirname, "dreaming-runner.js");
+    const runner = path.join(__dirname, "..", "tools", "dreaming", "dreaming-runner.js");
     if (fs.existsSync(runner)) {
       const child = spawn(process.execPath, [runner], {
         detached: true,
@@ -264,45 +374,11 @@ if (dreamingEnabled) {
         cwd: process.cwd(),
       });
       child.unref(); // 親プロセスの終了をブロックしない
-      log("[SessionEnd] Dreaming runner spawned (background)");
+      console.log("[SessionEnd] Dreaming runner spawned (background)");
     }
   } catch (spawnErr) {
     console.error(`[SessionEnd] Dreaming spawn failed: ${spawnErr.message}`);
   }
 }
-
-// Stop hook 出力 (2.1.163+): hookSpecificOutput.additionalContext で終了処理チェック結果を
-// Claude のコンテキストへ渡す。stdout はこの JSON 1 行のみ (進行ログは stderr 済み)。
-// 旧バージョンの Claude Code は未知フィールドを無視するため後方互換。
-try {
-  const notes = [];
-  const finalState = readJson(STATE_FILE);
-  if (finalState) {
-    for (const w of (finalState.warnings || []).slice(-5)) {
-      notes.push(`⚠️ warning(${w.kind}): ${String(w.message || "").slice(0, 120)}`);
-    }
-    const blockedCount = (finalState.blocked_issues || []).length;
-    if (blockedCount > 0) notes.push(`🚫 blocked_issues: ${blockedCount} 件`);
-  } else {
-    notes.push("ℹ️ state.json なし (終了処理は未記録)");
-  }
-  try {
-    const { execFileSync } = require("child_process");
-    const dirty = execFileSync("git", ["status", "--porcelain"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (dirty) {
-      notes.push(`📝 未コミット変更: ${dirty.split("\n").length} ファイル (5h 終了処理の commit/push を確認)`);
-    }
-  } catch { /* git なし / 非リポジトリは無視 */ }
-
-  const additionalContext = notes.length > 0
-    ? `[SessionEnd] 終了処理チェック:\n${notes.join("\n")}`
-    : "[SessionEnd] 終了処理チェック: ✅ 問題なし (warnings / blocked_issues / 未コミット変更なし)";
-  process.stdout.write(JSON.stringify({
-    hookSpecificOutput: { hookEventName: "Stop", additionalContext },
-  }) + "\n");
-} catch { /* fail-soft: JSON 出力に失敗しても hook はブロックしない */ }
 
 process.exit(0);

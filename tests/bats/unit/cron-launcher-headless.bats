@@ -180,15 +180,16 @@ _seed_state() {
 #   tmux 無効フォールバック (従来の TTY なし claude 直起動) を決定論的に観測する。
 #   レガシー経路の指標 --dangerously-skip-permissions が付き、headless の stream-json は
 #   付かないことを表明する (段階移行の安全性: 退避経路が生きている)。
-@test "回帰: CLAUDEOS_HEADLESS=0 + tmux 無効は従来の skip-permissions 直起動へ退避する" {
+@test "回帰: CLAUDEOS_HEADLESS=0 + tmux 無効は auto mode の TUI 直起動へ退避する (v10)" {
   _seed_state ""
   run env CLAUDEOS_HEADLESS=0 CLAUDEOS_TMUX=0 bash "$CRON_LAUNCHER" Demo 1
   [ "$status" -eq 0 ]
   # 従来 TUI 経路でも claude は確かに起動される (積極表明)
   [ -f "$CLAUDE_ARGV" ]
   run cat "$CLAUDE_ARGV"
-  # レガシー経路の指標: skip-permissions が付き、headless の stream-json は付かない
-  [[ "$output" == *"--dangerously-skip-permissions"* ]]
+  # v10: TUI 退避経路も既定は auto mode (skip-permissions は CLAUDEOS_TUI_SKIP_PERMS=1 のみ)。headless の stream-json は付かない
+  [[ "$output" == *"--permission-mode"* ]]
+  [[ "$output" != *"--dangerously-skip-permissions"* ]]
   [[ "$output" != *"--output-format"* ]]
   [[ "$output" != *"stream-json"* ]]
 }
@@ -334,4 +335,12 @@ _seed_state() {
   [ "$(cat "$costf")" = "1.25" ]
   [[ "$output" == *"🟢 init"* ]]
   [[ "$output" == *"🏁 result"* ]]
+}
+
+@test "v10: CLAUDEOS_HEADLESS=0 + CLAUDEOS_TUI_SKIP_PERMS=1 でのみ TUI 退避が skip-permissions を付ける" {
+  _seed_state ""
+  run env CLAUDEOS_HEADLESS=0 CLAUDEOS_TMUX=0 CLAUDEOS_TUI_SKIP_PERMS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  run cat "$CLAUDE_ARGV"
+  [[ "$output" == *"--dangerously-skip-permissions"* ]]
 }

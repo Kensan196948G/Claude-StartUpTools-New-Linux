@@ -49,21 +49,7 @@
         ]
       }
     ],
-    "SessionStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/claudeos/scripts/hooks/session-start.js"
-          },
-          {
-            "type": "command",
-            "command": "node .claude/claudeos/scripts/hooks/verify-goal-set.js"
-          }
-        ]
-      }
-    ],
+    "SessionStart": [],
     "Stop": [
       {
         "hooks": [

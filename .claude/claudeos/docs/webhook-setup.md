@@ -182,4 +182,4 @@ Slack Incoming Webhook URL の取得:
 | `scripts/hooks/webhook-notifier.js` | 通知コア（Teams / HTTPS / Slack） |
 | `scripts/hooks/notify-stable.js` | STABLE / Blocked イベント → webhook 呼び出し |
 | `scripts/hooks/session-end.js` | session_end イベント → webhook 呼び出し |
-| `scripts/hooks/dreaming-runner.js` | dream_complete イベント → webhook 呼び出し |
+| `scripts/tools/dreaming/dreaming-runner.js` | dream_complete イベント → webhook 呼び出し |

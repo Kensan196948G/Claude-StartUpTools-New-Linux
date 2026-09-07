@@ -424,15 +424,21 @@ if [[ "${CLAUDEOS_HEADLESS:-1}" == "1" ]]; then
   export CLAUDE_ENABLE_STREAM_WATCHDOG="${CLAUDE_ENABLE_STREAM_WATCHDOG:-1}"
 
   # headless 課金経路の env プレフィックス (空配列= api-key 系統そのまま)
-  _HL_AUTH=()
+  # v10 §8: SMTP 資格情報は claude 環境へ渡さない (メール送信は finalize が同一 shell で行う)
+  _HL_AUTH=( env -u CLAUDEOS_SMTP_USER -u CLAUDEOS_SMTP_PASS )
   if [[ "${CLAUDEOS_HEADLESS_AUTH:-subscription}" != "api-key" ]]; then
-    _HL_AUTH=( env -u ANTHROPIC_API_KEY )
+    _HL_AUTH+=( -u ANTHROPIC_API_KEY )
   fi
   # 権限モード: auto (既定) / dangerously-skip-permissions (CLAUDEOS_HEADLESS_SKIP_PERMS=1 opt-in)
   if [[ "${CLAUDEOS_HEADLESS_SKIP_PERMS:-0}" == "1" ]]; then
     _HL_PERM=( --dangerously-skip-permissions )
   else
     _HL_PERM=( --permission-mode auto )
+    # v10 §8: 無人実行では permission prompt を待たず fail-closed で拒否する
+    # (--permission-prompts none, claude 2.1.259+。Capability Detection: --help に flag があれば付与)
+    if claude --help 2>/dev/null | grep -q -- '--permission-prompts'; then
+      _HL_PERM+=( --permission-prompts none )
+    fi
   fi
 
   # Model routing: Opus 5 default (high-risk=xhigh / normal=high). Sonnet 5=max on explicit opt-in only.
@@ -506,6 +512,9 @@ PYEOF
 # ---- 従来の対話 TUI 経路 (明示フォールバック) ----
 else
 _TUI_MODEL_ARGS=""
+# v10 §8: TUI 退避経路も既定は auto mode。CLAUDEOS_TUI_SKIP_PERMS=1 でのみ skip-permissions (緊急用)。
+_TUI_PERM_ARGS="--permission-mode auto"
+[[ "${CLAUDEOS_TUI_SKIP_PERMS:-0}" == "1" ]] && _TUI_PERM_ARGS="--dangerously-skip-permissions"
 if declare -F model_router__select >/dev/null 2>&1; then
   _TUI_TASK="${CLAUDEOS_MODEL_TASK:-$RESUME_GOAL_TYPE}"
   model_router__select "$_TUI_TASK"
@@ -529,10 +538,10 @@ _name_args=()
 if [[ -f "$_prompt_file" ]] && [[ -s "$_prompt_file" ]]; then
   _prompt_content="$(cat "$_prompt_file")"
   # shellcheck disable=SC2086 # _model_args is generated with shell quoting.
-  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args "${_name_args[@]}" --dangerously-skip-permissions "$_prompt_content" || claude_exit=$?
+  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" env -u CLAUDEOS_SMTP_USER -u CLAUDEOS_SMTP_PASS claude $_model_args "${_name_args[@]}" ${_CLAUDEOS_TUI_PERM:---permission-mode auto} "$_prompt_content" || claude_exit=$?
 else
   # shellcheck disable=SC2086 # _model_args is generated with shell quoting.
-  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" claude $_model_args "${_name_args[@]}" --dangerously-skip-permissions || claude_exit=$?
+  timeout --foreground "${_CLAUDEOS_DURATION_SEC}s" env -u CLAUDEOS_SMTP_USER -u CLAUDEOS_SMTP_PASS claude $_model_args "${_name_args[@]}" ${_CLAUDEOS_TUI_PERM:---permission-mode auto} || claude_exit=$?
 fi
 echo "$claude_exit" > "${_CLAUDEOS_EXIT_FILE}"
 # 終了コード書き込み後に親 shell へ通知（失敗時もここまで必ず到達する）
@@ -567,6 +576,7 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
     -e "_CLAUDEOS_TMUX_DONE=$_TMUX_DONE" \
     -e "_CLAUDEOS_PROMPT_FILE=$PROMPT_FILE" \
     -e "_CLAUDEOS_MODEL_ARGS=$_TUI_MODEL_ARGS" \
+    -e "_CLAUDEOS_TUI_PERM=$_TUI_PERM_ARGS" \
     -e "_CLAUDEOS_SESSION_NAME=$CLAUDE_SESSION_NAME" \
     "$CLAUDE_WRAPPER" 2>>"$LOG_FILE"
   # セッション監視用メタデータ (best-effort)。
@@ -593,7 +603,8 @@ if command -v tmux >/dev/null 2>&1 && [[ "${CLAUDEOS_TMUX:-0}" == "1" ]]; then
 else
   # tmux 無効時は TTY なし直実行。既定ではここも tmux を使わない。
   # shellcheck disable=SC2086 # _TUI_MODEL_ARGS is generated with shell quoting.
-  timeout --foreground "${DURATION_SEC}s" claude $_TUI_MODEL_ARGS "${_NAME_ARGS[@]}" --dangerously-skip-permissions ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
+  # shellcheck disable=SC2086 # _TUI_PERM_ARGS is a generated flag list.
+  timeout --foreground "${DURATION_SEC}s" env -u CLAUDEOS_SMTP_USER -u CLAUDEOS_SMTP_PASS claude $_TUI_MODEL_ARGS "${_NAME_ARGS[@]}" $_TUI_PERM_ARGS ${PROMPT_ARG:+"$PROMPT_ARG"} >> "$LOG_FILE" 2>&1
 fi
 fi  # CLAUDEOS_HEADLESS 分岐の終端
 

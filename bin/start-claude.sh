@@ -375,8 +375,14 @@ main() {
   # tmux_run が起動する終了レポート watcher (setsid 子プロセス) へ継承させる。
   # テストは CCSU_SKIP_ENV_FILE=1 でスキップ。
   if [[ "${CCSU_SKIP_ENV_FILE:-0}" != "1" && -f "$HOME/.env-claudeos" ]]; then
-    # shellcheck disable=SC1091
-    set -a; source "$HOME/.env-claudeos"; set +a
+    # v10 §8: 秘密 (SMTP パスワード等 *PASS*/*SECRET*/*TOKEN*/*KEY*) は claude プロセス環境へ渡さない。
+    # 非秘密の CLAUDEOS_* だけを export し、メール送信は tmux__send_report が自前で再読込する。
+    local _kv
+    while IFS= read -r _kv; do export "$_kv"; done < <(
+      bash -c 'set -a; source "$HOME/.env-claudeos" >/dev/null 2>&1; env' \
+        | grep -E '^CLAUDEOS_[A-Z0-9_]+=' \
+        | grep -vE '^CLAUDEOS_[A-Z0-9_]*(PASS|PASSWORD|SECRET|TOKEN|KEY)[A-Z0-9_]*=' || true
+    )
   fi
 
   [[ -z "$project" ]] && project="$(launcher__select_project)"

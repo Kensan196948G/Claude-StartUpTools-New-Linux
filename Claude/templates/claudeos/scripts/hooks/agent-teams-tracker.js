@@ -5,7 +5,7 @@
 // v2.1.178 対応: TeamCreate / TeamDelete ツールは廃止された。セッション全体が
 // 暗黙の 1 チームとなり、teammate は Agent ツールの name パラメータ付き呼び出しで
 // 起動される。本 hook は Agent(name 付き) を teammate spawn として記録する。
-// TeamCreate 分岐は旧 CLI 後方互換のため残置。
+// v10: TeamCreate 分岐は削除 (ツール自体が廃止済み)。
 //
 // 設計方針:
 //  - experimental API のため tool_input の構造変化に強い fail-soft 設計
@@ -71,7 +71,7 @@ function main() {
   const toolInput = input.tool_input || input.toolInput || (input.tool && input.tool.input) || {};
 
   // 対象 tool でなければ何もしない
-  if (toolName !== "TeamCreate" && toolName !== "SendMessage" && toolName !== "Agent") {
+  if (toolName !== "SendMessage" && toolName !== "Agent") {  // v10: TeamCreate は v2.1.178 で廃止
     process.exit(0);
   }
   // Agent は name パラメータ付き (= teammate spawn) のみ対象。
@@ -127,25 +127,7 @@ function main() {
   const cur = state.agent_teams_usage.current_session;
   const now = new Date().toISOString();
 
-  if (toolName === "TeamCreate") {
-    cur.team_create_count = (cur.team_create_count || 0) + 1;
-    const teamName  = toolInput.name || toolInput.team_name || "(unnamed)";
-    const teammates = Array.isArray(toolInput.teammates) ? toolInput.teammates : [];
-    teammates.forEach((tm) => {
-      const entry = {
-        team:           teamName,
-        name:           tm.name || tm.subagent_type || "(unknown)",
-        subagent_type:  tm.subagent_type || tm.agent || "",
-        spawned_at:     now,
-      };
-      cur.teammates.push(entry);
-    });
-    const pattern = estimatePattern(state.phase || state.execution?.phase);
-    if (pattern && !cur.patterns_used.includes(pattern)) {
-      cur.patterns_used.push(pattern);
-    }
-    console.log(`[agent-teams-tracker] TeamCreate recorded: team="${teamName}" teammates=${teammates.length} pattern=${pattern || "n/a"}`);
-  } else if (toolName === "Agent") {
+  if (toolName === "Agent") {
     // v2.1.178+: 暗黙 1 チームへの named teammate spawn
     cur.teammate_spawn_count = (cur.teammate_spawn_count || 0) + 1;
     cur.teammates.push({

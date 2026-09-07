@@ -30,12 +30,10 @@ function send(channel, title, body) {
   // execFileSync を使い shell 解釈を回避する (Windows / Linux 共通の安全策)。
   // CLI が無い場合は console.log に fallback する。
   try {
-    execFileSync(
-      "claude",
-      ["push-notify", "--title", title, "--body", body],
-      { stdio: "ignore", timeout: 5000 }
-    );
-    return true;
+    // v10: `claude push-notify` は Claude Code 2.1.263 に存在しない (claude --help で検証済み)。
+    // ネイティブ通知は settings (agentPushNotifEnabled / preferredNotifChannel) と Notification hook に委ね、
+    // ここでは stderr と webhook (state.webhook) のみに送る。
+    throw new Error("push-notify unavailable (v10)");
   } catch {
     console.log(`[Notify:${channel}] ${title} — ${body}`);
     return false;
