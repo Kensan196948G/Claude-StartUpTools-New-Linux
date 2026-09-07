@@ -1,4 +1,4 @@
-﻿---
+---
 name: database-reviewer
 description: スキーマ、インデックス、クエリ、整合性、マイグレーション安全性を確認する DB レビュー担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

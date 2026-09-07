@@ -1,4 +1,4 @@
-﻿---
+---
 name: cpp-reviewer
 description: C++ コードの設計、所有権、例外安全、ビルド構成、保守性を確認するレビュー担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

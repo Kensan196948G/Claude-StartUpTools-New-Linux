@@ -1,4 +1,4 @@
-﻿# DevAPI Agent
+# DevAPI Agent
 
 Backend development agent.
 

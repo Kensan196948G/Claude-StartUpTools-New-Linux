@@ -113,12 +113,24 @@ template_sync__apply() {
     fi
   done
 
+  # v10: path-scoped rules (.claude/rules/*.md) を copy-if-missing で配布する。
+  local rule src_rule dst_rule
+  for src_rule in "$tmpl_dir"/rules/*.md; do
+    [[ -f "$src_rule" ]] || continue
+    rule="$(basename "$src_rule")"
+    dst_rule="$project_dir/.claude/rules/$rule"
+    if [[ ! -f "$dst_rule" ]]; then
+      mkdir -p "$project_dir/.claude/rules"
+      cp "$src_rule" "$dst_rule"
+      log_info "📄 rule 配布: $dst_rule"
+    fi
+  done
+
   # ClaudeCode skills: 検証ループ skill を starter として配布する。
   # スキル自動発見の条件は <name>/SKILL.md 形式 (flat .md は認識されない)。
   # 既存同名 skill はプロジェクト側カスタマイズとして保護し、上書きしない。
   local skill src_skill dst_skill
-  # shellcheck disable=SC2043  # 配布リストは今後増える前提の単一要素
-  for skill in verify-app; do
+  for skill in verify-app agent-router release-flow approval-pr final-report improver sdlc-scale pg-ops; do
     src_skill="$tmpl_dir/skills/${skill}/SKILL.md"
     [[ -f "$src_skill" ]] || continue
     dst_skill="$project_dir/.claude/skills/${skill}/SKILL.md"

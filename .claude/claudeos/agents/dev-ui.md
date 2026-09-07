@@ -1,4 +1,4 @@
-﻿# DevUI Agent
+# DevUI Agent
 
 Frontend/UI implementation.
 

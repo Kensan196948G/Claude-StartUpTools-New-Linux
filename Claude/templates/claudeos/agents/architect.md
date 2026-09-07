@@ -1,4 +1,4 @@
-﻿---
+---
 name: architect
 description: システム設計、責務分離、依存性、API 境界、長期保守性を判断する設計担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

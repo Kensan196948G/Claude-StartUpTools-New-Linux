@@ -1,4 +1,4 @@
-﻿---
+---
 name: orchestrator
 description: Agent Teams全体を調整し、Monitor→Build→Verify→Improveのループを制御するオーケストレーター。STABLE判定の最終確認と各エージェントへの委任を管理する。
 tools: Read, Write, Edit, Bash, Grep, Glob

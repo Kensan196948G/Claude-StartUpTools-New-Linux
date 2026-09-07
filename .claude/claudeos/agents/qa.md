@@ -1,4 +1,4 @@
-﻿# QA Agent
+# QA Agent
 
 Quality analysis and bug detection.
 

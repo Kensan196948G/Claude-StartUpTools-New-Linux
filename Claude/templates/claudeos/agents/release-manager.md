@@ -1,4 +1,4 @@
-﻿---
+---
 name: release-manager
 description: リリース条件、変更履歴、デプロイ前確認、ロールバック観点を整理する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

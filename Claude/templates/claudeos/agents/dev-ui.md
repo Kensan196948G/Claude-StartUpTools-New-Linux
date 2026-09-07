@@ -1,4 +1,4 @@
-﻿---
+---
 name: dev-ui
 description: フロントエンド/UI実装担当。UI設計・実装・UX改善・API連携を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob

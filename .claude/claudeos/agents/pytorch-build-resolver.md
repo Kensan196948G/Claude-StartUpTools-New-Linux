@@ -1,4 +1,4 @@
-﻿---
+---
 name: pytorch-build-resolver
 description: PyTorch、CUDA、学習ループ、依存環境、GPU メモリエラーを切り分ける担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

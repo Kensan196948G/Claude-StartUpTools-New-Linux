@@ -1,4 +1,4 @@
-﻿---
+---
 name: dev-api
 description: バックエンド実装担当。API設計・実装・DB設計・ビジネスロジック実装・バグ修正を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob

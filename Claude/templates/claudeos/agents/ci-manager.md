@@ -1,7 +1,8 @@
-﻿---
+---
 name: ci-manager
 description: CI管理・修復担当。CI失敗の原因分析・自動修復・最大15回リトライ制御を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # CIManager

@@ -1,7 +1,8 @@
-﻿---
+---
 name: manager
 description: Issue管理・GitHub Projects同期担当。要件整理・Issue自動生成・Project状態遷移を管理する。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # Manager

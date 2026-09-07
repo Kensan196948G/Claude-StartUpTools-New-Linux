@@ -171,14 +171,14 @@ second
   ' "$REPO_ROOT/Claude/templates/claude/START_PROMPT.md"
   [ "$status" -eq 0 ]
 }
-@test "CLAUDE.md §25 は START_PROMPT.md を参照し /goal 本文を複製しない (context 削減ガード)" {
+@test "CLAUDE.md の統合 /goal 節は START_PROMPT.md を参照し /goal 本文を複製しない (context 削減ガード)" {
   # v10: §25 に 4000 字の /goal 本文を複製するとセッション毎の context を浪費し、
   # START_PROMPT.md との乖離も生むため、§25 は配布元パスへのポインタのみとする。
   run node -e '
     const fs = require("fs");
     const cm = fs.readFileSync(process.argv[1], "utf8");
-    const s25 = cm.split(/^## 25\. /m)[1] || "";
-    const body = s25.split(/^## 26\. /m)[0];
+    const parts = cm.split(/^(?=## \d+\. )/m);
+    const body = parts.find((p) => /^## \d+\. .*\/goal/.test(p)) || "";
     if (!body.includes("Claude/templates/claude/START_PROMPT.md")) { console.error("§25 lacks START_PROMPT.md pointer"); process.exit(1); }
     if (/\/goal "/.test(body)) { console.error("§25 still embeds a /goal block"); process.exit(1); }
     process.exit(0);

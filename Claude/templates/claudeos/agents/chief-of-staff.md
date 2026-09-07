@@ -1,4 +1,4 @@
-﻿---
+---
 name: chief-of-staff
 description: 利害関係者向け要約、報告文、依頼文、引継ぎメモを整えるコミュニケーション担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

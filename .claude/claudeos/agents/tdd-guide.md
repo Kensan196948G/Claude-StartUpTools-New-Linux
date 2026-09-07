@@ -1,4 +1,4 @@
-﻿---
+---
 name: tdd-guide
 description: テスト駆動開発を促進し、失敗するテストから実装へ進める TDD 専門エージェント。
 tools: Read, Write, Edit, Bash, Grep, Glob

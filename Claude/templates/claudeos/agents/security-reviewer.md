@@ -1,7 +1,8 @@
-﻿---
+---
 name: security-reviewer
 description: 脆弱性、認可漏れ、秘密情報漏えい、危険な入力処理を点検するセキュリティレビュー担当。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # Security Reviewer

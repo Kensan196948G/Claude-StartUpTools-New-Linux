@@ -1,4 +1,4 @@
-﻿---
+---
 name: incident-triager
 description: 障害、アラート、緊急不具合の初動切り分けと優先順位付けを行う担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

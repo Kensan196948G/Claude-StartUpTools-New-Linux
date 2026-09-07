@@ -1,4 +1,4 @@
-﻿---
+---
 name: refactor-cleaner
 description: 死んだコード、責務肥大、重複処理、命名不整合を整理するリファクタリング担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

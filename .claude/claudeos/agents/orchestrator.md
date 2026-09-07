@@ -1,4 +1,4 @@
-﻿# Agent Orchestrator
+# Agent Orchestrator
 
 Coordinates Agent Teams.
 

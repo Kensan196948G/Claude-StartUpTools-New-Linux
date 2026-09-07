@@ -1,0 +1,19 @@
+{
+  "_comment": "ClaudeOS v10 Agent Router golden dataset. scripts/agent-router.test.js が deterministic eval として実行する。改善提案 (Improver) はこの eval を悪化させてはならない。",
+  "cases": [
+    { "name": "typo fix in README", "input": { "task_type": "docs", "complexity": "low", "files_affected": 1, "expected_duration_min": 5 }, "expect": { "execution": "Main", "worktree": false } },
+    { "name": "small bug fix, 2 files", "input": { "task_type": "fix", "complexity": "low", "files_affected": 2, "expected_duration_min": 15, "risk": "low" }, "expect": { "execution": "Main", "worktree": false } },
+    { "name": "read-only investigation across module", "input": { "task_type": "investigate", "complexity": "medium", "files_affected": 15, "expected_duration_min": 20, "read_only": true }, "expect": { "execution": "Subagent", "worktree": false } },
+    { "name": "isolated feature, 8 files, 25 min", "input": { "task_type": "feature", "complexity": "medium", "files_affected": 8, "expected_duration_min": 25 }, "expect": { "execution": "Subagent", "worktree": false } },
+    { "name": "long refactor, single stream", "input": { "task_type": "refactor", "complexity": "high", "files_affected": 12, "expected_duration_min": 90 }, "expect": { "execution": "BackgroundAgent", "worktree": true } },
+    { "name": "three independent long features", "input": { "task_type": "feature", "complexity": "high", "files_affected": 30, "expected_duration_min": 60, "parallelism": 3, "shared_files": false }, "expect": { "execution": "AgentView", "worktree": true } },
+    { "name": "competing hypotheses debugging needing debate", "input": { "task_type": "debug", "complexity": "high", "files_affected": 10, "expected_duration_min": 40, "parallelism": 3, "needs_inter_agent_communication": true }, "expect": { "execution": "AgentTeams", "worktree": true } },
+    { "name": "codebase-wide auth audit", "input": { "task_type": "audit", "complexity": "high", "files_affected": 120, "expected_duration_min": 60, "parallelism": 8, "read_only": true }, "expect": { "execution": "DynamicWorkflow" } },
+    { "name": "500-file migration", "input": { "task_type": "migration", "complexity": "high", "files_affected": 500, "expected_duration_min": 180, "parallelism": 10 }, "expect": { "execution": "DynamicWorkflow", "worktree": true } },
+    { "name": "destructive DB migration (high impact)", "input": { "task_type": "migration", "complexity": "medium", "files_affected": 3, "expected_duration_min": 20, "database_impact": "critical", "risk": "high" }, "expect": { "execution": "Main", "worktree": false, "guardrail_contains": "migration-risk" } },
+    { "name": "production deployment change", "input": { "task_type": "deploy", "complexity": "medium", "files_affected": 4, "expected_duration_min": 20, "deployment_impact": "high" }, "expect": { "execution": "Main", "guardrail_contains": "品質ゲート" } },
+    { "name": "security-sensitive auth change, medium size", "input": { "task_type": "feature", "complexity": "medium", "files_affected": 6, "expected_duration_min": 25, "security_impact": "high" }, "expect": { "execution": "Main", "guardrail_contains": "security-reviewer" } },
+    { "name": "communication needed but high risk stays Main", "input": { "task_type": "feature", "complexity": "high", "files_affected": 20, "expected_duration_min": 40, "parallelism": 2, "needs_inter_agent_communication": true, "deployment_impact": "high" }, "expect": { "execution": "Main" } },
+    { "name": "parallel edits on shared files must not fan out to AgentView", "input": { "task_type": "feature", "complexity": "high", "files_affected": 10, "expected_duration_min": 45, "parallelism": 2, "shared_files": true }, "expect": { "execution": "BackgroundAgent", "guardrail_contains": "shared_files" } }
+  ]
+}

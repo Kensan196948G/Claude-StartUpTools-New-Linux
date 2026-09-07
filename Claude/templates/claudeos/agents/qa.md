@@ -1,4 +1,4 @@
-﻿---
+---
 name: qa
 description: テスト設計・品質保証担当。回帰テスト・バグ検出・品質評価を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob

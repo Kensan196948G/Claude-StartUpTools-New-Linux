@@ -1,4 +1,4 @@
-﻿---
+---
 name: go-reviewer
 description: Go の idiom、並行処理、安全性、インターフェース設計をレビューする担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

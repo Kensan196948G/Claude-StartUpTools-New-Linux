@@ -1,4 +1,4 @@
-﻿---
+---
 name: kotlin-reviewer
 description: Kotlin、Android、KMP の設計、null 安全性、非同期処理をレビューする担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

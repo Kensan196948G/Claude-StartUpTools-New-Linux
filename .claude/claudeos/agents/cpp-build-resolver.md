@@ -1,4 +1,4 @@
-﻿---
+---
 name: cpp-build-resolver
 description: C++ のコンパイルエラー、リンクエラー、ABI 差異、CMake 設定不備を解消する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

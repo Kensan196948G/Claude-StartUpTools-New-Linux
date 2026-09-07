@@ -1,4 +1,4 @@
-﻿---
+---
 name: build-error-resolver
 description: 一般的なビルド失敗、型エラー、依存解決エラーを切り分けて修復する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob
