@@ -1,4 +1,4 @@
-﻿---
+---
 name: java-reviewer
 description: Java と Spring Boot の設計、例外処理、トランザクション、保守性を確認する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

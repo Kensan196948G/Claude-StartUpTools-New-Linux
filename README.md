@@ -209,6 +209,22 @@ flowchart TB
   Ask --> A6[🌐 Supervisor全適用の最終実行]
 ```
 
+## 🧬 ClaudeOS v10（Native-Agentic Development OS）
+
+原則: **Claude Code Native 機能 > Thin ClaudeOS Adapter > Custom Implementation**。ClaudeOS は AI 機能を再実装せず、Linux 上で Claude Code を安全・長時間・複数プロジェクトで運用する Control Plane に徹します。
+
+| 領域 | v10 での実装 | 入口 |
+|---|---|---|
+| 🧪 互換性 / Capability Detection | `config/claude-code-compat.json`（minimum 2.1.224 / tested 2.1.263）、`lib/claude-capability.sh` | メニュー `17`、`bash libexec/diag-claude-compat.sh --json` |
+| 🐘 Local PostgreSQL 正本（Neon 廃止） | `lib/postgres.sh`、`bin/pg-ops.sh`（init / backup / verify / restore-drill / freshness / migration-risk / status / units）、systemd backup・drill timer | メニュー `18`、`bin/pg-ops.sh status --json` |
+| 🤖 Lazy Agent Architecture | `config/agent-catalog.json`（first-class 9 体のみ `.claude/agents` へ）、`scripts/tools/agent-router.js` + golden eval | `/agent-router`、`node scripts/tools/agent-router.js --json` |
+| 🧠 Context Engineering | CLAUDE.md 62 行 + `.claude/rules/`（path-scoped）+ 実 skill 8 本 + `.claude/claudeos/policy/` | `/doctor`、`/skill-doctor` |
+| 🔧 Hooks / 権限 | `${CLAUDE_PROJECT_DIR}` 絶対パス、Stop async、deny 強化、`--permission-mode auto --permission-prompts none` | `node --test scripts/hooks-settings.test.js` |
+| 🔁 Self-Improvement / SDLC | `/improver`、`/sdlc-scale`、`.claude/claudeos/sdlc/*.md`、`tests/evals/` | `docs/architecture/SELF_IMPROVEMENT_ARCHITECTURE.md` |
+| 🎛️ Mission Control | 🧬 v10 Platform パネル（PostgreSQL / Capability / native agents / routing / hooks） | `/api/v10` |
+
+設計・移行記録: `docs/architecture/ARCHITECTURE_V10.md` / `MIGRATION_V9_TO_V10.md` / `CURRENT_ARCHITECTURE.md` ほか（`docs/architecture/`）。
+
 ## 🧪 検証
 
 ```bash

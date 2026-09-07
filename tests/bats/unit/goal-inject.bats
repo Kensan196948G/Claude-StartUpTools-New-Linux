@@ -171,14 +171,17 @@ second
   ' "$REPO_ROOT/Claude/templates/claude/START_PROMPT.md"
   [ "$status" -eq 0 ]
 }
-@test "START_PROMPT.md と CLAUDE.md §25 の /goal 本文が一致する" {
+@test "CLAUDE.md の統合 /goal 節は START_PROMPT.md を参照し /goal 本文を複製しない (context 削減ガード)" {
+  # v10: §25 に 4000 字の /goal 本文を複製するとセッション毎の context を浪費し、
+  # START_PROMPT.md との乖離も生むため、§25 は配布元パスへのポインタのみとする。
   run node -e '
     const fs = require("fs");
-    const sp = fs.readFileSync(process.argv[1], "utf8").match(/^\/goal "([\s\S]*)"\s*$/);
-    const cm = fs.readFileSync(process.argv[2], "utf8").match(/```markdown\n\/goal ([\s\S]*?)\n```/);
-    if (!sp) { console.error("START_PROMPT: no /goal block"); process.exit(1); }
-    if (!cm) { console.error("CLAUDE.md: no §25 block"); process.exit(1); }
-    process.exit(sp[1] === cm[1] ? 0 : 1);
-  ' "$REPO_ROOT/Claude/templates/claude/START_PROMPT.md" "$REPO_ROOT/CLAUDE.md"
+    const cm = fs.readFileSync(process.argv[1], "utf8");
+    const parts = cm.split(/^(?=## \d+\. )/m);
+    const body = parts.find((p) => /^## \d+\. .*\/goal/.test(p)) || "";
+    if (!body.includes("Claude/templates/claude/START_PROMPT.md")) { console.error("§25 lacks START_PROMPT.md pointer"); process.exit(1); }
+    if (/\/goal "/.test(body)) { console.error("§25 still embeds a /goal block"); process.exit(1); }
+    process.exit(0);
+  ' "$REPO_ROOT/CLAUDE.md"
   [ "$status" -eq 0 ]
 }

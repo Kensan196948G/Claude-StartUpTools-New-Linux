@@ -1,9 +1,11 @@
-﻿---
+---
 name: outcome-grader
 description: Verify フェーズ末尾で stable-rubric.json の全 criteria を機械的に採点し、
              STABLE 合否を判定する Outcomes 統合グレーダー。人間レビューを介さない
              自己修正ループのトリガーを担う。
 tools: Read, Bash, Grep, Glob
+model: haiku
+disallowedTools: Write, Edit
 ---
 
 # Outcome Grader

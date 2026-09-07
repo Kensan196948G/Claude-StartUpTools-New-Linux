@@ -1,4 +1,4 @@
-﻿---
+---
 name: loop-operator
 description: Monitor、Build、Verify、Improve の自律ループを運用し、止めどきと再開点を管理する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

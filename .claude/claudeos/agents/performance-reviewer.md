@@ -1,4 +1,4 @@
-﻿---
+---
 name: performance-reviewer
 description: 性能観点でコード差分・実装方針をレビューする担当。N+1、不要なシリアライズ、計算量、メモリ使用、I/O 待ちを指摘する。
 tools: Read, Grep, Glob, Bash, WebFetch

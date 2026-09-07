@@ -120,7 +120,7 @@ node -e "const s=require('./state.json'); console.log(JSON.stringify(s.dreaming,
 
 | ファイル | 役割 |
 |----------|------|
-| `scripts/hooks/dreaming-runner.js` | Dream 実行・結果取得の本体 |
+| `scripts/tools/dreaming/dreaming-runner.js` | Dream 実行・結果取得の本体 |
 | `scripts/hooks/session-end.js` | Stop hook — dreaming-runner を spawn |
 | `scripts/hooks/pre-compact.js` | /compact 前に dreaming フィールドを evacuation-latest.json へ転写 |
 | `system/stable-rubric.json` | STABLE 判定基準（Outcomes 統合） |

@@ -1,4 +1,4 @@
-﻿---
+---
 name: rust-build-resolver
 description: Rust のコンパイルエラー、trait 不一致、Cargo 設定問題を解決する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

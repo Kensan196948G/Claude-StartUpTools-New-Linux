@@ -68,7 +68,7 @@ process.stdin.on("end", () => {
         if (errs > 0) {
           console.error(`[PreCommitGate] BLOCKED: lint errors=${errs}`);
           console.error("                Fix errors or set CLAUDEOS_SKIP_PRECOMMIT=1 to bypass");
-          process.exit(1);
+          process.exit(2); // v10: exit 2 = block (exit 1 は非ブロック)
         }
       } catch { /* JSON 壊れ → スルー */ }
     }
@@ -83,7 +83,7 @@ process.stdin.on("end", () => {
           const t = spawnSync("npm", ["run", "--silent", "test:quick"], { cwd, stdio: "inherit", timeout: 120000, shell: process.platform === "win32" });
           if (t.status !== 0) {
             console.error("[PreCommitGate] BLOCKED: test:quick failed");
-            process.exit(1);
+            process.exit(2); // v10: exit 2 = block (exit 1 は非ブロック)
           }
         }
       } catch { /* package.json 壊れ → スルー */ }

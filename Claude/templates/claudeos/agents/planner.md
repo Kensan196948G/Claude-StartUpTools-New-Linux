@@ -1,4 +1,4 @@
-﻿---
+---
 name: planner
 description: 機能追加、改修、移行、調査タスクの実装計画を分解し、依存関係と成功条件を整理する計画担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stop hook (ClaudeOS v9.0)
+// Stop hook (ClaudeOS v10: async + heavy-sync throttle)
 // セッション終了時に state.json を最終更新し、続けて notify-stable を同期実行する。
 // v9.0: learning パターン記録（成功/失敗パターンを state.learning へ追記）を追加。
 // 並列実行による state.json への race condition を避けるため、両者は単一 hook エントリに統合する。
@@ -28,6 +28,23 @@ function writeJsonAtomic(file, data) {
   fs.renameSync(tmp, file);
 }
 
+
+// v10: 重い同期処理 (gh を伴う KPI / Projects 同期 / CMDB / Audit) は毎ターン (Stop) ではなく
+// CLAUDEOS_HEAVY_SYNC_INTERVAL_SEC (既定 900 秒) に 1 回だけ実行する。Stop hook は settings で async にする。
+const HEAVY_STAMP = path.join(process.cwd(), ".claude", "claudeos", "data", ".heavy-sync.stamp");
+function heavySyncDue() {
+  if (process.env.CLAUDEOS_HEAVY_SYNC === "0") return false;
+  if (process.env.CLAUDEOS_HEAVY_SYNC === "1") return true;
+  const interval = Number(process.env.CLAUDEOS_HEAVY_SYNC_INTERVAL_SEC || 900) * 1000;
+  try {
+    const st = fs.statSync(HEAVY_STAMP);
+    if (Date.now() - st.mtimeMs < interval) return false;
+  } catch { /* no stamp yet */ }
+  try { fs.mkdirSync(path.dirname(HEAVY_STAMP), { recursive: true }); fs.writeFileSync(HEAVY_STAMP, new Date().toISOString()); } catch { /* fail-soft */ }
+  return true;
+}
+const HEAVY = heavySyncDue();
+
 let dreamingEnabled = false;
 
 try {
@@ -49,35 +66,8 @@ try {
 
     dreamingEnabled = !!state.dreaming.dreaming_enabled;
 
-    // Verify フェーズで必須 SubAgent が起動されたかを検証する。
-    // qa / security-reviewer / e2e-runner のいずれも当該セッションで呼ばれていない場合は警告。
-    try {
-      const exec = state.execution || {};
-      const phase = exec.phase;
-      if (phase === "Verify") {
-        const sessionStart = exec.current_session_start_at;
-        const agentHist = ((state.learning || {}).usage_history || {}).agents || {};
-        const required = ["qa", "security-reviewer", "e2e-runner"];
-        const startMs = sessionStart ? Date.parse(sessionStart) : 0;
-        const launched = required.filter((k) => {
-          const last = agentHist[k] && agentHist[k].last_used;
-          return last && Date.parse(last) >= startMs;
-        });
-        if (launched.length === 0) {
-          state.warnings = state.warnings || [];
-          state.warnings.push({
-            at: new Date().toISOString(),
-            kind: "verify_subagent_missing",
-            message: "Verify フェーズで qa / security-reviewer / e2e-runner SubAgent が一度も起動されませんでした。STABLE 判定の必要条件を満たしていない可能性があります。",
-            phase,
-            required,
-          });
-          console.log("[SessionEnd][WARN] Verify phase ended without required SubAgent invocation");
-        }
-      }
-    } catch (verifyErr) {
-      console.error(`[SessionEnd] verify-subagent-check failed: ${verifyErr.message}`);
-    }
+    // v10: 旧 "verify_subagent_missing" 判定 (qa / security-reviewer / e2e-runner の起動確認) は
+    // 当該 agent が Claude Code に読み込まれない (.claude/agents 不在) ため phantom 判定となっていたので削除。
 
     // Quality gate: lint / coverage の閾値違反を state.warnings へ追記する。
     try {
@@ -105,7 +95,7 @@ try {
     }
 
     // CMDB スキャン: Monitor フェーズ末尾で構成アイテムの差分を記録。
-    try {
+    if (HEAVY) try {
       const phase = (state.execution || {}).phase;
       const cmdbScript = path.join(process.cwd(), "scripts", "tools", "run-cmdb-scan.js");
       if (fs.existsSync(cmdbScript) && (phase === "Monitor" || !phase)) {
@@ -118,7 +108,7 @@ try {
     }
 
     // Audit スキャン: Verify フェーズ末尾で変更証跡を収集。
-    try {
+    if (HEAVY) try {
       const phase = (state.execution || {}).phase;
       const auditScript = path.join(process.cwd(), "scripts", "tools", "run-audit-scan.js");
       if (fs.existsSync(auditScript) && phase === "Verify") {
@@ -136,7 +126,7 @@ try {
     }
 
     // GitHub Projects 同期: completed_issues / blocked_issues のラベルを自動更新。
-    try {
+    if (HEAVY) try {
       const syncScript = path.join(process.cwd(), "scripts", "tools", "sync-github-projects.js");
       if (fs.existsSync(syncScript)) {
         const { spawnSync } = require("child_process");
@@ -229,7 +219,7 @@ try {
 
     // measure-kpi: セッション終了前に KPI を同期収集して state.json.metrics を更新。
     // GitHub CLI (gh) が利用可能な場合のみ実行し、失敗してもブロックしない。
-    try {
+    if (HEAVY) try {
       // このプロジェクト: scripts/tools/、他プロジェクト（テンプレ展開後）: .claude/claudeos/scripts/tools/
       const kpiScript = [
         path.join(process.cwd(), "scripts", "tools", "measure-kpi.js"),
@@ -376,7 +366,7 @@ try {
 if (dreamingEnabled) {
   try {
     const { spawn } = require("child_process");
-    const runner = path.join(__dirname, "dreaming-runner.js");
+    const runner = path.join(__dirname, "..", "tools", "dreaming", "dreaming-runner.js");
     if (fs.existsSync(runner)) {
       const child = spawn(process.execPath, [runner], {
         detached: true,

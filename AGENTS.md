@@ -28,6 +28,7 @@
 GitHub運用はこのWorkspaceの記述ではなく、中央ポリシーに従います。
 
 - 正本: /home/kensan/Projects/Deep-Seek-Harness-Project/GITHUB_POLICY.md
-- 詳細: /home/kensan/Projects/Deep-Seek-Harness-Project/docs/architecture/CloudflareNeonGitHub自動化仕様.md
+- 詳細（GitHub 運用）: /home/kensan/Projects/Deep-Seek-Harness-Project/docs/architecture/CloudflareNeonGitHub自動化仕様.md
+- DB 運用は中央仕様の Neon 記述ではなく、本リポジトリの `docs/architecture/PostgreSQLデータ運用仕様.md`（Local PostgreSQL 正本、ClaudeOS v10）に従う。中央仕様との差異は CENTRAL_POLICY_CONFLICT として `docs/architecture/MIGRATION_V9_TO_V10.md` に記録する
 - 優先順位: 中央GitHub Policy > GitHub Rulesets > GitHub Actions/CI > Workspace AGENTS.md / CLAUDE.md / README
 - main直接push禁止、Required Checks PASS後のSquash Merge、merge後branch削除

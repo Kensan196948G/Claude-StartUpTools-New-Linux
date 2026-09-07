@@ -1,4 +1,4 @@
-﻿---
+---
 name: tester
 description: テスト実行・CI連携担当。自動テスト実行・CIログ解析・テスト結果収集を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob

@@ -27,14 +27,26 @@ const path = require("path");
 
 const REPO_ROOT = path.join(__dirname, "..", "..");
 
-// すべて copy-if-missing。type: "dir" = 再帰コピー / "file" = 単一ファイル。
+// v10 Lazy Agent Catalog: .claude/agents へは config/agent-catalog.json の first_class だけを配布する
+// (43 体全部を auto-discovery させると description が常時 context に載る)。
+function loadFirstClassAgents() {
+  try {
+    const cat = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "config", "agent-catalog.json"), "utf8"));
+    return new Set((cat.first_class || []).map((a) => `${a.name}.md`));
+  } catch { return null; }
+}
+const FIRST_CLASS_AGENTS = loadFirstClassAgents();
+function firstClassAgentFilter(name) { return !FIRST_CLASS_AGENTS || FIRST_CLASS_AGENTS.has(name); }
+
+// すべて copy-if-missing。type: "dir" = 再帰コピー / "file" = 単一ファイル。filter(name) は dir 直下の採否。
 const MAPPINGS = [
   { type: "dir",  src: "Claude/templates/claudeos",               dest: ".claude/claudeos",      label: ".claude/claudeos (本体ツリー)" },
-  { type: "dir",  src: "Claude/templates/claudeos/agents",        dest: ".claude/agents",        label: ".claude/agents (auto-discovery)" },
+  { type: "dir",  src: "Claude/templates/claudeos/agents",        dest: ".claude/agents",        label: ".claude/agents (first-class のみ auto-discovery / v10 Lazy Agent Catalog)", filter: firstClassAgentFilter },
   { type: "dir",  src: "Claude/templates/claudeos/commands",      dest: ".claude/commands",      label: ".claude/commands" },
-  { type: "dir",  src: "Claude/templates/claudeos/skills",        dest: ".claude/skills",        label: ".claude/skills" },
+  { type: "dir",  src: "Claude/templates/claude/skills",          dest: ".claude/skills",        label: ".claude/skills (v10: frontmatter 付き実 skill のみ。claudeos/skills の stub は配布しない)" },
   { type: "dir",  src: "Claude/templates/claudeos/hooks",         dest: ".claude/hooks",         label: ".claude/hooks" },
   { type: "dir",  src: "Claude/templates/claude/workflows",       dest: ".claude/workflows",     label: ".claude/workflows (dynamic workflows)" },
+  { type: "dir",  src: "Claude/templates/claude/rules",           dest: ".claude/rules",         label: ".claude/rules (path-scoped rules)" },
   { type: "dir",  src: "Claude/templates/claudeos/scripts/tools", dest: "scripts/tools",         label: "scripts/tools" },
   { type: "file", src: "Claude/templates/claude/CLAUDE.md",       dest: "CLAUDE.md",             label: "CLAUDE.md" },
   { type: "file", src: "scripts/templates/claude-mcp.json",       dest: ".mcp.json",             label: ".mcp.json" },
@@ -149,13 +161,14 @@ function listAllProjectDirs(configPath) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-function copyDirIfMissing(srcDir, destDir, plan, dryRun) {
+function copyDirIfMissing(srcDir, destDir, plan, dryRun, filter) {
   if (!fs.existsSync(srcDir)) { plan.srcMissing.push(srcDir); return; }
   for (const e of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (typeof filter === "function" && !filter(e.name)) continue;
     const s = path.join(srcDir, e.name);
     const d = path.join(destDir, e.name);
     if (e.isDirectory()) {
-      copyDirIfMissing(s, d, plan, dryRun);
+      copyDirIfMissing(s, d, plan, dryRun, m.filter);
     } else if (e.isFile()) {
       if (fs.existsSync(d)) { plan.skip++; continue; }
       plan.create++;

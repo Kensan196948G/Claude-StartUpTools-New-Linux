@@ -1,0 +1,43 @@
+{
+  "_comment": "ClaudeOS v10 Lazy Agent Catalog。first_class は .claude/agents へ配布して Claude Code に auto-discovery させる (context に description が常時載るため最小限)。catalog は Claude/templates/claudeos/agents に保持し、必要時に Read で読み込むか、CTO が Agent tool の prompt に本文を渡して起動する。merge / remove_candidate は削除せず deprecated として保持し、次の Self-Improvement サイクルで整理する。",
+  "schemaVersion": 1,
+  "first_class": [
+    { "name": "cto",               "purpose": "統括・優先順位・Phase Gate・リリース判定", "model": "inherit" },
+    { "name": "manager",           "purpose": "Issue 生成 / GitHub Projects 遷移", "model": "inherit" },
+    { "name": "code-reviewer",     "purpose": "汎用コードレビュー (言語別 rubric は skills で付与)", "model": "inherit" },
+    { "name": "security-reviewer", "purpose": "secret / 権限 / 依存関係 / 脆弱性の独立レビュー (Verify・Release ゲート)", "model": "inherit" },
+    { "name": "ci-manager",        "purpose": "CI 失敗の原因分析と最小差分修復", "model": "inherit" },
+    { "name": "outcome-grader",    "purpose": "STABLE rubric による独立判定 (Generator / Verifier 分離)", "model": "haiku", "disallowedTools": "Write, Edit" },
+    { "name": "e2e-runner",        "purpose": "E2E 実行と回帰確認", "model": "inherit" },
+    { "name": "audit-agent",       "purpose": "変更証跡・規格準拠 (Verify 末尾 / Release 前)", "model": "inherit" },
+    { "name": "cmdb-agent",        "purpose": "構成アイテム・依存関係・変更影響 (Monitor 末尾)", "model": "inherit" }
+  ],
+  "catalog": [
+    { "name": "api-designer",        "when": "API 境界設計時。dev-api を吸収" },
+    { "name": "architect",           "when": "アーキテクチャ・DB・auth 境界の重要判断" },
+    { "name": "build-error-resolver","when": "ビルド失敗時 (言語別 resolver 6 体を吸収)" },
+    { "name": "database-reviewer",   "when": "schema / migration / index レビュー" },
+    { "name": "doc-updater",         "when": "README / 設計書 / runbook 更新" },
+    { "name": "performance-reviewer","when": "性能観点のレビュー" },
+    { "name": "qa",                  "when": "テストマトリクス・回帰 (tester を吸収)" },
+    { "name": "release-manager",     "when": "リリース手順・rollback (ops を吸収)" },
+    { "name": "tdd-guide",           "when": "TDD 進行の伴走" }
+  ],
+  "merge": {
+    "code-reviewer": ["cpp-reviewer", "go-reviewer", "java-reviewer", "kotlin-reviewer", "python-reviewer", "rust-reviewer", "typescript-reviewer"],
+    "build-error-resolver": ["cpp-build-resolver", "go-build-resolver", "java-build-resolver", "kotlin-build-resolver", "pytorch-build-resolver", "rust-build-resolver"],
+    "api-designer": ["dev-api"],
+    "qa": ["tester"],
+    "release-manager": ["ops"],
+    "cto": ["loop-operator", "orchestrator"]
+  },
+  "remove_candidate": {
+    "planner": "native Plan subagent / plan mode",
+    "docs-lookup": "native Explore subagent / claude-code-guide",
+    "refactor-cleaner": "native /simplify",
+    "chief-of-staff": "役割重複 (cto / manager)",
+    "dev-ui": "役割重複 (frontend は skills で表現)",
+    "harness-optimizer": "Self-Improvement (Improver skill) へ統合",
+    "incident-triager": "Linux Operations (bin/incident-response.sh) と重複"
+  }
+}

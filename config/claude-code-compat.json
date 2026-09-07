@@ -1,0 +1,33 @@
+{
+  "_comment": "ClaudeOS v10 — Claude Code 互換性ポリシーと Capability 定義。バージョン番号の固定判定より、CLI が実際に持つ flag / subcommand を probe する Capability Detection を優先する (lib/claude-capability.sh)。probe.type: flag = `claude --help` に flag が存在 / subcommand = `claude --help` の Commands に存在 / env = 環境変数で有効化される機能 (存在確認不能・有効化状態のみ) / unverified = CLI から確認不能 (session 内機能)。minVersion は参考値 (公式 changelog で確認した導入版)。",
+  "schemaVersion": 1,
+  "versions": {
+    "minimumSupported": "2.1.224",
+    "recommended": "2.1.263",
+    "tested": "2.1.263",
+    "lastVerifiedAt": "2026-09-07",
+    "_notes": "minimumSupported = クロスセッションメッセージング (SendMessage/ListAgents) が入った版。tested = このリポジトリの bats/Node テストと実機起動を確認した版。recommended = 推奨導入版 (tested と同一を原則)。"
+  },
+  "capabilities": [
+    { "id": "session-name",        "label": "--name (安定セッション名 / cross-session messaging)", "probe": { "type": "flag", "value": "--name" },              "minVersion": "2.1.196", "status": "GA",               "usedBy": ["lib/common.sh", "lib/team-runner.sh", "bin/start-claude.sh"] },
+    { "id": "permission-mode",     "label": "--permission-mode",                                  "probe": { "type": "flag", "value": "--permission-mode" },   "minVersion": "2.0.0",   "status": "GA",               "usedBy": ["bin/start-claude.sh"] },
+    { "id": "permission-prompts",  "label": "--permission-prompts none (無人実行 fail-closed)",    "probe": { "type": "flag", "value": "--permission-prompts" }, "minVersion": "2.1.259", "status": "GA",               "usedBy": ["bin/start-claude.sh"] },
+    { "id": "restricted-mode",     "label": "--restricted",                                       "probe": { "type": "flag", "value": "--restricted" },         "minVersion": "2.1.248", "status": "GA" },
+    { "id": "safe-mode",           "label": "--safe-mode (診断起動)",                             "probe": { "type": "flag", "value": "--safe-mode" },          "minVersion": "2.1.169", "status": "GA",               "usedBy": ["lib/tmux-runner.sh"] },
+    { "id": "bare-mode",           "label": "--bare (headless 最小起動)",                         "probe": { "type": "flag", "value": "--bare" },               "minVersion": "2.1.200", "status": "GA" },
+    { "id": "effort-flag",         "label": "--effort",                                           "probe": { "type": "flag", "value": "--effort" },             "minVersion": "2.1.150", "status": "GA",               "usedBy": ["lib/model-router.sh"] },
+    { "id": "json-schema-output",  "label": "--json-schema (構造化出力)",                         "probe": { "type": "flag", "value": "--json-schema" },        "minVersion": "2.1.205", "status": "GA" },
+    { "id": "worktree-flag",       "label": "--worktree (native worktree 分離)",                  "probe": { "type": "flag", "value": "--worktree" },           "minVersion": "2.1.190", "status": "GA",               "usedBy": ["lib/team-runner.sh"] },
+    { "id": "background-session",  "label": "--bg (background session / agent view)",             "probe": { "type": "flag", "value": "--bg" },                 "minVersion": "2.1.212", "status": "research-preview", "usedBy": ["bin/start-claude.sh"] },
+    { "id": "agents-subcommand",   "label": "claude agents (Agent View)",                         "probe": { "type": "subcommand", "value": "agents" },         "minVersion": "2.1.212", "status": "research-preview", "usedBy": ["libexec/watch-session.sh", "scripts/dashboards/serve-dashboard.js"] },
+    { "id": "attach-subcommand",   "label": "claude attach|logs|stop|respawn|rm",                 "probe": { "type": "subcommand", "value": "attach" },         "minVersion": "2.1.212", "status": "research-preview" },
+    { "id": "ultrareview",         "label": "claude ultrareview (cloud multi-agent review)",       "probe": { "type": "subcommand", "value": "ultrareview" },    "minVersion": "2.1.218", "status": "GA (claude.ai auth)", "usedBy": ["scripts/tools/run-ultrareview.js"] },
+    { "id": "doctor-subcommand",   "label": "claude doctor",                                      "probe": { "type": "subcommand", "value": "doctor" },         "minVersion": "2.0.0",   "status": "GA",               "usedBy": ["libexec/diag-all-tools.sh"] },
+    { "id": "cloud-session",       "label": "--cloud / --environment (cloud / self-hosted)",      "probe": { "type": "flag", "value": "--cloud" },              "minVersion": "2.1.230", "status": "GA (Team/Enterprise for self-hosted)" },
+    { "id": "agent-teams",         "label": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1)", "probe": { "type": "env", "value": "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" }, "minVersion": "2.1.178", "status": "experimental", "note": "CLI からは存在確認不能。env で有効化状態のみ判定。TeamCreate/TeamDelete tool は 2.1.178 で廃止。" },
+    { "id": "dynamic-workflows",   "label": "Dynamic Workflows (/workflows, ultracode)",          "probe": { "type": "unverified" },                            "minVersion": "2.1.154", "status": "GA (paid plans)",  "note": "セッション内機能のため CLI probe 不能。disableWorkflows 設定で無効化可。" },
+    { "id": "goal-command",        "label": "/goal (Stop hook ベース完了条件)",                    "probe": { "type": "unverified" },                            "minVersion": "2.1.139", "status": "GA",               "note": "セッション内コマンド。`claude -p \"/goal ...\"` で headless 利用可。4000 文字上限。", "usedBy": ["libexec/goal-extract.sh"] },
+    { "id": "cross-session-msg",   "label": "SendMessage / ListAgents (/list-agents)",            "probe": { "type": "unverified" },                            "minVersion": "2.1.224", "status": "GA",               "note": "同一マシン内は全プロバイダで利用可 (2.1.248+)。--name の存在で間接判定。" },
+    { "id": "channels",            "label": "--channels (Telegram/Discord/iMessage)",             "probe": { "type": "flag", "value": "--channels" },           "minVersion": "2.1.220", "status": "research-preview", "note": "preview 中は --help に出ない場合がある (docs 明記)。missing でも未実装とは限らない。" }
+  ]
+}

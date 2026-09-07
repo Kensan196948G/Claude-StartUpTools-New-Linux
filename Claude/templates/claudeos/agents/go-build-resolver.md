@@ -1,4 +1,4 @@
-﻿---
+---
 name: go-build-resolver
 description: Go の build、test、module、toolchain、依存不整合を修復する担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

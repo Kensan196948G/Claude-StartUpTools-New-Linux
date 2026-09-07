@@ -2,6 +2,7 @@
 name: cmdb-agent
 description: 構成管理DB（CMDB）担当。IT資産・サービス依存関係・CI/CDパイプライン構成・変更影響分析を管理する。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # CMDB Agent

@@ -1,4 +1,4 @@
-﻿# Ops Agent
+# Ops Agent
 
 Infrastructure and deployment monitoring.
 

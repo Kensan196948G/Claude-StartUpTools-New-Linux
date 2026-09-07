@@ -1,7 +1,8 @@
-﻿---
+---
 name: cto
 description: 全体判断・リリース責任者。優先順位決定・ループ継続可否・STABLE最終確認・5時間到達時の終了判断を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # CTO

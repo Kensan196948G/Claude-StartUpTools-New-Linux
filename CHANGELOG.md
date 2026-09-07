@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Changed — ClaudeOS v10（Native-Agentic Development OS、2026-09-07）
+
+- 🧬 アーキテクチャ: Claude Code Native > Thin ClaudeOS Adapter > Custom の原則で再構成
+  （`docs/architecture/ARCHITECTURE_V10.md`、`MIGRATION_V9_TO_V10.md`、`CURRENT_ARCHITECTURE.md`）。
+- 🐘 Neon 廃止 → Local PostgreSQL 正本: `lib/postgres.sh` / `bin/pg-ops.sh`（init / backup / verify /
+  restore-drill / freshness / migration-risk / status / units）、systemd backup・restore drill テンプレート、
+  `.env.example`、`PostgreSQLデータ運用仕様.md`、`POSTGRESQL_BACKUP_RECOVERY.md`。実機で restore drill PASS と改竄検知 FAIL を確認。
+  CLAUDE.md §5/§12/§13/§17/§21、START_PROMPT.md、data-architecture-protocol v2 を Local PostgreSQL へ再設計
+  （Cloudflare → Local PG 直接接続禁止、DB 破壊操作は Approval PR）。旧 Neon 文書は Deprecated バナー付きで履歴保持。
+- 🧪 Capability Detection: `config/claude-code-compat.json`（minimum 2.1.224 / recommended・tested 2.1.263）、
+  `lib/claude-capability.sh`、メニュー 17 `diag-claude-compat.sh`。version 固定より flag / subcommand probe を優先。
+- 🧠 Context Engineering: CLAUDE.md 662 行 → 62 行（4 コピー同一）、旧 27 節を `.claude/claudeos/policy/` へ逐語移設、
+  `.claude/rules/`（git-workflow / security / launchers / hooks / templates）、実 skill 8 本（agent-router / release-flow /
+  approval-pr / final-report / improver / sdlc-scale / pg-ops / verify-app）を配布対象に。
+- 🤖 Lazy Agent Architecture: `config/agent-catalog.json`（first-class 9 / catalog 9 / merge 18 / remove-candidate 7）、
+  `.claude/agents` は first-class のみ、`scripts/tools/agent-router.js` + golden eval（14 ケース）。
+- 🔧 Hooks 近代化: `${CLAUDE_PROJECT_DIR}` 絶対パス、Stop async + heavy-sync 間引き、if フィルタ、post-compact-reinject 新設、
+  verify-goal-set / suggest-compact / evaluate-session 廃止、push-notify・TeamCreate 除去、dreaming を scripts/tools へ移動、
+  `scripts/hooks-settings.test.js` で配線整合性を検証。
+- 🔐 権限: allow 縮小・deny 追加（wrapper / 破壊 / exfil / GitHub 管理 / control plane / secrets）、project-level defaultMode 削除、
+  tmux・cron TUI の `--dangerously-skip-permissions` を `--permission-mode auto` へ、headless に `--permission-prompts none`、
+  SMTP 資格情報を claude 環境から隔離（`SECURITY_MODEL.md`、`AI開発ガバナンス仕様.md`）。
+- 🔁 Self-Improvement / AI-Native SDLC: `SELF_IMPROVEMENT_ARCHITECTURE.md`、`/improver`、`AI_NATIVE_SDLC.md`、
+  `sdlc/*.md` テンプレート、`/sdlc-scale`（S/M/L 縮退）。
+- 🎛️ Mission Control: `/api/v10` と 🧬 v10 Platform パネル（PostgreSQL / Capability / native `claude agents` / routing log / hooks）。
+- 📜 文書: `GitHub開発運用仕様.md`、`Cloudflare公開基盤仕様.md`、`ClaudeOS運用仕様.md`、`AGENT_ORCHESTRATION.md`、
+  `CONTEXT_ENGINEERING.md`、`OPERATIONS_MODEL.md`、`CLAUDE_CODE_COMPATIBILITY.md`、監査記録 `docs/architecture/audits/`。
+
+
 ### Added
 
 - 🩹 起動時 settings.json sanitize（autocompact thrashing 恒久対策・#78/#81 の

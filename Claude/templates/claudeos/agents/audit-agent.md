@@ -2,6 +2,7 @@
 name: audit-agent
 description: 監査・コンプライアンス担当。変更証跡の収集、ISO20000/ISO27001/J-SOX 規格準拠確認、アクセスレビュー、セキュリティ監査ログ分析を行う。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # Audit Agent

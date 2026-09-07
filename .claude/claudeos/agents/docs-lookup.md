@@ -1,4 +1,4 @@
-﻿---
+---
 name: docs-lookup
 description: 公式ドキュメント、API 仕様、既存設計書から根拠を探し、実装判断を支える調査担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

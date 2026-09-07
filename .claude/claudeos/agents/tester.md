@@ -1,4 +1,4 @@
-﻿# Tester Agent
+# Tester Agent
 
 Automated test execution.
 

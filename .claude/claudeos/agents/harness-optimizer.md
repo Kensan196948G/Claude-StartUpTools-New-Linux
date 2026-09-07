@@ -1,4 +1,4 @@
-﻿---
+---
 name: harness-optimizer
 description: 評価ハーネス、テストハーネス、実験設定、検証の自動化設定を整える担当。
 tools: Read, Write, Edit, Bash, Grep, Glob

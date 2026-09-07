@@ -32,7 +32,7 @@ npm run test:node   # node --test scripts/**/*.test.js
 ### 3. テンプレート整合性
 
 ```bash
-node .claude/claudeos/scripts/hooks/verify-goal-set.js
+bats tests/bats/unit/goal-inject.bats   # v10: verify-goal-set.js は廃止 (native /goal)
 ```
 
 - `Claude/templates/claude/START_PROMPT.md` の必須キーワード欠落警告を確認する。

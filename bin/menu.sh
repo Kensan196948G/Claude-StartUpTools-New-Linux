@@ -141,6 +141,8 @@ show_menu() {
     "12  📊 Statusline 設定" \
     "13  📡 Claude ログ監視 (tail)" \
     "16  🤝 Agent Teams Status (CLI 表示)" \
+    "17  🧪 Claude Code 互換性 / Capability 診断" \
+    "18  🐘 Local PostgreSQL 運用診断 (health / backup / drill)" \
     "PD  🌐 Projects Dashboard (進捗 WebUI)" \
     "MC  🎛️  Mission Control (統合管理)" \
     "DR  📌 Dashboard を自動起動に登録 (systemd/cron)" \
@@ -368,6 +370,8 @@ menu_loop() {
             ( cd "$CCSU_ROOT" && node scripts/tools/agent-teams-status.js ) || true
           else log_warn "agent-teams-status.js が見つかりません"; fi
           read -rp "  Enter で戻る " _ || true ;;
+      17) run_menu_script "$LIBEXEC/diag-claude-compat.sh" ;;
+      18) run_menu_script "$LIBEXEC/diag-postgres.sh" ;;
       PD) run_menu_script "$BIN/start-dashboard.sh" ;;
       MC) run_menu_script "$BIN/start-dashboard.sh" --no-browser ;;
       DR) run_menu_script "$BIN/dashboard-service.sh" --register --run-now ;;

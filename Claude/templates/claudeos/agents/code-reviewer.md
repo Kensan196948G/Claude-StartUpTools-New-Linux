@@ -1,7 +1,8 @@
-﻿---
+---
 name: code-reviewer
 description: 品質、回帰、保守性、可読性、テスト不足を横断的に確認するコードレビュー担当。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: inherit
 ---
 
 # Code Reviewer

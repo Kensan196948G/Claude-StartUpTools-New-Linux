@@ -1,4 +1,4 @@
-﻿---
+---
 name: rust-reviewer
 description: Rust の所有権、借用、非同期、安全性、モジュール設計をレビューする担当。
 tools: Read, Write, Edit, Bash, Grep, Glob
