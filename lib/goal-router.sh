@@ -259,9 +259,10 @@ except Exception:
   fi
   if [[ "${CLAUDEOS_GOAL_ROUTER_CF:-1}" != "0" ]] && command -v wrangler >/dev/null 2>&1 && [[ -n "$cfp" || -n "$cfw" ]]; then
     local -a _t=(); command -v timeout >/dev/null 2>&1 && _t=(timeout 15)
+    local cf_pages="" cf_worker=""
     if [[ -n "$cfp" ]]; then
       # Cloudflare Pages: 直近の production deployment の latest_stage.status (wrangler 4.x: --project-name / --environment / --json を実機 help で確認)
-      cf="$("${_t[@]}" wrangler pages deployment list --project-name "$cfp" --environment production --json 2>/dev/null \
+      cf_pages="$("${_t[@]}" wrangler pages deployment list --project-name "$cfp" --environment production --json 2>/dev/null \
             | python3 -c '
 import json, sys
 try:
@@ -271,11 +272,29 @@ try:
     print(st if st in ("success", "failure") else ("failure" if "fail" in st else (st or "unknown")))
 except Exception:
     print("unknown")' 2>/dev/null || printf 'unknown')"
-      [[ -n "$cf" ]] || cf="unknown"
-    else
-      # Cloudflare Workers: deployments を列挙できれば success (一覧に status フィールドが無いため存在確認のみ)
-      if "${_t[@]}" wrangler deployments list --name "$cfw" --json >/dev/null 2>&1; then cf="success"; else cf="failure"; fi
+      [[ -n "$cf_pages" ]] || cf_pages="unknown"
     fi
+    if [[ -n "$cfw" ]]; then
+      # Cloudflare Workers: deployments 一覧には status フィールドが無く、コマンドの成否は「一覧取得の成否」であって
+      # デプロイ状態ではない。よって deploy failure とは判定せず、listed / none / unknown の観測値だけを残す。
+      cf_worker="$("${_t[@]}" wrangler deployments list --name "$cfw" --json 2>/dev/null \
+            | python3 -c '
+import json, sys
+try:
+    arr = json.load(sys.stdin)
+    print("listed" if isinstance(arr, list) and arr else "none")
+except Exception:
+    print("unknown")' 2>/dev/null || printf 'unknown')"
+      [[ -n "$cf_worker" ]] || cf_worker="unknown"
+    fi
+    # 集約 (routing に使う cf_deploy): failure / success は Pages の latest_stage.status からのみ確定する。
+    # Worker は状態を取得できないため failure にも success にもしない (誤ルーティング防止)。
+    if [[ "$cf_pages" == "failure" ]]; then cf="failure"
+    elif [[ "$cf_pages" == "success" ]]; then cf="success"
+    elif [[ "$cf_pages" == "none" || "$cf_worker" == "none" ]]; then cf="none"
+    else cf="unknown"; fi
+    printf 'cf_pages=%s\n' "$cf_pages"
+    printf 'cf_worker=%s\n' "$cf_worker"
   fi
   local has=0; [[ -n "$url" || -n "$elog" || -n "$cfp" || -n "$cfw" ]] && has=1
   printf 'runtime_health=%s\n' "$health"

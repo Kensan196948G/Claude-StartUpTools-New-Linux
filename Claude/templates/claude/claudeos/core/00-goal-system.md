@@ -32,7 +32,7 @@ Runtime/Repo ─┘                                                             
 | User Intent | 「作って / 実装して」→ development、「MVP / PoC」→ mvp-release、「評価 / 監査」→ assessment、「直して / CI 失敗」→ deep-debug、「総合テスト / リリース判定」→ product-assurance |
 | Project State | `phase_mode` / `goal_type` / `deploy.ready` / `execution.phase` / `stable.stable_achieved` / `kpi.security_critical` / `blocked_issues` |
 | Repository | git（コミット数・dirty）、CI ワークフローとテストの有無、open PR、最新 CI 結果（gh、任意） |
-| Runtime | `state.runtime.health_url`（health check）、`state.runtime.error_log`（直近エラー件数）、`state.runtime.cloudflare.project|worker`（wrangler deploy 状態）。未設定は影響なし |
+| Runtime | `state.runtime.health_url`（health check）、`state.runtime.error_log`（直近エラー件数）、`state.runtime.cloudflare.project` / `state.runtime.cloudflare.worker`（wrangler deploy 状態）。未設定は影響なし |
 | LLM 分類 | キーワード表で判定不能な intent だけ `claude -p --model haiku` で補完（`CLAUDEOS_GOAL_INTENT_LLM`、fail-safe） |
 
 優先順位（競合時）: security-emergency > deep-debug（runtime incident > CI failure > Cloudflare deploy failure）> hotfix > product-assurance > production-release > assessment > mvp-release > development。

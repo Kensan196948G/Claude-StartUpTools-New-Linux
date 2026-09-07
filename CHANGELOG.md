@@ -8,7 +8,7 @@
   start-claude.sh へ渡す（Enter = 自動判定、`auto` = 固定解除、不明値は警告して自動、tty / パイプ以外では問い合わせない）。
 - 🩺 Runtime Evidence: `state.runtime.{health_url,error_log,cloudflare.project|worker}`（schema 追加）を Router が probe。
   health down → deep-debug（本番運用中は + hotfix、Security の次の優先）、error_log 閾値超過 → deep-debug、
-  Cloudflare Pages `latest_stage.status` / Worker deployments 失敗 → deep-debug。down への遷移は reroute 条件。
+  Cloudflare Pages `latest_stage.status` failure → deep-debug（Worker は一覧に status が無いため観測のみ）。down への遷移は reroute 条件。
 - 🧠 LLM intent 分類: キーワード表で判定不能な要求だけ `claude -p --model haiku --output-format json --bare` で
   ラベル分類（confidence 0.70、ホワイトリスト検証、timeout、`CLAUDEOS_GOAL_INTENT_LLM=auto|1|0`、subscription 課金経路）。
   Claude Code セッション内では auto で呼ばない。ライブ動作は UNVERIFIED（stub で単体テスト）。

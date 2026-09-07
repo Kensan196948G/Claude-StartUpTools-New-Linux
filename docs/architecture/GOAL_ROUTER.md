@@ -95,7 +95,7 @@ deploy signoff / destructive gate は Router 導入前と同一。`production-re
 ## 9. 既知の制限
 
 - gh Evidence は `origin` remote と認証がある場合のみ（timeout 8 秒、失敗は unknown）
-- Runtime Evidence は `state.runtime.*` を設定した Project のみ。health は HTTP status のみで内容は見ない。Cloudflare Worker は deployments の列挙可否のみ（status フィールドが無い）
+- Runtime Evidence は `state.runtime.*` を設定した Project のみ。health は HTTP status のみで内容は見ない。Cloudflare の deploy failure 判定は Pages の `latest_stage.status` からのみ確定し、Worker（deployments 一覧に status が無い）は listed / none / unknown の観測に留めて routing に使わない
 - LLM intent 分類はキーワード表で判定不能なときの補完。Claude Code セッション内（CLAUDECODE=1）では auto で呼ばない。2026-09-08 の実機検証は subscription ログイン不在で `Not logged in` のためライブ動作は UNVERIFIED（stub による単体テストのみ）
 - メニューの Goal / 要求入力は tty またはパイプ入力があるときだけ（cron / stdin 閉塞では自動判定）
 - Goal 達成の自動検出は Supervisor の `goal-reached`（deploy.ready / phase_mode）に依存。セッション内の Goal 達成による reroute はユーザー新指示か次回起動で反映

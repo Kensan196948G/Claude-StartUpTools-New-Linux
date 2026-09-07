@@ -398,13 +398,17 @@ _gr() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['goal_ro
   make_stub_bin wrangler 'echo "[]"'
   [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "none" ]
 }
-@test "evidence: Cloudflare Worker は deployments list の成否で判定、CF=0 なら wrangler を呼ばない" {
+@test "evidence: Cloudflare Worker は状態を持たないため failure/success にせず listed/none/unknown の観測のみ、CF=0 なら wrangler を呼ばない" {
   export CLAUDEOS_GOAL_ROUTER_CF=1
   _state '{"runtime":{"cloudflare":{"worker":"my-worker"}}}'
   make_stub_bin wrangler 'exit 1'
-  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "failure" ]
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" cf_worker)" = "unknown" ]; [ "$(_field "$out" cf_deploy)" = "unknown" ]   # 一覧取得失敗 ≠ deploy failure
+  make_stub_bin wrangler 'echo "[{\"id\":\"v1\"}]"; exit 0'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" cf_worker)" = "listed" ]; [ "$(_field "$out" cf_deploy)" = "unknown" ]
   make_stub_bin wrangler 'echo "[]"; exit 0'
-  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "success" ]
+  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "none" ]
   export CLAUDEOS_GOAL_ROUTER_CF=0
   make_stub_bin wrangler 'echo CALLED >> "$TEST_TEMP/wr.log"; echo "[]"'
   [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "unknown" ]; [ ! -f "$TEST_TEMP/wr.log" ]
@@ -457,4 +461,13 @@ PY
   rm -f "$TEST_TEMP/claude.log"
   out="$(goal_router__evidence "$PROJ" 'CI が失敗しているので直して')"   # キーワードで判定できる → LLM 不使用
   [ -z "$(_field "$out" intent_llm)" ]; [ ! -f "$TEST_TEMP/claude.log" ]
+}
+@test "evidence: Pages と Worker の両方を設定すると独立に照会し、routing 用の cf_deploy は Pages の status からのみ確定する" {
+  export CLAUDEOS_GOAL_ROUTER_CF=1
+  _state '{"runtime":{"cloudflare":{"project":"my-pages","worker":"my-worker"}}}'
+  make_stub_bin wrangler 'printf "%s\n" "$*" >> "$TEST_TEMP/wrangler.log"; if [[ "$1" == "pages" ]]; then echo "[{\"latest_stage\":{\"status\":\"failure\"}}]"; else exit 1; fi'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" cf_pages)" = "failure" ]; [ "$(_field "$out" cf_worker)" = "unknown" ]; [ "$(_field "$out" cf_deploy)" = "failure" ]
+  grep -q -- 'pages deployment list --project-name my-pages' "$TEST_TEMP/wrangler.log"
+  grep -q -- 'deployments list --name my-worker' "$TEST_TEMP/wrangler.log"
 }

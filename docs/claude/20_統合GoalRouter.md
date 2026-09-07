@@ -64,7 +64,7 @@ Project を選ぶ → 状態を読む → Goal を自動決定 → 必要な Age
 | `health_url` | curl（5 秒）、2xx/3xx = ok、それ以外 = down | down → deep-debug（+hotfix）。down への遷移は lock を破る |
 | `error_log` | 直近 500 行の ERROR / FATAL / Traceback / panic / Unhandled / CRITICAL 件数 | 閾値以上 → deep-debug |
 | `cloudflare.project` | `wrangler pages deployment list --project-name … --environment production --json` の `latest_stage.status` | failure → deep-debug |
-| `cloudflare.worker` | `wrangler deployments list --name … --json` の成否 | failure → deep-debug |
+| `cloudflare.worker` | `wrangler deployments list --name … --json` の一覧（listed / none / unknown） | 観測のみ。Worker の一覧には status が無いため routing には使わない |
 
 未設定なら unknown（判定に影響しない）。`CLAUDEOS_GOAL_ROUTER_RUNTIME=0` / `CLAUDEOS_GOAL_ROUTER_CF=0` で無効化できます。
 
