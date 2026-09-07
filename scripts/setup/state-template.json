@@ -6,7 +6,23 @@
     "phase_mode": "development"
   },
   "goal_type": "mvp-release",
-  "goal": "",
+  "goal_router": {
+    "mode": "auto",
+    "primary_goal": null,
+    "specialized_goal": null,
+    "effective_goal_type": null,
+    "confidence": 0,
+    "reason": "",
+    "evidence": [],
+    "locked_by_user": false,
+    "session_locked": false,
+    "route_version": 1,
+    "last_routed_at": null,
+    "last_transition_reason": ""
+  },
+  "goal": {
+    "title": ""
+  },
   "phase": "Monitor",
   "kpi": {
     "success_rate_target": 0.9,
@@ -51,7 +67,13 @@
   },
   "warnings": [],
   "quality_gates": {
-    "lint": { "warning_threshold": 10, "error_threshold": 0 },
-    "coverage": { "line_min": 70, "changed_files_min": 80 }
+    "lint": {
+      "warning_threshold": 10,
+      "error_threshold": 0
+    },
+    "coverage": {
+      "line_min": 70,
+      "changed_files_min": 80
+    }
   }
 }

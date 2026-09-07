@@ -4,6 +4,9 @@
 ■ Goal
 本番環境の緊急バグを最小差分で修正する。
 
+■ Use When
+本番・保守期の緊急バグを最小差分で修正する。Router: phase_mode=maintenance|released で CI 失敗・Blocker、intent が「hotfix・緊急修正・本番障害」。Primary: deep-debug / development 配下。
+
 ■ Priority
 CTO優先順位テーブル (CLAUDE.md §5.1) の優先度2: CI 失敗中 / または優先度3: Blocker Issue あり
 

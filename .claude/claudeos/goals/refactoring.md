@@ -4,6 +4,9 @@
 ■ Goal
 特定の技術負債を解消し、既存機能を変えずに保守性・可読性を向上させる。
 
+■ Use When
+特定の技術的負債の解消（機能不変）。Router: intent が「リファクタ・技術的負債」。Primary: development 配下。
+
 ■ Priority
 CTO優先順位テーブル (CLAUDE.md §5.1) の優先度6: 改善・リファクタ（余裕がある場合のみ）
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/Kensan196948G/ClaudeCode-StartUpTools-New/main/state.schema.json",
   "title": "ClaudeOS v8 state.json",
-  "description": "Runtime state for ClaudeOS autonomous development loops. Read by session-start.js / pre-compact.js / notify-stable.js hooks. Validates: goal / kpi / execution / stable / token / effort_strategy / compact / notification / task_budget / cache / session / codex / frontier / message_bus / learning / debug / onboarding / improvement / automation.",
+  "description": "Runtime state for ClaudeOS autonomous development loops. Read by session-start.js / pre-compact.js / notify-stable.js hooks. Validates: goal / kpi / execution / stable / token / effort_strategy / compact / notification / task_budget / cache / session / codex / frontier / message_bus / learning / debug / onboarding / improvement / automation. / goal_router (v10 Goal Router; optional, backward compatible with goal_type).",
   "type": "object",
   "required": [
     "goal",
@@ -17,71 +17,370 @@
   "properties": {
     "goal": {
       "type": "object",
-      "required": ["title"],
+      "required": [
+        "title"
+      ],
       "properties": {
-        "title": { "type": "string" }
+        "title": {
+          "type": "string"
+        }
       }
     },
     "goal_type": {
       "type": "string",
-      "description": "ClaudeOS goal prompt selector. cron-launcher reads this value and injects Claude/templates/claudeos/goals/<goal_type>.md.",
+      "description": "ClaudeOS goal prompt selector (legacy / manual). Kept for backward compatibility: cron-launcher and goal-extract still accept it. When goal_router is present, goal_router.effective_goal_type takes precedence (Router → Primary → Specialized → effective_goal_type → goals/<type>.md).",
       "enum": [
+        "development",
         "mvp-release",
+        "assessment",
+        "deep-debug",
+        "product-assurance",
         "production-release",
         "hotfix",
         "security-emergency",
         "refactoring",
-        "safe-auto-merge"
+        "safe-auto-merge",
+        "pr-babysit"
       ]
+    },
+    "goal_router": {
+      "type": "object",
+      "description": "Unified Goal Router state (v10). Written by lib/goal-router.sh at every launch (L1/S1/T1/cron/headless/Supervisor). Optional: old state.json without this block keeps working via goal_type. effective_goal_type = specialized_goal if set, else primary_goal.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "manual",
+            "disabled"
+          ],
+          "description": "auto=evidence routing / manual=user-locked primary_goal / disabled=CLAUDEOS_GOAL_ROUTER_DISABLE=1"
+        },
+        "primary_goal": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "development",
+            "mvp-release",
+            "assessment",
+            "deep-debug",
+            "product-assurance",
+            null
+          ]
+        },
+        "specialized_goal": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "production-release",
+            "hotfix",
+            "security-emergency",
+            "refactoring",
+            "safe-auto-merge",
+            "pr-babysit",
+            null
+          ]
+        },
+        "effective_goal_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "development",
+            "mvp-release",
+            "assessment",
+            "deep-debug",
+            "product-assurance",
+            "production-release",
+            "hotfix",
+            "security-emergency",
+            "refactoring",
+            "safe-auto-merge",
+            "pr-babysit",
+            null
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reason": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20
+        },
+        "locked_by_user": {
+          "type": "boolean",
+          "description": "true when the user explicitly chose a goal (--goal <name>); cleared by --goal auto"
+        },
+        "session_locked": {
+          "type": "boolean",
+          "description": "Flapping guard: while true (and within CLAUDEOS_GOAL_LOCK_MINUTES) the previous goal is kept unless a reroute condition occurs"
+        },
+        "route_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_routed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_transition_reason": {
+          "type": "string",
+          "description": "<transition>:<trigger> e.g. kept:cron, reroute:user, unchanged:supervisor-resume"
+        },
+        "evidence_snapshot": {
+          "type": "object",
+          "properties": {
+            "deploy_ready": {
+              "type": "string"
+            },
+            "phase_mode": {
+              "type": "string"
+            },
+            "security_critical": {
+              "type": "string"
+            },
+            "ci": {
+              "type": "string"
+            }
+          }
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     },
     "project": {
       "type": "object",
       "description": "Project timeline constraints. Release timing is determined by CTO judgment (deploy.ready=true). 6 months is a default guideline only, not a hard constraint.",
       "properties": {
-        "registration_date": { "type": ["string", "null"], "format": "date" },
-        "release_deadline": { "type": ["string", "null"], "format": "date" },
-        "release_deadline_note": { "type": "string" },
-        "duration_months": { "type": ["integer", "null"], "minimum": 1, "description": "開発期間の目安（月）。CTO判断で無期限の場合は null を設定可" },
-        "cron_enabled": { "type": "boolean" },
-        "session_max_minutes": { "type": "integer", "minimum": 1, "maximum": 300 },
-        "phase_mode": { "type": "string", "enum": ["development", "maintenance", "released"], "description": "development=開発中 / maintenance=リリース後保守フェーズ / released=デプロイ完了・保守移行済み" }
+        "registration_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "release_deadline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "release_deadline_note": {
+          "type": "string"
+        },
+        "duration_months": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "開発期間の目安（月）。CTO判断で無期限の場合は null を設定可"
+        },
+        "cron_enabled": {
+          "type": "boolean"
+        },
+        "session_max_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "phase_mode": {
+          "type": "string",
+          "enum": [
+            "development",
+            "maintenance",
+            "released"
+          ],
+          "description": "development=開発中 / maintenance=リリース後保守フェーズ / released=デプロイ完了・保守移行済み"
+        }
       }
     },
     "kpi": {
       "type": "object",
       "properties": {
-        "success_rate_target": { "type": "number", "minimum": 0, "maximum": 1 }
+        "success_rate_target": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
       }
     },
     "execution": {
       "type": "object",
-      "required": ["max_duration_minutes", "phase"],
+      "required": [
+        "max_duration_minutes",
+        "phase"
+      ],
       "properties": {
-        "start_time": { "type": ["string", "null"], "format": "date-time" },
-        "project_start_date": { "type": ["string", "null"], "format": "date", "description": "Project registration date (YYYY-MM-DD). Release deadline = +6 months." },
-        "release_deadline": { "type": ["string", "null"], "format": "date", "description": "Production release deadline (YYYY-MM-DD). Strictly enforced." },
-        "project_period_months": { "type": ["integer", "null"], "minimum": 1, "description": "Project duration in months (default 6)." },
-        "max_duration_minutes": { "type": "integer", "minimum": 1, "maximum": 300 },
-        "elapsed_minutes": { "type": "number", "minimum": 0 },
-        "remaining_minutes": { "type": "number", "minimum": 0 },
+        "start_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "project_start_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "Project registration date (YYYY-MM-DD). Release deadline = +6 months."
+        },
+        "release_deadline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date",
+          "description": "Production release deadline (YYYY-MM-DD). Strictly enforced."
+        },
+        "project_period_months": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "Project duration in months (default 6)."
+        },
+        "max_duration_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "elapsed_minutes": {
+          "type": "number",
+          "minimum": 0
+        },
+        "remaining_minutes": {
+          "type": "number",
+          "minimum": 0
+        },
         "phase": {
           "type": "string",
-          "enum": ["Idle", "Monitor", "Development", "Verify", "Improvement", "Repair", "Release", "Maintenance", "Triage"]
+          "enum": [
+            "Idle",
+            "Monitor",
+            "Development",
+            "Verify",
+            "Improvement",
+            "Repair",
+            "Release",
+            "Maintenance",
+            "Triage"
+          ]
         },
-        "auto_stop_threshold": { "type": "integer", "minimum": 1 },
-        "graceful_shutdown": { "type": "boolean" },
-        "last_session_summary": { "type": "string" },
-        "last_claude_session_id": { "type": ["string", "null"], "description": "Most recent `claude -p` stream-json session_id, used to --resume the next headless session (CLAUDEOS_HEADLESS=1)." },
-        "last_throttle_tier": { "type": ["string", "null"], "enum": ["normal", "t30", "t14", "t7", "overdue", null], "description": "Deadline-derived throttle tier applied last session (release_deadline countdown). Visualization only." },
-        "last_stop_at": { "type": ["string", "null"], "format": "date-time" },
-        "current_session_start_at": { "type": ["string", "null"], "format": "date-time" },
+        "auto_stop_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "graceful_shutdown": {
+          "type": "boolean"
+        },
+        "last_session_summary": {
+          "type": "string"
+        },
+        "last_claude_session_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Most recent `claude -p` stream-json session_id, used to --resume the next headless session (CLAUDEOS_HEADLESS=1)."
+        },
+        "last_throttle_tier": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "normal",
+            "t30",
+            "t14",
+            "t7",
+            "overdue",
+            null
+          ],
+          "description": "Deadline-derived throttle tier applied last session (release_deadline countdown). Visualization only."
+        },
+        "last_stop_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "current_session_start_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
         "current_session_prs": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 1 }
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
         },
-        "current_session_last_pr": { "type": ["integer", "null"] },
-        "current_session_last_merge_commit": { "type": ["string", "null"] },
-        "current_session_last_merged_at": { "type": ["string", "null"], "format": "date-time" }
+        "current_session_last_pr": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "current_session_last_merge_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_session_last_merged_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
       }
     },
     "session": {
@@ -89,72 +388,228 @@
       "properties": {
         "context_load_tier": {
           "type": "string",
-          "enum": ["minimal", "standard", "full"]
+          "enum": [
+            "minimal",
+            "standard",
+            "full"
+          ]
         }
       }
     },
     "stable": {
       "type": "object",
-      "required": ["consecutive_success", "target_n", "stable_achieved"],
+      "required": [
+        "consecutive_success",
+        "target_n",
+        "stable_achieved"
+      ],
       "properties": {
-        "consecutive_success": { "type": "integer", "minimum": 0 },
-        "target_n": { "type": "integer", "enum": [2, 3, 5] },
-        "target_n_reason": { "type": "string" },
-        "last_verified_at": { "type": ["string", "null"], "format": "date-time" },
-        "stable_achieved": { "type": "boolean" },
-        "stable_achieved_pr": { "type": ["integer", "null"] },
-        "stable_achieved_issue": { "type": ["integer", "null"] }
+        "consecutive_success": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_n": {
+          "type": "integer",
+          "enum": [
+            2,
+            3,
+            5
+          ]
+        },
+        "target_n_reason": {
+          "type": "string"
+        },
+        "last_verified_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "stable_achieved": {
+          "type": "boolean"
+        },
+        "stable_achieved_pr": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stable_achieved_issue": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
       }
     },
     "automation": {
       "type": "object",
       "properties": {
-        "auto_issue_generation": { "type": "boolean" },
-        "self_evolution": { "type": "boolean" }
+        "auto_issue_generation": {
+          "type": "boolean"
+        },
+        "self_evolution": {
+          "type": "boolean"
+        }
       }
     },
     "codex": {
       "type": "object",
       "properties": {
-        "setup_checked": { "type": "boolean" },
-        "setup_checked_at": { "type": ["string", "null"], "format": "date-time" },
-        "review_gate": { "type": "string", "enum": ["on", "off"] },
-        "last_review_status": { "type": "string", "enum": ["none", "running", "done", "failed"] },
-        "last_review_type": { "type": "string" },
-        "last_review_job_id": { "type": "string" },
-        "last_review_summary": { "type": "string" },
-        "last_adversarial_status": { "type": "string", "enum": ["none", "running", "done", "failed"] },
-        "last_adversarial_job_id": { "type": "string" },
-        "last_adversarial_summary": { "type": "string" },
-        "last_rescue_status": { "type": "string", "enum": ["none", "running", "done", "failed"] },
-        "last_rescue_job_id": { "type": "string" },
-        "last_rescue_summary": { "type": "string" },
+        "setup_checked": {
+          "type": "boolean"
+        },
+        "setup_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "review_gate": {
+          "type": "string",
+          "enum": [
+            "on",
+            "off"
+          ]
+        },
+        "last_review_status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "last_review_type": {
+          "type": "string"
+        },
+        "last_review_job_id": {
+          "type": "string"
+        },
+        "last_review_summary": {
+          "type": "string"
+        },
+        "last_adversarial_status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "last_adversarial_job_id": {
+          "type": "string"
+        },
+        "last_adversarial_summary": {
+          "type": "string"
+        },
+        "last_rescue_status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "last_rescue_job_id": {
+          "type": "string"
+        },
+        "last_rescue_summary": {
+          "type": "string"
+        },
         "blocking_issues": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "severity": { "type": "string", "enum": ["none", "low", "medium", "high", "critical"] }
+        "severity": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        }
       }
     },
     "token": {
       "type": "object",
-      "required": ["total_budget", "used", "remaining", "allocation"],
+      "required": [
+        "total_budget",
+        "used",
+        "remaining",
+        "allocation"
+      ],
       "properties": {
-        "total_budget": { "type": "integer", "const": 100 },
-        "used": { "type": "number", "minimum": 0, "maximum": 100 },
-        "remaining": { "type": "number", "minimum": 0, "maximum": 100 },
-        "tokenizer_calibration": { "type": "string", "enum": ["opus-4-7", "opus-4-6", "sonnet-4-6"] },
-        "calibration_factor": { "type": "number", "minimum": 1.0 },
+        "total_budget": {
+          "type": "integer",
+          "const": 100
+        },
+        "used": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "remaining": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "tokenizer_calibration": {
+          "type": "string",
+          "enum": [
+            "opus-4-7",
+            "opus-4-6",
+            "sonnet-4-6"
+          ]
+        },
+        "calibration_factor": {
+          "type": "number",
+          "minimum": 1.0
+        },
         "allocation": {
           "type": "object",
-          "required": ["monitor", "development", "verify", "improvement", "debug", "release"],
+          "required": [
+            "monitor",
+            "development",
+            "verify",
+            "improvement",
+            "debug",
+            "release"
+          ],
           "properties": {
-            "monitor": { "type": "integer", "minimum": 0 },
-            "development": { "type": "integer", "minimum": 0 },
-            "verify": { "type": "integer", "minimum": 0 },
-            "improvement": { "type": "integer", "minimum": 0 },
-            "debug": { "type": "integer", "minimum": 0 },
-            "release": { "type": "integer", "minimum": 0 }
+            "monitor": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "development": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "verify": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "improvement": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "debug": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "release": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }
@@ -162,93 +617,241 @@
     "task_budget": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" },
-        "total_tokens": { "type": "integer", "minimum": 0 },
-        "minimum": { "type": "integer", "minimum": 0 },
-        "beta_header": { "type": "string" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "beta_header": {
+          "type": "string"
+        },
         "applied_phases": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "skipped_phases": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
     "compact": {
       "type": "object",
-      "required": ["trigger_at_pct"],
+      "required": [
+        "trigger_at_pct"
+      ],
       "properties": {
-        "trigger_at_pct": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "verify_failure_threshold": { "type": "integer", "minimum": 1 },
-        "phase_transition": { "type": "boolean" },
-        "rescue_pre_trigger": { "type": "boolean" },
-        "long_session_minutes": { "type": "integer", "minimum": 1 },
-        "last_pre_compact_at": { "type": ["string", "null"], "format": "date-time" },
-        "snapshot_dir": { "type": "string" }
+        "trigger_at_pct": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "verify_failure_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase_transition": {
+          "type": "boolean"
+        },
+        "rescue_pre_trigger": {
+          "type": "boolean"
+        },
+        "long_session_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_pre_compact_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "snapshot_dir": {
+          "type": "string"
+        }
       }
     },
     "notification": {
       "type": "object",
       "properties": {
-        "stable": { "type": "boolean" },
-        "blocked": { "type": "boolean" },
-        "five_hour_end": { "type": "boolean" },
-        "critical_review": { "type": "boolean" },
-        "channel": { "type": "string", "enum": ["push", "email", "webhook"] },
-        "last_sent_event": { "type": ["string", "null"] },
-        "last_sent_at": { "type": ["string", "null"], "format": "date-time" },
+        "stable": {
+          "type": "boolean"
+        },
+        "blocked": {
+          "type": "boolean"
+        },
+        "five_hour_end": {
+          "type": "boolean"
+        },
+        "critical_review": {
+          "type": "boolean"
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "push",
+            "email",
+            "webhook"
+          ]
+        },
+        "last_sent_event": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_sent_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
         "last_dispatched_stable_notification": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "Record of the last STABLE notification dispatched by notify-stable.js (via session-end.js require).",
           "properties": {
-            "pr": { "type": ["integer", "null"] },
-            "commit": { "type": ["string", "null"] },
-            "scope": { "type": "string" },
-            "target_n": { "type": "integer" },
-            "consecutive_success": { "type": "integer" },
-            "dispatched_via": { "type": "string" },
-            "dispatched_at": { "type": ["string", "null"], "format": "date-time" }
+            "pr": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": "string"
+            },
+            "target_n": {
+              "type": "integer"
+            },
+            "consecutive_success": {
+              "type": "integer"
+            },
+            "dispatched_via": {
+              "type": "string"
+            },
+            "dispatched_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
           }
         }
       }
     },
     "effort_strategy": {
       "type": "object",
-      "required": ["default", "current"],
+      "required": [
+        "default",
+        "current"
+      ],
       "properties": {
-        "default": { "type": "string", "enum": ["xhigh", "high", "medium", "low"] },
-        "current": { "type": "string", "enum": ["xhigh", "high", "medium", "low"] },
-        "concurrent_worktrees_threshold": { "type": "integer", "minimum": 1 },
-        "low_token_threshold_pct": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "force_medium_pct": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "doc_only_effort": { "type": "string", "enum": ["xhigh", "high", "medium", "low"] },
-        "critical_change_keep_xhigh": { "type": "boolean" }
+        "default": {
+          "type": "string",
+          "enum": [
+            "xhigh",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "current": {
+          "type": "string",
+          "enum": [
+            "xhigh",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "concurrent_worktrees_threshold": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "low_token_threshold_pct": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "force_medium_pct": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "doc_only_effort": {
+          "type": "string",
+          "enum": [
+            "xhigh",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "critical_change_keep_xhigh": {
+          "type": "boolean"
+        }
       }
     },
     "cache": {
       "type": "object",
       "properties": {
-        "prompt_caching_1h_enabled": { "type": "boolean" },
+        "prompt_caching_1h_enabled": {
+          "type": "boolean"
+        },
         "applied_blocks": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
     "frontier": {
       "type": "object",
       "properties": {
-        "last_test_date": { "type": ["string", "null"], "format": "date-time" },
-        "test_count": { "type": "integer", "minimum": 0 },
+        "last_test_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "test_count": {
+          "type": "integer",
+          "minimum": 0
+        },
         "last_deprecation_candidates": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "last_low_usage_items": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -260,7 +863,9 @@
           "properties": {
             "transition": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             }
           }
         },
@@ -269,7 +874,9 @@
           "properties": {
             "status": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             }
           }
         }
@@ -281,21 +888,43 @@
         "usage_history": {
           "type": "object",
           "properties": {
-            "agents": { "type": "object" },
-            "skills": { "type": "object" },
-            "commands": { "type": "object" },
-            "hooks": { "type": "object" }
+            "agents": {
+              "type": "object"
+            },
+            "skills": {
+              "type": "object"
+            },
+            "commands": {
+              "type": "object"
+            },
+            "hooks": {
+              "type": "object"
+            }
           }
         },
         "dead_weight": {
           "type": "object",
           "properties": {
-            "stale_threshold_days": { "type": "integer", "minimum": 1 },
-            "grace_period_days": { "type": "integer", "minimum": 0 },
-            "last_detection_run": { "type": ["string", "null"], "format": "date-time" },
+            "stale_threshold_days": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "grace_period_days": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_detection_run": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
             "candidates_pending_issue": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             }
           }
         }
@@ -304,96 +933,322 @@
     "debug": {
       "type": "object",
       "properties": {
-        "last_failure_category": { "type": ["string", "null"] },
-        "failure_count_by_category": { "type": "object" },
-        "same_error_retry_count": { "type": "integer", "minimum": 0 },
-        "rescue_retry_count": { "type": "integer", "minimum": 0 },
-        "last_root_cause": { "type": ["string", "null"] },
-        "last_fix_scope": { "type": ["string", "null"] },
-        "last_fix_strategy": { "type": ["string", "null"] },
-        "flaky_suspected": { "type": "boolean" },
-        "debug_mode": { "type": ["string", "boolean"] }
+        "last_failure_category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failure_count_by_category": {
+          "type": "object"
+        },
+        "same_error_retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rescue_retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_root_cause": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_fix_scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_fix_strategy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flaky_suspected": {
+          "type": "boolean"
+        },
+        "debug_mode": {
+          "type": [
+            "string",
+            "boolean"
+          ]
+        }
       }
     },
     "onboarding": {
       "type": "object",
       "properties": {
-        "last_refresh": { "type": ["string", "null"], "format": "date-time" },
-        "refresh_count": { "type": "integer", "minimum": 0 }
+        "last_refresh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "refresh_count": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "improvement": {
       "type": "object",
       "properties": {
-        "stop_doing_review_date": { "type": ["string", "null"], "format": "date" },
-        "stop_doing_review_interval_days": { "type": "integer", "minimum": 1 },
-        "stop_doing_last_run": { "type": ["string", "null"], "format": "date-time" },
-        "stop_doing_candidates_found": { "type": "integer", "minimum": 0 }
+        "stop_doing_review_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "stop_doing_review_interval_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stop_doing_last_run": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "stop_doing_candidates_found": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "maintenance": {
       "type": "object",
       "description": "Post-release maintenance phase configuration. Activated when project.phase_mode = 'maintenance'.",
       "properties": {
-        "phase_mode": { "type": "string", "enum": ["development", "maintenance"] },
-        "released_at": { "type": ["string", "null"], "format": "date-time" },
-        "sla_target_availability": { "type": "number", "minimum": 0, "maximum": 1, "description": "SLA availability target (e.g. 0.995 = 99.5%)" },
-        "mttr_target_hours": { "type": "number", "minimum": 0, "description": "Mean Time To Recovery target in hours" },
-        "session_max_minutes": { "type": "integer", "minimum": 1, "maximum": 300, "description": "Max session length in maintenance mode (default 120)" },
-        "cron_schedule": { "type": "string", "enum": ["daily", "weekly", "biweekly", "monthly"], "description": "Maintenance session frequency" },
-        "error_budget_remaining_pct": { "type": "number", "minimum": 0, "maximum": 100 },
-        "last_dependency_scan": { "type": ["string", "null"], "format": "date-time" },
-        "last_security_audit": { "type": ["string", "null"], "format": "date-time" },
-        "last_weekly_devops": { "type": ["string", "null"], "format": "date-time" },
-        "last_monthly_devops": { "type": ["string", "null"], "format": "date-time" },
-        "last_quarterly_review": { "type": ["string", "null"], "format": "date-time" },
-        "incident_count_30d": { "type": "integer", "minimum": 0 },
+        "phase_mode": {
+          "type": "string",
+          "enum": [
+            "development",
+            "maintenance"
+          ]
+        },
+        "released_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "sla_target_availability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "SLA availability target (e.g. 0.995 = 99.5%)"
+        },
+        "mttr_target_hours": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Mean Time To Recovery target in hours"
+        },
+        "session_max_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "description": "Max session length in maintenance mode (default 120)"
+        },
+        "cron_schedule": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "biweekly",
+            "monthly"
+          ],
+          "description": "Maintenance session frequency"
+        },
+        "error_budget_remaining_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "last_dependency_scan": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_security_audit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_weekly_devops": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_monthly_devops": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_quarterly_review": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "incident_count_30d": {
+          "type": "integer",
+          "minimum": 0
+        },
         "open_incidents": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Active incident IDs (e.g. ['incident-20261022-P1'])"
         },
-        "last_incident_id": { "type": ["string", "null"] }
+        "last_incident_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "deploy": {
       "type": "object",
       "description": "Deployment tracking. CTO sets ready=true when system is deploy-ready. Actual deploy is executed manually by the user.",
       "properties": {
-        "ready": { "type": "boolean", "description": "CTO sets true when deployment is approved" },
-        "runbook_generated": { "type": "boolean" },
-        "runbook_path": { "type": ["string", "null"], "description": "Path to generated deploy runbook (e.g. reports/deploy-runbook-YYYYMMDD.md)" },
-        "pre_deploy_checklist_done": { "type": "boolean" },
-        "executed_at": { "type": ["string", "null"], "format": "date-time", "description": "Timestamp of manual deploy execution by user" },
-        "executed_by": { "type": ["string", "null"] },
-        "environment": { "type": ["string", "null"], "enum": ["staging", "production", null] },
-        "post_deploy_verified": { "type": "boolean" },
-        "notes": { "type": "string" }
+        "ready": {
+          "type": "boolean",
+          "description": "CTO sets true when deployment is approved"
+        },
+        "runbook_generated": {
+          "type": "boolean"
+        },
+        "runbook_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Path to generated deploy runbook (e.g. reports/deploy-runbook-YYYYMMDD.md)"
+        },
+        "pre_deploy_checklist_done": {
+          "type": "boolean"
+        },
+        "executed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Timestamp of manual deploy execution by user"
+        },
+        "executed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "staging",
+            "production",
+            null
+          ]
+        },
+        "post_deploy_verified": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "supervisor": {
       "type": "object",
       "description": "Autonomy Supervisor (bin/autonomy.sh) のガードレール。全て任意で既定値を上書きする。",
       "properties": {
-        "daily_max_minutes": { "type": "integer", "description": "1日の合計自律実行上限(分)。既定 600" },
-        "max_restarts_per_day": { "type": "integer", "description": "1日の再起動回数上限。既定 6" },
-        "session_minutes": { "type": "integer", "description": "1セッションの時間(分)。既定 300" },
-        "cooldown_seconds": { "type": "integer", "description": "再起動間のクールダウン(秒)。既定 30" },
-        "crash_loop_threshold": { "type": "integer", "description": "短命セッション連続で crash-loop 停止する回数。既定 3" },
-        "crash_loop_min_seconds": { "type": "integer", "description": "この秒数未満を短命セッションとみなす。既定 120" },
-        "credit_monthly_budget_usd": { "type": "number", "minimum": 0, "description": "Agent SDK 当月クレジット予算(USD)。0=無制限。当月消費が 95% 到達で credit-cap 停止 (PR-E)。既定 0" },
-        "halt_on_blocked": { "type": "boolean", "description": "blocked_issues 非空のとき supervisor を停止するか。既定 true(従来どおり停止)。false 明示でのみ opt-out し、ブロックを抱えたまま開発継続を許可する。security_critical>0 はこの設定に依らず常に停止 (fail-safe・opt-out 不可)。" }
+        "daily_max_minutes": {
+          "type": "integer",
+          "description": "1日の合計自律実行上限(分)。既定 600"
+        },
+        "max_restarts_per_day": {
+          "type": "integer",
+          "description": "1日の再起動回数上限。既定 6"
+        },
+        "session_minutes": {
+          "type": "integer",
+          "description": "1セッションの時間(分)。既定 300"
+        },
+        "cooldown_seconds": {
+          "type": "integer",
+          "description": "再起動間のクールダウン(秒)。既定 30"
+        },
+        "crash_loop_threshold": {
+          "type": "integer",
+          "description": "短命セッション連続で crash-loop 停止する回数。既定 3"
+        },
+        "crash_loop_min_seconds": {
+          "type": "integer",
+          "description": "この秒数未満を短命セッションとみなす。既定 120"
+        },
+        "credit_monthly_budget_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Agent SDK 当月クレジット予算(USD)。0=無制限。当月消費が 95% 到達で credit-cap 停止 (PR-E)。既定 0"
+        },
+        "halt_on_blocked": {
+          "type": "boolean",
+          "description": "blocked_issues 非空のとき supervisor を停止するか。既定 true(従来どおり停止)。false 明示でのみ opt-out し、ブロックを抱えたまま開発継続を許可する。security_critical>0 はこの設定に依らず常に停止 (fail-safe・opt-out 不可)。"
+        }
       }
     },
     "credits": {
       "type": "object",
       "description": "Agent SDK クレジット消費の鏡 (正本は ~/.claudeos/credits/ledger.jsonl)。可視化用の概算で実課金サイクルと厳密一致しない。",
       "properties": {
-        "month": { "type": "string", "description": "対象月 (YYYY-MM)" },
-        "total_usd": { "type": "number", "minimum": 0, "description": "当月の total_cost_usd 合計" },
-        "tokens_in": { "type": "integer", "minimum": 0, "description": "当月の入力トークン概算" },
-        "tokens_out": { "type": "integer", "minimum": 0, "description": "当月の出力トークン概算" },
-        "updated_at": { "type": ["string", "null"], "description": "最終更新 (ISO8601)" }
+        "month": {
+          "type": "string",
+          "description": "対象月 (YYYY-MM)"
+        },
+        "total_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "当月の total_cost_usd 合計"
+        },
+        "tokens_in": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当月の入力トークン概算"
+        },
+        "tokens_out": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当月の出力トークン概算"
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "最終更新 (ISO8601)"
+        }
       }
     }
   }

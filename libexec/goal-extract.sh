@@ -141,3 +141,22 @@ goal_extract__build() {
     | goal_extract__ensure_stop "$turns" \
     | goal_extract__truncate "$max"
 }
+
+# ------------------------------------------------------------
+# goal_extract__compose <goal_type> <goals_dir> <base_prompt_text> [header_text] [max_turns] [max_chars]
+#   起動プロンプトの単一合成点 (cron / headless / L1 / S1 が共用。Router 後段)。
+#     /goal 抽出成功: <directive>\n\n<header><base から埋込 /goal を除去>
+#     抽出失敗      : <header><base> (従来どおり START_PROMPT のみ運用へ降格)
+#   戻り値: 0=injected (/goal 注入) / 1=fallback (START_PROMPT のみ)。出力は両方で行う。
+#   ※ 呼び出し側は `if PROMPT="$(goal_extract__compose ...)"; then` で判定する (set -e 安全)。
+# ------------------------------------------------------------
+goal_extract__compose() {
+  local goal_type="$1" dir="$2" base="$3" header="${4:-}" turns="${5:-$GOAL_EXTRACT_MAX_TURNS}" max="${6:-$GOAL_EXTRACT_MAX_CHARS}"
+  local directive=""
+  if directive="$(goal_extract__build "$goal_type" "$dir" "$turns" "$max")" && [[ -n "$directive" ]]; then
+    printf '%s\n\n%s%s' "$directive" "$header" "$(printf '%s' "$base" | goal_extract__strip_block)"
+    return 0
+  fi
+  printf '%s%s' "$header" "$base"
+  return 1
+}

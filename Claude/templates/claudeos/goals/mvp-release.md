@@ -1,64 +1,47 @@
-# Goal: MVP Release
+# Goal: MVP Release（Primary Goal）
+
+新規 Project / Prototype / PoC / MVP / 主要機能未完成の最小実用版構築。
+Specialized: `production-release`（MVP 完成後の本番準備）。
+従来（v9 以前）の既定 goal_type。goal_router 不在の古い state.json でもこのファイルが使われる。
 
 /goal "
 ■ Goal
-MVP Release Candidate を完成させ、最小限の動作可能な状態でリリース判定を受ける。
+承認済み要件と UI 設計（OpenDesign 等がある場合）に基づき、主要 User Journey を実操作できる MVP を完成させ、リリース判定を受ける。
+
+■ Use When
+新規 Project / Prototype / PoC / MVP / 主要機能未完成 / 最小実用版。Router: state 不在・CI やテスト未整備・コミット数が少ない、intent が「MVP・PoC・最小版・新規」。
 
 ■ Priority
-CTO優先順位テーブル (CLAUDE.md §5.1) の優先度4: /goal の Goal 直結 Issue（MVP機能実装）
+1 主要 User Journey → 2 実動作 → 3 Auth / Data Integrity → 4 CI → 5 E2E → 6 Security → 7 Documentation → 8 UI 改善
 
 ■ Success Criteria
-- 全主要機能動作確認済み
-- API 疎通成功
-- 認証認可正常動作
-- DB CRUD 成功
-- CI 成功
-- Critical/High 脆弱性ゼロ
-- E2E テスト成功
-- README / 運用手順完成
-- Docker 起動成功（docker-compose.yml がある場合のみ）
-- ローカル環境再現可能
+- 主要業務フローが実操作可能（正常・空・エラー・権限別状態を確認可能）
+- API 疎通・認証認可・DB CRUD 成功、ローカル PostgreSQL の Migration/Seed を空 DB へ再実行可能
+- CI 成功、Critical/High 脆弱性ゼロ、E2E core シナリオ成功
+- README / 要件・設計・API・DB・運用文書更新、ローカル環境再現可能
 
 ■ Scope
-対象: MVP に必要な主要機能・API・認証・DB・基本UI
-対象外: 過剰なUI改善・Enterprise拡張機能・AI最適化・マイクロサービス分離
-許可操作: 機能実装・バグ修正・テスト追加・ドキュメント作成
-
-■ Forbidden Changes
-- 過剰なリファクタリング
-- 新技術の導入
-- アーキテクチャの全面変更
-- Enterprise向け機能の追加
+対象: MVP に必要な主要機能・API・認証・DB・基本 UI・CI
+対象外: 過剰な UI 改善、Enterprise 拡張、AI 最適化、マイクロサービス分離、大規模リファクタ、新技術導入
 
 ■ Execution Strategy
-ループ重点: Monitor 15% → Build 40% → Verify 30% → Improve 15%
-アプローチ: 動作 → 安定性 → セキュリティ → 保守性 → UI改善 の優先順位で進める。
+Monitor 15% → Build 40% → Verify 30% → Improve 15%。動作 → 安定性 → セキュリティ → 保守性 → UI の順。
 
-■ Agent Teams
-パターン: A（並列実装）
-推奨ロール: CTO → Developer（Backend）+ Developer（Frontend）+ QA
+■ Agent Strategy
+CTO → Backend + Frontend + QA 並列（worktree 分離）。Design（画面遷移・Responsive・A11y）/ Database / Security / DevOps は必要時。
 
 ■ Validation
-ゲート: Gate-1（Verify毎回）+ Gate-2（PR 作成前）
-必須チェック: API 正常系 + 認証フロー + E2E core シナリオ
+Gate-1（Verify 毎回: lint/test/build）+ Gate-2（PR 前: API 正常系 + 認証フロー + E2E core）。ホスト側 Preview で UI・API・認証・DB 接続確認。
 
 ■ Evidence Output
-- CI 結果 URL
-- E2E テスト結果（passed/failed 件数）
-- セキュリティスキャン結果（Critical/High 件数）
-- README 更新コミット URL
+- CI Run URL / E2E 結果（passed/failed）/ security scan（Critical/High 件数）/ README 更新コミット / PR URL
 
 ■ Constraints
-- 時間上限: 5時間以内
-- 修復試行: 最大5回（超過時は Blocked + Issue化）
-- 過剰リファクタ禁止・新技術導入禁止
+- 時間上限 5 時間、修復試行 5 回（超過で Blocked + Issue）
+- 過剰リファクタ・新技術導入禁止。本番デプロイ・Secrets・DNS は Human Gate
 
 ■ Stop Conditions
-正常終了:
-- MVP 完成条件全達成・CI 成功・PR 作成済み
-- 上記の測定可能基準を満たした時点で、残り時間・残ターンがあっても直ちに終了処理へ進んでよい（早期終了）
-異常終了（Failure）:
-- 修復試行5回到達 → Blocked + Issue起票
-- Critical 脆弱性未解消 → 停止 + P1 Issue起票
+正常終了: MVP 完成条件全達成・CI 成功・PR 作成（自動マージ条件充足時は squash merge）→ 早期終了可
+異常終了: 修復試行 5 回到達 → Blocked + Issue / Critical 脆弱性未解消 → 停止 + P1 Issue
 - or stop after 20 turns
 "
