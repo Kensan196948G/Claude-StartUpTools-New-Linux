@@ -118,6 +118,7 @@ bash bin/cron-schedule.sh add --project <NAME> --time 14:30 --dow 1,2,3,4,5,6 --
 ```
 
 - state.json の `goal_type` は変更しない（そのセッション限りの上書き）
+- v10 Goal Router 導入後も同じ意味: `CLAUDEOS_GOAL_TYPE_OVERRIDE` は Router に one-shot の明示指定として渡り、`goal_router.session_locked` / `locked_by_user` を立てない（次回の通常 cron は自動判定に戻る）。詳細は `docs/claude/20_統合GoalRouter.md`
 - 番人エントリも `cron.maxProjectsPerDay=2` の枠を消費する点に注意（メインスロットと同日に置く場合は空き枠を確認）
 
 ### 🔧 12 枠を超えて登録したいとき

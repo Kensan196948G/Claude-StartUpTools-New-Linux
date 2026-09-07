@@ -33,6 +33,8 @@
 | `Claude/templates/claude/skills/` | Source | frontmatter 付き実 skill（配布） |
 | `Claude/templates/claudeos/sdlc/` | Source | AI-Native SDLC 成果物テンプレート |
 | `tests/evals/` | Source | golden eval（Self-Improvement の回帰ゲート） |
+| `lib/goal-router.sh`, `Claude/templates/claudeos/goals/*.md` | Source | 統合 Goal Router（判定ロジック唯一の実装）と Primary 5 / Specialized 6 の /goal 本文 |
+| `Claude/templates/claude/claudeos/core/00-goal-system.md` | Source | Goal System 文書（`instructions/00-goal-system.md` は同一コピー） |
 | `docs/architecture/*.md` | Source | v10 仕様・設計・移行記録 |
 
 ## 配備先・生成物

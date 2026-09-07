@@ -51,7 +51,7 @@ Monitor → Plan → Development → Verify → Review → Improvement を完了
 
 ## 9. 統合 `/goal` からの開始方法
 
-`Claude/templates/claude/START_PROMPT.md`（各プロジェクトへ `.claude/START_PROMPT.md` として配布）の `/goal` 指示（引用符で囲んだ本文）1 回で、初期開発から本番リリース・リリース後安定化まで統括できる。§5 の品質ゲート成立時は自動マージで連続実行し、Approval PR 該当時または品質ゲート未達時のみ `Y / N` を求める。本文は 4000 文字以内（引用符込み）で CLAUDE.md へ複製しない（`tests/bats/unit/goal-inject.bats` が検証）。cron / headless 起動では `libexec/goal-extract.sh` が抽出して注入する。安定化完了後は「一旦終了」として最終報告を提示し、セッションは終了せず次の指示を待つ。
+本セッションの Goal は統合 Goal Router（`lib/goal-router.sh`）が state.json・Repository Evidence・ユーザー要求から Primary（development / mvp-release / assessment / deep-debug / product-assurance）と Specialized（production-release / hotfix / security-emergency / refactoring / safe-auto-merge / pr-babysit）を決め、`goals/<effective_goal_type>.md` の `/goal` を起動プロンプト先頭へ注入する（詳細は `.claude/claudeos/core/00-goal-system.md`）。`Claude/templates/claude/START_PROMPT.md`（各プロジェクトへ `.claude/START_PROMPT.md` として配布）は Router bootstrap と Router 未注入時の既定 `/goal` 指示（引用符で囲んだ本文）を持ち、決まった Goal 1 つで初期開発から本番リリース・リリース後安定化までを段階的に統括する。Goal はセッション中に自分で切り替えない（切替条件は Security Critical・重大 CI 失敗・deploy.ready/phase_mode 変化・ユーザー新指示のみ）。手動指定は `start-claude.sh --goal auto|<name>`、cron は `--goal-type`。§5 の品質ゲート成立時は自動マージで連続実行し、Approval PR 該当時または品質ゲート未達時のみ `Y / N` を求める。本文は 4000 文字以内（引用符込み）で CLAUDE.md へ複製しない（`tests/bats/unit/goal-inject.bats` が検証）。cron / headless 起動では `libexec/goal-extract.sh` が抽出して注入する。安定化完了後は「一旦終了」として最終報告を提示し、セッションは終了せず次の指示を待つ。
 
 ## 10. クロスセッションメッセージング
 

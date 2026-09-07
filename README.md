@@ -74,6 +74,7 @@ cp config/config.json.template config/config.json
 |---|---|---|
 | `L1` | 🖥️ | Claude をフォアグラウンド起動（既定 無制限。`supervisor.defaults.foregroundSessionMinutes` で分数指定可） |
 | `S1` | 🌙 | Claude をバックグラウンド自律起動（既定 5h 上限） |
+| — | 🎯 | どちらも起動時に **Goal Router** が Primary / Specialized Goal を自動判定（`bin/start-claude.sh --project P --foreground --goal auto\|<name> --intent "<要求>"` で手動 override） |
 | `15` | 📺 | セッション状態監視を開く |
 | `14` | ⏰ | cron登録・編集・削除 |
 
@@ -208,6 +209,30 @@ flowchart TB
   Ask --> A5[🔀 merge / main直push]
   Ask --> A6[🌐 Supervisor全適用の最終実行]
 ```
+
+## 🎯 統合 Goal Router（Native Goal Routing）
+
+起動経路（L1 / S1 / T1 / cron / headless / Supervisor）はすべて `lib/goal-router.sh` の同じ判定を通り、
+**Project 状態 + Repository Evidence + ユーザー要求 → Primary Goal → Specialized Goal → effective goal_type → `goals/<type>.md` の /goal 注入** の段階構造で動きます。巨大な万能 /goal は廃止しました。
+
+| Primary Goal | 用途 | Specialized（配下） |
+|---|---|---|
+| `development` | 既存 Project の通常開発・継続改善 | refactoring / hotfix |
+| `mvp-release` | 新規 / Prototype / PoC / MVP | production-release |
+| `assessment` | 評価・Readiness・Architecture / Security Review（改善実装まで） | security-emergency |
+| `deep-debug` | CI 失敗・Runtime Error・Regression の根本原因解析 | hotfix / security-emergency |
+| `product-assurance` | Release 前総合品質保証（DB 復旧・Security・Contract・E2E・性能・A11y） | production-release / safe-auto-merge / pr-babysit |
+
+| 操作 | 方法 |
+|---|---|
+| 自動判定（既定） | `state.json` の `goal_router.mode=auto`。Security Critical > CI 失敗 > 明示要求 > deploy.ready / Release フェーズ > phase_mode > 旧 `goal_type` > 新規判定の順 |
+| 手動 override | `bin/start-claude.sh --project P --foreground --goal deep-debug`（manual lock）/ `--goal auto`（解除）/ `--intent "全体を評価して"`（要求を Evidence に） |
+| cron one-shot | `bin/cron-schedule.sh add … --goal-type pr-babysit`（state を lock しない従来互換） |
+| 判定の確認 | `bash libexec/goal-router.sh <project> --dry-run [--json] [--explain]`、Mission Control 🧬 v10 パネル |
+| Flapping 防止 | session lock 12h（`CLAUDEOS_GOAL_LOCK_MINUTES`）。reroute は Security Critical / 重大 CI 失敗 / deploy.ready・phase_mode 変化 / 新指示 / `--reroute` のみ |
+| 無効化 / fallback | `CLAUDEOS_GOAL_ROUTER_DISABLE=1` で従来 `goal_type`。Router 失敗時は explicit → goal_type → phase_mode → mvp-release で必ず起動 |
+
+Human Gate（main 直接 push・本番デプロイ・Secrets・破壊的操作）は Router 導入前と同一です。設計は `docs/architecture/GOAL_ROUTER.md`、運用は `docs/claude/20_統合GoalRouter.md`。
 
 ## 🧬 ClaudeOS v10（Native-Agentic Development OS）
 

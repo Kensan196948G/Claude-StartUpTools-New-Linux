@@ -236,3 +236,54 @@ exit 0
   [[ "$output" == *"duration=301m"* ]]
   [[ "$output" != *"上限 300m"* ]]
 }
+
+# ---- v10 統合 Goal Router (L1 / S1 / T1 経路) ----------------------
+@test "start-claude: --dry-run は Goal Router の判定 (goal_effective) を表示し state.json を更新しない" {
+  printf '{"goal_type":"refactoring","project":{"phase_mode":"development"}}' > "$TEST_TEMP/projects/MyProj/state.json"
+  CLAUDEOS_GOAL_ROUTER_GH=0 run bash "$SCRIPT" --project MyProj --foreground --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"goal_primary=development"* ]]
+  [[ "$output" == *"goal_effective=refactoring"* ]]
+  run grep -c goal_router "$TEST_TEMP/projects/MyProj/state.json"; [ "$output" = "0" ]
+}
+@test "start-claude: --goal deep-debug は manual override として採用され dry-run に反映される" {
+  CLAUDEOS_GOAL_ROUTER_GH=0 run bash "$SCRIPT" --project MyProj --background --goal deep-debug --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"goal_effective=deep-debug"* ]]
+  [[ "$output" == *"goal_mode=manual"* ]]
+}
+@test "start-claude: --intent は user intent として Router に渡る" {
+  CLAUDEOS_GOAL_ROUTER_GH=0 run bash "$SCRIPT" --project MyProj --foreground --intent "全体を評価して" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"goal_primary=assessment"* ]]
+}
+@test "start-claude: 不正な --goal は拒否する" {
+  run bash "$SCRIPT" --project MyProj --foreground --goal bogus --dry-run
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--goal は auto"* ]]
+}
+@test "start-claude: --background --goal assessment は state.json に manual lock を永続化する (S1 → cron-launcher が参照)" {
+  printf '{"goal_type":"mvp-release"}' > "$TEST_TEMP/projects/MyProj/state.json"
+  CLAUDEOS_GOAL_ROUTER_GH=0 run bash "$SCRIPT" --project MyProj --background --goal assessment
+  [ "$status" -eq 0 ]
+  run python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['goal_router']['mode'], d['goal_router']['effective_goal_type'], d['goal_type'])" "$TEST_TEMP/projects/MyProj/state.json"
+  [ "$output" = "manual assessment mvp-release" ]
+}
+@test "start-claude: foreground 直起動は Router の /goal を合成したプロンプトを渡す (START_PROMPT の本文も保持)" {
+  unset TMUX DISPLAY WAYLAND_DISPLAY
+  export CCSU_ROOT="$TEST_TEMP/ccsu-root"
+  mkdir -p "$CCSU_ROOT/Claude/templates/claude"
+  printf '%s\n' 'TEST START PROMPT CONTENT' > "$CCSU_ROOT/Claude/templates/claude/START_PROMPT.md"
+  printf '{"goal_type":"hotfix"}' > "$TEST_TEMP/projects/MyProj/state.json"
+  CLAUDEOS_GOAL_ROUTER_GH=0 run bash "$SCRIPT" --project MyProj --foreground --duration 5
+  [ "$status" -eq 0 ]
+  grep -q -- "TEST START PROMPT CONTENT" "$TEST_TEMP/claude.log"
+  grep -q -- '/goal "' "$TEST_TEMP/claude.log"
+  grep -q -- '\[Goal Router\] primary=deep-debug specialized=hotfix effective_goal_type=hotfix' "$TEST_TEMP/claude.log"
+}
+@test "start-claude: --safe-mode は Goal Router を通さない (診断起動)" {
+  printf '{"goal_type":"mvp-release"}' > "$TEST_TEMP/projects/MyProj/state.json"
+  run bash "$SCRIPT" --project MyProj --safe-mode --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"goal_effective="* ]]
+}

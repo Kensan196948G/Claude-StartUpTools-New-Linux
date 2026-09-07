@@ -344,3 +344,72 @@ _seed_state() {
   run cat "$CLAUDE_ARGV"
   [[ "$output" == *"--dangerously-skip-permissions"* ]]
 }
+
+# =========================================================
+# v10 統合 Goal Router (cron / headless / Supervisor 経路)
+# =========================================================
+_seed_router_libs() {
+  cp "$REPO_ROOT/lib/goal-router.sh" "$CANON_LIB/goal-router.sh"
+  cp "$REPO_ROOT/libexec/goal-extract.sh" "$CANON_LIBEXEC/goal-extract.sh"
+  export CLAUDEOS_GOALS_DIR="$REPO_ROOT/Claude/templates/claudeos/goals"
+  export CLAUDEOS_GOAL_ROUTER_GH=0
+}
+_prompt_arg() { awk 'f{print} /^-p$/{f=1; next}' "$CLAUDE_ARGV" | head -1; }
+
+@test "goal-router: state.goal_type=refactoring は Router 経由で effective=refactoring の /goal を注入し goal_router を記録する" {
+  _seed_router_libs
+  printf '{"goal_type":"refactoring","project":{"phase_mode":"development"},"execution":{}}' > "$PROJECT_DIR/state.json"
+  run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  grep -q '/goal "' "$CLAUDE_ARGV"
+  grep -q '技術負債' "$CLAUDE_ARGV"
+  grep -q 'goal_router=\[primary=development specialized=refactoring effective=refactoring' "$CLAUDE_ARGV"
+  run python3 -c "import json,sys; d=json.load(open(sys.argv[1]))['goal_router']; print(d['primary_goal'], d['effective_goal_type'])" "$PROJECT_DIR/state.json"
+  [ "$output" = "development refactoring" ]
+}
+@test "goal-router: kpi.security_critical>0 は goal_type を上書きして security-emergency を注入する" {
+  _seed_router_libs
+  printf '{"goal_type":"mvp-release","kpi":{"security_critical":1},"execution":{}}' > "$PROJECT_DIR/state.json"
+  run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  grep -q 'effective=security-emergency' "$CLAUDE_ARGV"
+  grep -q 'Security Emergency\|脆弱性' "$CLAUDE_ARGV"
+}
+@test "goal-router: CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit は one-shot で尊重され state を lock しない" {
+  _seed_router_libs
+  printf '{"goal_type":"mvp-release","execution":{}}' > "$PROJECT_DIR/state.json"
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  grep -q 'effective=pr-babysit' "$CLAUDE_ARGV"
+  run python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['goal_type'], d['goal_router']['session_locked'], d['goal_router']['locked_by_user'])" "$PROJECT_DIR/state.json"
+  [ "$output" = "mvp-release False False" ]
+}
+@test "goal-router: Supervisor resume (CLAUDEOS_GOAL_TRIGGER) は前回 Goal を維持し transition に記録する" {
+  _seed_router_libs
+  printf '{"goal_type":"mvp-release","project":{"phase_mode":"development"},"execution":{},"goal_router":{"mode":"auto","primary_goal":"assessment","session_locked":true,"last_routed_at":"%s","evidence_snapshot":{"phase_mode":"development","security_critical":"0","ci":"unknown","deploy_ready":""}}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PROJECT_DIR/state.json"
+  run env CLAUDEOS_HEADLESS=1 CLAUDEOS_GOAL_TRIGGER=supervisor-resume bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  grep -q 'effective=assessment' "$CLAUDE_ARGV"
+  run python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['goal_router']['last_transition_reason'])" "$PROJECT_DIR/state.json"
+  [ "$output" = "kept:supervisor-resume" ]
+}
+@test "goal-router: lib 不在時は従来どおり state.goal_type で起動する (後方互換)" {
+  rm -f "$CANON_LIB/goal-router.sh"
+  cp "$REPO_ROOT/libexec/goal-extract.sh" "$CANON_LIBEXEC/goal-extract.sh"
+  export CLAUDEOS_GOALS_DIR="$REPO_ROOT/Claude/templates/claudeos/goals"
+  printf '{"goal_type":"hotfix","execution":{}}' > "$PROJECT_DIR/state.json"
+  run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  grep -q 'goal_type=hotfix' "$CLAUDE_ARGV"
+  ! grep -q 'goal_router=' "$CLAUDE_ARGV"
+  run grep -c goal_router "$PROJECT_DIR/state.json"; [ "$output" = "0" ]
+}
+@test "goal-router: 注入 /goal は 1 個だけ (START_PROMPT の既定 /goal は除去される)" {
+  _seed_router_libs
+  cp "$REPO_ROOT/Claude/templates/claude/START_PROMPT.md" "$PROJECT_DIR/.claude/START_PROMPT.md"
+  printf '{"goal_type":"mvp-release","execution":{}}' > "$PROJECT_DIR/state.json"
+  run env CLAUDEOS_HEADLESS=1 bash "$CRON_LAUNCHER" Demo 1
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^/goal "' "$CLAUDE_ARGV")" = "1" ]
+  grep -q 'Router bootstrap' "$CLAUDE_ARGV"
+}
