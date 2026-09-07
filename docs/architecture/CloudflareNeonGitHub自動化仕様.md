@@ -1,5 +1,10 @@
 # Cloudflare / Neon / GitHub自動化 運用仕様
 
+> **状態: Deprecated（2026-09-07、ClaudeOS v10）** — Neon 運用は Local PostgreSQL へ移行済み。本文は履歴保持のため改変せず残す。
+> 現行の正本: `GitHub開発運用仕様.md`（GitHub）/ `PostgreSQLデータ運用仕様.md`（DB）/ `Cloudflare公開基盤仕様.md`（Cloudflare）。
+> 中央配布元（Deep-Seek-Harness-Project）の同名ファイルは本リポジトリからは編集しない（CENTRAL_POLICY_CONFLICT は `MIGRATION_V9_TO_V10.md` §5）。
+
+
 状態: 2026-08-15 制定（v1）
 正本: 本ファイル、`GITHUB_POLICY.md`
 

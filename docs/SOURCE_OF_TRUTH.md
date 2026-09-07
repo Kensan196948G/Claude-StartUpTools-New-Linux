@@ -26,12 +26,22 @@
 | `config/README.md` | Source | 設定運用ガイド |
 | `tests/bats/` | Source | bash 実装の検証 |
 | `.github/workflows/ci.yml` | Source | Ubuntu CI |
+| `config/claude-code-compat.json` | Source | Claude Code 互換性ポリシー（minimum / recommended / tested、Capability probe） |
+| `config/agent-catalog.json` | Source | Lazy Agent Catalog（first-class / catalog / merge / remove-candidate） |
+| `Claude/templates/claudeos/policy/` | Source | CLAUDE.md の詳細方針（逐語移設）。CLAUDE.md は要約 |
+| `Claude/templates/claude/rules/` | Source | path-scoped rules（配布） |
+| `Claude/templates/claude/skills/` | Source | frontmatter 付き実 skill（配布） |
+| `Claude/templates/claudeos/sdlc/` | Source | AI-Native SDLC 成果物テンプレート |
+| `tests/evals/` | Source | golden eval（Self-Improvement の回帰ゲート） |
+| `docs/architecture/*.md` | Source | v10 仕様・設計・移行記録 |
 
 ## 配備先・生成物
 
 | パス | 分類 | 備考 |
 |---|---|---|
-| `.claude/claudeos/` | Deployed | `Claude/templates/claudeos/` から同期 |
+| `.claude/claudeos/` | Deployed | `Claude/templates/claudeos/` から同期（hooks / policy / agents / sdlc / system） |
+| `.claude/agents/`, `.claude/rules/`, `.claude/skills/` | Deployed | templates から配布（first-class agents / rules / 実 skill） |
+| `CLAUDE.md`, `Claude/CLAUDE.md`, `Claude/templates/claudeos/examples/CLAUDE.md` | Deployed | `Claude/templates/claude/CLAUDE.md` の同一コピー |
 | `config/config.json` | Deployed | 実機ローカル設定。コミットしない |
 | `~/.claudeos/` | Deployed/Generated | Supervisor 状態、cron launcher、ログ |
 | `logs/` | Generated | 実行ログ |
@@ -59,4 +69,4 @@ Claude テンプレートを変更
 
 - SSH 接続、リモート配布、Windows Terminal、PowerShell/Pester は本Linux版の対象外です。
 - Supervisor の全プロジェクト適用は、実行直前に人間の最終選択を必要とします。
-- CTO Claude は実装、検証、レビュー、PR準備まで自律実行できます。merge は `Claude/templates/claudeos/docs/auto-merge-protocol.md` に従い、main/default branch は人間の最終判断、main 以外は gate 全通過時のみ自動実行できます。公開、削除、課金、Secrets は人間が最終判断します。
+- CTO Claude は実装、検証、レビュー、PR 準備、品質ゲート充足 PR の自動マージ（`gh pr merge --auto --squash`）まで自律実行できます。高リスク変更（DNS / Secrets / 認証 / 破壊的 DB 操作 / 課金 / 公開範囲 / security policy / 自己改善結果）は Approval PR で人間が最終判断します（`docs/architecture/AI開発ガバナンス仕様.md`）。
