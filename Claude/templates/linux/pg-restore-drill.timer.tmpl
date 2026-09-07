@@ -1,0 +1,10 @@
+[Unit]
+Description=ClaudeOS @PROJECT@ PostgreSQL restore drill timer (@DB@)
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
