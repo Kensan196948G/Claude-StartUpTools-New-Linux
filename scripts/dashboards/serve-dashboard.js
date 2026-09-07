@@ -1282,6 +1282,38 @@ let _healthCache = null;
 let _healthCacheAt = 0;
 const HEALTH_CACHE_TTL = 15000; // 15 seconds
 
+// ── ClaudeOS v10 platform status (/api/v10) ────────────────────────────────
+// PostgreSQL health / backup / restore drill, Claude Code capability matrix,
+// native background sessions (claude agents --json), agent routing log, hook wiring.
+// All sources are best-effort with short timeouts; never throws.
+function v10RunJson(cmd, args, timeoutMs) {
+  try {
+    const r = require('child_process').spawnSync(cmd, args, { cwd: PROJ_ROOT, encoding: 'utf8', timeout: timeoutMs, env: { ...process.env, CLAUDEOS_PLAIN_OUTPUT: '1' } });
+    if (r.status !== 0 || !r.stdout) return { error: (r.stderr || `exit ${r.status}`).slice(0, 200) };
+    return JSON.parse(r.stdout);
+  } catch (e) { return { error: e.message.slice(0, 200) }; }
+}
+function handleV10(res) {
+  const out = { generated: new Date().toISOString() };
+  out.postgres = v10RunJson('bash', ['libexec/diag-postgres.sh', '--json'], 20000);
+  out.compat   = v10RunJson('bash', ['libexec/diag-claude-compat.sh', '--json'], 15000);
+  const hasAgents = out.compat && out.compat.capabilities && out.compat.capabilities['agents-subcommand'] === 'available';
+  out.claude_agents = hasAgents && process.env.CCSU_DISABLE_AGENTS_JSON !== '1'
+    ? v10RunJson('claude', ['agents', '--json', '--all'], 15000)
+    : { skipped: true, reason: hasAgents ? 'disabled' : 'claude agents subcommand unavailable' };
+  try {
+    const st = JSON.parse(fs.readFileSync(path.join(PROJ_ROOT, 'state.json'), 'utf8'));
+    out.routing_log = ((st.execution || {}).routing_log || []).slice(-10);
+    out.warnings = (st.warnings || []).slice(-10);
+  } catch { out.routing_log = []; out.warnings = []; }
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(PROJ_ROOT, '.claude', 'settings.json'), 'utf8'));
+    out.hooks = Object.fromEntries(Object.entries(settings.hooks || {}).map(([ev, entries]) => [ev, entries.reduce((n, e) => n + (e.hooks || []).length, 0)]));
+  } catch { out.hooks = {}; }
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.end(JSON.stringify(out, null, 2));
+}
+
 function handleSystemHealth(res) {
   // Return cached response if fresh
   if (_healthCache && (Date.now() - _healthCacheAt) < HEALTH_CACHE_TTL) {
@@ -1630,6 +1662,7 @@ if (require.main === module) {
       return;
     }
     if (pn === '/api/events')                         { return handleSSE(req, res); }
+    if (pn === '/api/v10')                            { return handleV10(res); }
     if (pn === '/api/system-health')                  { return handleSystemHealth(res); }
     if (pn === '/api/supervisor/status')              { return handleSupervisorStatus(res); }
     // Cron registry CRUD
