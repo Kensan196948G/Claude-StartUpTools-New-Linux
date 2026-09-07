@@ -323,3 +323,138 @@ _gr() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['goal_ro
   [[ "$(goal_router__header)" == "[Goal Router] primary=mvp-release specialized=none effective_goal_type=mvp-release"* ]]
   [[ "$(goal_router__summary)" == *"effective=mvp-release"* ]]
 }
+
+# ---- Runtime Evidence (health / logs / Cloudflare) ----------------
+@test "runtime: runtime_health=down → deep-debug (0.90)、本番運用中 (deploy.executed_at) なら hotfix" {
+  out="$(_route state_present=1 runtime_health=down phase_mode=development)"
+  [ "$(_field "$out" primary)" = "deep-debug" ]; [ -z "$(_field "$out" specialized)" ]
+  [ "$(_field "$out" confidence)" = "0.90" ]
+  out="$(_route state_present=1 runtime_health=down phase_mode=development deploy_executed=true)"
+  [ "$(_field "$out" effective)" = "hotfix" ]
+}
+@test "runtime: health down は CI 失敗より優先し、Security Critical には劣後する" {
+  out="$(_route state_present=1 runtime_health=down ci=failure)"
+  [[ "$(_field "$out" reason)" == runtime-incident* ]]
+  out="$(_route state_present=1 runtime_health=down security_critical=1)"
+  [ "$(_field "$out" effective)" = "security-emergency" ]
+}
+@test "runtime: cf_deploy=failure → deep-debug (cloudflare-deploy-failure)" {
+  out="$(_route state_present=1 cf_deploy=failure phase_mode=development)"
+  [ "$(_field "$out" primary)" = "deep-debug" ]
+  [[ "$(_field "$out" reason)" == cloudflare-deploy-failure* ]]
+}
+@test "runtime: error_log のエラー件数が閾値以上 → deep-debug (0.75)、閾値未満は影響しない" {
+  out="$(_route state_present=1 runtime_errors=7 phase_mode=development has_ci=1 has_tests=1 git_commits=50)"
+  [ "$(_field "$out" primary)" = "deep-debug" ]; [ "$(_field "$out" confidence)" = "0.75" ]
+  out="$(_route state_present=1 runtime_errors=2 phase_mode=development has_ci=1 has_tests=1 git_commits=50)"
+  [ "$(_field "$out" primary)" = "development" ]
+  CLAUDEOS_GOAL_RUNTIME_ERROR_THRESHOLD=2 out="$(_route state_present=1 runtime_errors=2 phase_mode=development has_ci=1 has_tests=1 git_commits=50)"
+  [ "$(_field "$out" primary)" = "deep-debug" ]
+}
+@test "reroute: health が新たに down になったら lock を破る (down 継続中は維持)" {
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  out="$(_route state_present=1 runtime_health=down prev_primary_goal=development prev_session_locked=true "prev_last_routed_at=$now" prev_snap_runtime_health=ok)"
+  [ "$(_field "$out" transition)" = "reroute" ]; [ "$(_field "$out" primary)" = "deep-debug" ]
+  out="$(_route state_present=1 runtime_health=down prev_primary_goal=deep-debug prev_session_locked=true "prev_last_routed_at=$now" prev_snap_runtime_health=down)"
+  [[ "$(_field "$out" transition)" == kept || "$(_field "$out" transition)" == unchanged ]]   # lock 維持 (reroute ではない)
+  [ "$(_field "$out" primary)" = "deep-debug" ]
+}
+@test "evidence: state.runtime.health_url を curl で判定 (503 → down、200 → ok)" {
+  export CLAUDEOS_GOAL_ROUTER_RUNTIME=1
+  _state '{"runtime":{"health_url":"http://localhost:1/health"}}'
+  make_stub_bin curl 'printf 503'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" runtime_health)" = "down" ]; [ "$(_field "$out" has_runtime)" = "1" ]
+  make_stub_bin curl 'printf 200'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" runtime_health)" = "ok" ]
+}
+@test "evidence: state.runtime.error_log の直近エラー件数を数える" {
+  export CLAUDEOS_GOAL_ROUTER_RUNTIME=1
+  printf 'INFO ok\nERROR boom\nTraceback (most recent call last)\nWARN meh\nFATAL dead\n' > "$TEST_TEMP/app.log"
+  _state "{\"runtime\":{\"error_log\":\"$TEST_TEMP/app.log\"}}"
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" runtime_errors)" = "3" ]
+}
+@test "evidence: runtime 設定なしは unknown / has_runtime=0、CLAUDEOS_GOAL_ROUTER_RUNTIME=0 で probe しない" {
+  _state '{"goal_type":"mvp-release"}'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" runtime_health)" = "unknown" ]; [ "$(_field "$out" has_runtime)" = "0" ]
+  export CLAUDEOS_GOAL_ROUTER_RUNTIME=0
+  _state '{"runtime":{"health_url":"http://localhost:1/health"}}'
+  make_stub_bin curl 'echo CALLED >> "$TEST_TEMP/curl.log"; printf 503'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" runtime_health)" = "unknown" ]; [ ! -f "$TEST_TEMP/curl.log" ]
+}
+@test "evidence: Cloudflare Pages の latest_stage.status を wrangler --json から読む (failure / success / none)" {
+  export CLAUDEOS_GOAL_ROUTER_CF=1
+  _state '{"runtime":{"cloudflare":{"project":"my-pages"}}}'
+  make_stub_bin wrangler 'printf "%s\n" "$*" >> "$TEST_TEMP/wrangler.log"; echo "[{\"id\":\"d1\",\"latest_stage\":{\"name\":\"deploy\",\"status\":\"failure\"}}]"'
+  out="$(goal_router__runtime_evidence "$PROJ/state.json")"
+  [ "$(_field "$out" cf_deploy)" = "failure" ]
+  grep -q -- '--project-name my-pages --environment production --json' "$TEST_TEMP/wrangler.log"
+  make_stub_bin wrangler 'echo "[{\"latest_stage\":{\"status\":\"success\"}}]"'
+  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "success" ]
+  make_stub_bin wrangler 'echo "[]"'
+  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "none" ]
+}
+@test "evidence: Cloudflare Worker は deployments list の成否で判定、CF=0 なら wrangler を呼ばない" {
+  export CLAUDEOS_GOAL_ROUTER_CF=1
+  _state '{"runtime":{"cloudflare":{"worker":"my-worker"}}}'
+  make_stub_bin wrangler 'exit 1'
+  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "failure" ]
+  make_stub_bin wrangler 'echo "[]"; exit 0'
+  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "success" ]
+  export CLAUDEOS_GOAL_ROUTER_CF=0
+  make_stub_bin wrangler 'echo CALLED >> "$TEST_TEMP/wr.log"; echo "[]"'
+  [ "$(_field "$(goal_router__runtime_evidence "$PROJ/state.json")" cf_deploy)" = "unknown" ]; [ ! -f "$TEST_TEMP/wr.log" ]
+}
+@test "resolve: runtime 設定つき state の persist は schema に適合し snapshot に runtime_health を持つ" {
+  export CLAUDEOS_GOAL_ROUTER_RUNTIME=1
+  cp "$REPO_ROOT/state.json.example" "$PROJ/state.json"
+  python3 - "$PROJ/state.json" <<'PY'
+import json,sys; f=sys.argv[1]; d=json.load(open(f)); d['runtime']['health_url']='http://localhost:1/health'; json.dump(d,open(f,'w'))
+PY
+  make_stub_bin curl 'printf 500'
+  run goal_router__resolve "$PROJ"
+  [ "$output" = "deep-debug" ]
+  run node "$REPO_ROOT/scripts/validate-state-example.js" "$PROJ/state.json"; [ "$status" -eq 0 ]
+  [ "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['goal_router']['evidence_snapshot']['runtime_health'])" "$PROJ/state.json")" = "down" ]
+}
+
+# ---- LLM intent (claude -p 補完) ----------------------------------
+@test "intent_llm: CLAUDEOS_GOAL_INTENT_LLM=0 は claude を呼ばず空" {
+  make_stub_bin claude 'echo CALLED >> "$TEST_TEMP/claude.log"; echo "{\"result\":\"development\"}"'
+  [ -z "$(goal_router__intent_llm 'なにかして')" ]; [ ! -f "$TEST_TEMP/claude.log" ]
+}
+@test "intent_llm: auto は Claude Code セッション内 (CLAUDECODE=1) では呼ばない、1 なら呼ぶ" {
+  make_stub_bin claude 'if [[ "$1" == "--help" ]]; then echo "--bare --no-session-persistence"; exit 0; fi; printf "%s\n" "$*" >> "$TEST_TEMP/claude.log"; echo "{\"type\":\"result\",\"result\":\"deep-debug/hotfix\"}"'
+  CLAUDECODE=1 CLAUDEOS_GOAL_INTENT_LLM=auto run goal_router__intent_llm 'ログインが落ちる'
+  [ -z "$output" ]; [ ! -f "$TEST_TEMP/claude.log" ]
+  CLAUDECODE=1 CLAUDEOS_GOAL_INTENT_LLM=1 run goal_router__intent_llm 'ログインが落ちる'
+  [ "$output" = "deep-debug hotfix" ]
+  grep -q -- '--model haiku' "$TEST_TEMP/claude.log"
+  grep -q -- '--output-format json' "$TEST_TEMP/claude.log"
+  grep -q -- '--bare' "$TEST_TEMP/claude.log"
+}
+@test "intent_llm: 不正ラベル / none / 空出力は捨てる (fail-safe)、Specialized 単独は Primary を補う" {
+  export CLAUDEOS_GOAL_INTENT_LLM=1
+  make_stub_bin claude 'echo "{\"result\":\"banana\"}"'; [ -z "$(goal_router__intent_llm 'x')" ]
+  make_stub_bin claude 'echo "{\"result\":\"none\"}"'; [ -z "$(goal_router__intent_llm 'x')" ]
+  make_stub_bin claude 'exit 1'; [ -z "$(goal_router__intent_llm 'x')" ]
+  make_stub_bin claude 'echo "{\"result\":\"Label: refactoring\"}"'; [ "$(goal_router__intent_llm 'x')" = "development refactoring" ]
+  make_stub_bin claude 'echo "{\"result\":\"mvp-release/hotfix\"}"'; [ "$(goal_router__intent_llm 'x')" = "mvp-release" ]   # 不許可の組合せは Specialized を落とす
+}
+@test "intent_llm: evidence はキーワード判定不能のときだけ LLM を使い、route は user-intent-llm (0.70) で採用" {
+  export CLAUDEOS_GOAL_INTENT_LLM=1
+  make_stub_bin claude 'printf "%s\n" "$*" >> "$TEST_TEMP/claude.log"; echo "{\"result\":\"assessment\"}"'
+  _state '{"goal_type":"mvp-release","project":{"phase_mode":"development"}}'
+  out="$(goal_router__evidence "$PROJ" 'このプロダクトの現状はどう？')"
+  [ "$(_field "$out" intent_llm)" = "assessment" ]
+  res="$(printf '%s\n' "$out" | goal_router__route)"
+  [ "$(_field "$res" primary)" = "assessment" ]; [ "$(_field "$res" confidence)" = "0.70" ]
+  [[ "$(_field "$res" evidence)" == *"user_intent_llm:assessment"* ]]
+  rm -f "$TEST_TEMP/claude.log"
+  out="$(goal_router__evidence "$PROJ" 'CI が失敗しているので直して')"   # キーワードで判定できる → LLM 不使用
+  [ -z "$(_field "$out" intent_llm)" ]; [ ! -f "$TEST_TEMP/claude.log" ]
+}

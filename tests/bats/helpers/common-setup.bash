@@ -25,6 +25,8 @@ _bats_common_setup() {
 
   # 実マシンの claude daemon へ問い合わせない (watch-session の claude agents --json を密閉化)
   export CCSU_DISABLE_AGENTS_JSON=1
+  # Goal Router の外部呼び出し (gh / wrangler / claude -p) はテストでは既定で密閉化 (必要なテストだけ再有効化)
+  export CLAUDEOS_GOAL_ROUTER_GH=0 CLAUDEOS_GOAL_ROUTER_CF=0 CLAUDEOS_GOAL_INTENT_LLM=0
 }
 
 # _bats_common_teardown — 各テスト後に実行

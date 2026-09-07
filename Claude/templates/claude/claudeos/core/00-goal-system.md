@@ -32,8 +32,10 @@ Runtime/Repo ─┘                                                             
 | User Intent | 「作って / 実装して」→ development、「MVP / PoC」→ mvp-release、「評価 / 監査」→ assessment、「直して / CI 失敗」→ deep-debug、「総合テスト / リリース判定」→ product-assurance |
 | Project State | `phase_mode` / `goal_type` / `deploy.ready` / `execution.phase` / `stable.stable_achieved` / `kpi.security_critical` / `blocked_issues` |
 | Repository | git（コミット数・dirty）、CI ワークフローとテストの有無、open PR、最新 CI 結果（gh、任意） |
+| Runtime | `state.runtime.health_url`（health check）、`state.runtime.error_log`（直近エラー件数）、`state.runtime.cloudflare.project|worker`（wrangler deploy 状態）。未設定は影響なし |
+| LLM 分類 | キーワード表で判定不能な intent だけ `claude -p --model haiku` で補完（`CLAUDEOS_GOAL_INTENT_LLM`、fail-safe） |
 
-優先順位（競合時）: security-emergency > deep-debug > hotfix > product-assurance > production-release > assessment > mvp-release > development。
+優先順位（競合時）: security-emergency > deep-debug（runtime incident > CI failure > Cloudflare deploy failure）> hotfix > product-assurance > production-release > assessment > mvp-release > development。
 ユーザーの明示指定（`--goal <name>`）は Security Critical がない限り尊重する。
 
 ## Primary Goal（5 分類）
@@ -69,7 +71,8 @@ Specialized Goal は Primary を置き換えず、**実行モードを狭める�
 
 | 経路 | 方法 |
 |---|---|
-| L1 / S1 / T1 | `start-claude.sh --project P --foreground --goal auto\|<name> [--intent "<要求>"]` |
+| メニュー L1 / T1 / S1 | Yes 確認後に「🎯 Goal [自動]」「📝 要求」を対話入力（Enter = 自動、`auto` = 固定解除） |
+| L1 / S1 / T1 (CLI) | `start-claude.sh --project P --foreground --goal auto\|<name> [--intent "<要求>"]` |
 | cron | `cron-schedule.sh add … --goal-type <name>`（one-shot、state を lock しない） |
 | CLI | `libexec/goal-router.sh <project> [--goal …] [--intent …] [--dry-run] [--json]` |
 | 無効化 | `CLAUDEOS_GOAL_ROUTER_DISABLE=1`（従来 goal_type のみ） |

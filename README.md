@@ -226,7 +226,9 @@ flowchart TB
 | 操作 | 方法 |
 |---|---|
 | 自動判定（既定） | `state.json` の `goal_router.mode=auto`。Security Critical > CI 失敗 > 明示要求 > deploy.ready / Release フェーズ > phase_mode > 旧 `goal_type` > 新規判定の順 |
-| 手動 override | `bin/start-claude.sh --project P --foreground --goal deep-debug`（manual lock）/ `--goal auto`（解除）/ `--intent "全体を評価して"`（要求を Evidence に） |
+| 手動 override | メニュー L1/T1/S1 の確認後に「🎯 Goal」「📝 要求」を入力（Enter で自動）。CLI は `bin/start-claude.sh --project P --foreground --goal deep-debug`（manual lock）/ `--goal auto`（解除）/ `--intent "全体を評価して"`（要求を Evidence に） |
+| Runtime Evidence | `state.runtime.{health_url,error_log,cloudflare.project\|worker}` を設定すると health down / エラー多発 / Cloudflare deploy failure を deep-debug（+hotfix）へ。未設定は影響なし |
+| LLM intent 分類 | キーワード表で判定不能な要求だけ `claude -p --model haiku` で分類（`CLAUDEOS_GOAL_INTENT_LLM=auto\|1\|0`、fail-safe） |
 | cron one-shot | `bin/cron-schedule.sh add … --goal-type pr-babysit`（state を lock しない従来互換） |
 | 判定の確認 | `bash libexec/goal-router.sh <project> --dry-run [--json] [--explain]`、Mission Control 🧬 v10 パネル |
 | Flapping 防止 | session lock 12h（`CLAUDEOS_GOAL_LOCK_MINUTES`）。reroute は Security Critical / 重大 CI 失敗 / deploy.ready・phase_mode 変化 / 新指示 / `--reroute` のみ |
