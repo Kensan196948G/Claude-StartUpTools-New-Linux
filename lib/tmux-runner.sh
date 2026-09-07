@@ -177,9 +177,11 @@ tmux_run() {
     [[ "${CCSU_TMUX_SKIP_PERMS:-0}" == "1" ]] && perm_args="--dangerously-skip-permissions "
     # メール資格情報 (SMTP) を claude プロセス環境へ持ち込まない (watcher は tmux__send_report で自前再読込)
     local env_prefix="env -u CLAUDEOS_SMTP_USER -u CLAUDEOS_SMTP_PASS "
-    # START_PROMPT.md があれば claude に渡す (cat 展開を tmux コマンド内で実行)
-    if [[ -f "$project_dir/.claude/START_PROMPT.md" ]]; then
-      claude_cmd="timeout ${dur_sec}s ${env_prefix}$CLAUDE_BIN ${model_args:+$model_args }${name_args}${perm_args}\"\$(cat '$project_dir/.claude/START_PROMPT.md')\""
+    # START_PROMPT.md があれば claude に渡す (cat 展開を tmux コマンド内で実行)。
+    # v10 Goal Router: start-claude.sh が /goal を合成したサイドカー (CCSU_PROMPT_FILE) を優先。
+    local prompt_path="${CCSU_PROMPT_FILE:-$project_dir/.claude/START_PROMPT.md}"
+    if [[ -f "$prompt_path" ]]; then
+      claude_cmd="timeout ${dur_sec}s ${env_prefix}$CLAUDE_BIN ${model_args:+$model_args }${name_args}${perm_args}\"\$(cat '$prompt_path')\""
     else
       claude_cmd="timeout ${dur_sec}s ${env_prefix}$CLAUDE_BIN ${model_args:+$model_args }${name_args}${perm_args}"
     fi

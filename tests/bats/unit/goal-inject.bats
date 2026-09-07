@@ -163,7 +163,9 @@ second
   run node -e '
     const fs = require("fs");
     const raw = fs.readFileSync(process.argv[1], "utf8");
-    const m = raw.match(/^\/goal "([\s\S]*)"\s*$/);
+    // v10: START_PROMPT は「既定 /goal ブロック + Router bootstrap 本文」。goal-extract と同じく
+    // 先頭の /goal " 〜 単独 " 行までを 1 ブロックとして計数する。
+    const m = raw.match(/^\/goal "([\s\S]*?)\n"[ \t]*$/m);
     if (!m) { console.error("no /goal block"); process.exit(1); }
     const n = [...m[1]].length + 2;
     console.error(`goal chars incl quotes: ${n}`);
@@ -184,4 +186,45 @@ second
     process.exit(0);
   ' "$REPO_ROOT/CLAUDE.md"
   [ "$status" -eq 0 ]
+}
+
+# ---- compose (v10 Goal Router 単一合成点) ----------------------
+@test "goal_extract__compose: 抽出成功なら /goal を前置し base の埋込 /goal を除去して rc=0" {
+  _mkgoal deep-debug '/goal "
+■ Goal
+根本原因を直す
+- or stop after 12 turns
+"'
+  base='/goal "
+既定ゴール
+- or stop after 20 turns
+"
+
+# bootstrap 本文'
+  run goal_extract__compose deep-debug "$GOALS" "$base" "[Goal Router] effective_goal_type=deep-debug
+"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == '/goal "' ]]
+  [[ "$output" == *"根本原因を直す"* ]]
+  [[ "$output" != *"既定ゴール"* ]]
+  [[ "$output" == *"[Goal Router] effective_goal_type=deep-debug"* ]]
+  [[ "$output" == *"# bootstrap 本文"* ]]
+  # /goal は 1 個だけ (二重化防止)
+  [ "$(printf '%s' "$output" | grep -c '^/goal "')" = "1" ]
+}
+@test "goal_extract__compose: 抽出失敗は base を不変で返し rc=1 (START_PROMPT のみ運用へ降格)" {
+  base='/goal "
+既定ゴール
+- or stop after 20 turns
+"'
+  run goal_extract__compose nothing-here "$TEST_TEMP/empty-goals" "$base"
+  [ "$status" -eq 1 ]
+  [ "$output" = "$base" ]
+}
+@test "START_PROMPT.md (v10): 既定 /goal ブロックの後に Router bootstrap 本文があり、strip 後も bootstrap が残る" {
+  run bash -c "source '$REPO_ROOT/libexec/goal-extract.sh'; goal_extract__strip_block < '$REPO_ROOT/Claude/templates/claude/START_PROMPT.md'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Router bootstrap"* ]]
+  [[ "$output" == *"Effective Goal の確認"* ]]
+  [[ "$output" != *"Goal Resolution（Router 未注入時の既定）"* ]]
 }

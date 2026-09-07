@@ -4,6 +4,9 @@
 ■ Goal
 Critical セキュリティ脆弱性を即時対応し、本番への影響を最小化する。
 
+■ Use When
+Critical 脆弱性の即時対応。Router: kpi.security_critical>0（他のすべての Goal より優先、明示指定も上書き）、intent が「脆弱性・セキュリティ侵害」。Primary: deep-debug / assessment 配下。
+
 ■ Priority
 CTO優先順位テーブル (CLAUDE.md §5.1) の優先度1: Security Critical 検出（最優先・即時対応）
 

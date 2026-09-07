@@ -216,3 +216,21 @@ teardown() { _bats_common_teardown; }
   run team_run NoSuchProj 0
   [ "$status" -ne 0 ]
 }
+
+@test "team_run (v10): CLAUDEOS_GOAL_HEADER があれば CTO にだけ Effective Goal ヘッダ付きプロンプトを渡し、TEAM_START_PROMPT.md は変更しない" {
+  export CLAUDEOS_GOAL_HEADER="[Goal Router] primary=product-assurance specialized=none effective_goal_type=product-assurance confidence=0.70 mode=auto reason=test"
+  export CLAUDEOS_GOAL_EFFECTIVE=product-assurance
+  # プロジェクト固有の TEAM_START_PROMPT.md (copy-if-missing で保護される) が改変されないこと
+  printf '%s\n' 'PROJECT SPECIFIC TEAM PROMPT' > "$TEST_TEMP/projects/MyProj/.claude/TEAM_START_PROMPT.md"
+  before='PROJECT SPECIFIC TEAM PROMPT'
+  run team_run MyProj 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Effective Goal を渡します: product-assurance"* ]]
+  grep -q 'TEAM_START_PROMPT.md' "$TMUX_STATE/new-session.log"
+  routed="$(ls "$CLAUDEOS_HOME"/logs/team-*-TEAM_START_PROMPT.md | head -1)"
+  [ -n "$routed" ]
+  head -1 "$routed" | grep -q '^\[Goal Router\] primary=product-assurance'
+  run grep -c 'Goal Router' "$TMUX_STATE/split-window.log"; [ "$output" = "0" ]
+  grep -q 'PROJECT SPECIFIC TEAM PROMPT' "$routed"
+  [ "$(cat "$TEST_TEMP/projects/MyProj/.claude/TEAM_START_PROMPT.md")" = "$before" ]
+}

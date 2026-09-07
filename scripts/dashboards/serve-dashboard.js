@@ -1304,8 +1304,10 @@ function handleV10(res) {
   try {
     const st = JSON.parse(fs.readFileSync(path.join(PROJ_ROOT, 'state.json'), 'utf8'));
     out.routing_log = ((st.execution || {}).routing_log || []).slice(-10);
+    out.goal_router = st.goal_router || null;
+    out.goal_type = st.goal_type || null;
     out.warnings = (st.warnings || []).slice(-10);
-  } catch { out.routing_log = []; out.warnings = []; }
+  } catch { out.routing_log = []; out.warnings = []; out.goal_router = null; out.goal_type = null; }
   try {
     const settings = JSON.parse(fs.readFileSync(path.join(PROJ_ROOT, '.claude', 'settings.json'), 'utf8'));
     out.hooks = Object.fromEntries(Object.entries(settings.hooks || {}).map(([ev, entries]) => [ev, entries.reduce((n, e) => n + (e.hooks || []).length, 0)]));

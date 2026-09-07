@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — 統合 Goal Router（Native Goal Routing、2026-09-07）
+
+- 🎯 `lib/goal-router.sh`: state.json・git/CI/gh Evidence・ユーザー要求から Primary Goal（development / mvp-release /
+  assessment / deep-debug / product-assurance）と Specialized Goal（既存 6 種）を判定し、`effective_goal_type` へ収束。
+  session lock（12h）と reroute 条件で flapping を防止、manual lock（`--goal <name>`）/ 解除（`--goal auto`）、
+  fail-safe fallback（explicit → goal_type → phase_mode → mvp-release）、`CLAUDEOS_GOAL_ROUTER_DISABLE=1` で従来動作。
+- 🧩 `libexec/goal-extract.sh` に `goal_extract__compose`（/goal 合成の単一点）、`libexec/goal-router.sh` CLI（`--dry-run --json --explain`）。
+- 🚀 統合: `bin/start-claude.sh --goal/--intent`（L1 直起動 / tmux / S1 headless / S1 supervisor / T1 CTO ヘッダ）、
+  `cron-launcher.sh`（Router 判定 → 注入、`CLAUDEOS_GOAL_TYPE_OVERRIDE` は one-shot）、`lib/supervisor.sh`
+  （`CLAUDEOS_GOAL_TRIGGER=supervisor-start|resume`）、`lib/tmux-runner.sh`（`CCSU_PROMPT_FILE`）、`lib/team-runner.sh`（`CLAUDEOS_GOAL_HEADER`）。
+- 📝 `goals/{development,assessment,deep-debug,product-assurance}.md` 新設、`mvp-release.md` を Primary として再設計、
+  既存 6 Goal に `■ Use When` 追加（全 11 Goal の /goal ≤ 4000 字を node テストで保証）。
+- 🧾 `state.schema.json` に `goal_router`（enum / null 許容）、`goal_type` enum に Primary 5 分類 + pr-babysit を追加。
+  `state.json.example` / `scripts/setup/state-template.json` 更新、`scripts/validate-state-example.js` を任意ファイル・enum 対応に拡張、
+  `scripts/state-schema.test.js`（旧 state 後方互換 / 新 state / enum 違反）。`init-claudeos-project.js` の存在しない
+  STATE_TEMPLATE 参照を `scripts/setup/state-template.json` へ修正。
+- 🪶 `START_PROMPT.md` を万能 /goal（3,300 字）から「既定 /goal + Router bootstrap」へ軽量化。
+- 🎛️ Mission Control 🧬 v10 パネルに Goal Router カード（`/api/v10` に `goal_router` / `goal_type`）。
+- 🧪 `tests/bats/unit/goal-router.bats`（50）、cron-launcher-headless / start-claude / team-runner / goal-inject へ統合テスト追加。
+- 📚 `docs/architecture/GOAL_ROUTER.md`、`docs/claude/20_統合GoalRouter.md`、`core/00-goal-system.md` v10、README / CLAUDE.md §9 / SOURCE_OF_TRUTH 更新。
+
 ### Changed — ClaudeOS v10（Native-Agentic Development OS、2026-09-07）
 
 - 🧬 アーキテクチャ: Claude Code Native > Thin ClaudeOS Adapter > Custom の原則で再構成

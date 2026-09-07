@@ -3,6 +3,31 @@
   "goal": {
     "title": "<your project goal — e.g. ClaudeOS v8 自律開発最適化>"
   },
+  "goal_type": "development",
+  "goal_router": {
+    "mode": "auto",
+    "primary_goal": "development",
+    "specialized_goal": null,
+    "effective_goal_type": "development",
+    "confidence": 0.5,
+    "reason": "default (existing project, no stronger evidence)",
+    "evidence": [
+      "phase_mode:development",
+      "ci:unknown"
+    ],
+    "locked_by_user": false,
+    "session_locked": true,
+    "route_version": 1,
+    "last_routed_at": null,
+    "last_transition_reason": "",
+    "evidence_snapshot": {
+      "deploy_ready": "",
+      "phase_mode": "development",
+      "security_critical": "0",
+      "ci": "unknown"
+    },
+    "history": []
+  },
   "project": {
     "registration_date": null,
     "release_deadline": null,
@@ -59,7 +84,8 @@
   },
   "mcp": {
     "enabled": [
-      "github", "brv"
+      "github",
+      "brv"
     ],
     "memory_scope_policy": {
       "user_scope_server": "memory",

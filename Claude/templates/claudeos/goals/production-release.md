@@ -4,6 +4,9 @@
 ■ Goal
 本番リリース準備を完成させ、deploy.ready=true を設定して人間サインオフ待ち状態に到達する。
 
+■ Use When
+MVP / 品質保証完了後の本番リリース準備（STABLE → E2E → Security → Rollback 確認 → Runbook → deploy.ready=true → HUMAN SIGNOFF）。Router: deploy.ready=true、execution.phase=Release、intent が「本番リリース・リリース準備」。Primary: mvp-release / product-assurance 配下。
+
 ■ Priority
 CTO優先順位テーブル (CLAUDE.md §5.1) の優先度4（Release フェーズ最優先タスク）
 

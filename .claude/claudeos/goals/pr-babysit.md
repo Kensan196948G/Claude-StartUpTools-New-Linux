@@ -7,6 +7,9 @@
 ■ Goal
 open PR の CI 失敗とレビュー指摘を解消し、マージ可能状態へ前進させる（新規開発はしない）。
 
+■ Use When
+短時間 cron ジョブで open PR の CI 失敗・レビュー指摘だけを解消する（新規開発なし）。Router: cron 行の CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit（one-shot、state を lock しない）。Primary: product-assurance 配下。
+
 ■ Priority
 CTO優先順位テーブル (CLAUDE.md §5.1) の優先度2: CI 失敗中の原因分析 + 最小差分修復
 

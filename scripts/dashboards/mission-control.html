@@ -2679,6 +2679,17 @@ const V10Panel = () => {
           </table>
         </div>
         <div>
+          <div style={{ fontSize:12, color:MC.textDim, marginBottom:6 }}>🎯 Goal Router (Primary → Specialized → effective goal_type)</div>
+          <div style={{ fontFamily:MC.mono, fontSize:12, lineHeight:1.7 }}>
+            {d?.goal_router ? (<>
+              <b>{d.goal_router.primary_goal || '—'}</b>{d.goal_router.specialized_goal ? ` / ${d.goal_router.specialized_goal}` : ''} → <b>{d.goal_router.effective_goal_type || '—'}</b>
+              {' '}<Tag ok={d.goal_router.mode === 'auto'} text={`${d.goal_router.mode || 'auto'}${d.goal_router.locked_by_user ? ' · user-locked' : ''}`} /><br />
+              confidence {d.goal_router.confidence ?? '—'} · {d.goal_router.last_transition_reason || ''} · {(d.goal_router.last_routed_at || '').slice(0, 16)}<br />
+              <span style={{ color:MC.textDim }}>{d.goal_router.reason || ''}</span>
+            </>) : <span style={{ color:MC.textDim }}>未判定 (legacy goal_type: {d?.goal_type || '—'}) — libexec/goal-router.sh &lt;project&gt; --dry-run</span>}
+          </div>
+        </div>
+        <div>
           <div style={{ fontSize:12, color:MC.textDim, marginBottom:6 }}>🧭 Agent routing log (なぜその Agent を使ったか)</div>
           <div style={{ fontFamily:MC.mono, fontSize:11, lineHeight:1.6 }}>
             {(d?.routing_log || []).length ? d.routing_log.slice(-6).reverse().map((r, i) => (

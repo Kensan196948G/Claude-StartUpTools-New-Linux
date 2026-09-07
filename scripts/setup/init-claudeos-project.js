@@ -57,7 +57,7 @@ const MAPPINGS = [
 // 既存プロジェクトの settings.json は permissions/env をカスタムしている場合があり、
 // それらを保護しつつ ClaudeOS の hooks 登録 + 必要 env を *不足分だけ* 補完する。
 const SETTINGS_TEMPLATE = "Claude/templates/claude/settings.json";
-const STATE_TEMPLATE    = "Claude/templates/claude/claudeos/templates/state.json";
+const STATE_TEMPLATE    = "scripts/setup/state-template.json";  // seed (v10: goal_router block included)
 const SKILLS_DIRTY       = ".claude/claudeos/.skills-dirty";
 
 // autocompact thrashing 対策 (#78 のテンプレート修正の配布側フォロー)。
@@ -289,7 +289,7 @@ function processProject(targetPath, dryRun, quiet) {
     const src  = path.join(REPO_ROOT, STATE_TEMPLATE);
     const dest = path.join(targetPath, "state.json");
     const plan = { create: 0, skip: 0, srcMissing: [] };
-    copyFileIfMissing(src, dest, plan, dryRun, (txt) => txt.replace(/"YOUR_PROJECT"/g, JSON.stringify(projName)));
+    copyFileIfMissing(src, dest, plan, dryRun, (txt) => txt.replace(/"YOUR_PROJECT(_NAME)?"/g, JSON.stringify(projName)));
     totals.create += plan.create; totals.skip += plan.skip; totals.srcMissing.push(...plan.srcMissing);
     log(`  ${tag} state.json (name=${projName}): +${plan.create} new / ${plan.skip} kept${plan.srcMissing.length ? " (SOURCE MISSING!)" : ""}`);
   }

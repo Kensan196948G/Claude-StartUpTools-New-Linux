@@ -197,6 +197,15 @@ team_run() {
   local cto_prompt=""
   if [[ "${CCSU_TEAM_PROMPT:-1}" == "1" && -s "$project_dir/.claude/TEAM_START_PROMPT.md" ]]; then
     cto_prompt="$project_dir/.claude/TEAM_START_PROMPT.md"
+    # v10 Goal Router (T1): Effective Goal を CTO にだけ渡す。各 member へ別 Primary Goal を与えず
+    # Role task へ分解させる。プロジェクトの TEAM_START_PROMPT.md は変更せずサイドカーへ合成する。
+    if [[ -n "${CLAUDEOS_GOAL_HEADER:-}" ]]; then
+      mkdir -p "$CCSU_HOME/logs"
+      local routed_prompt="$CCSU_HOME/logs/team-$(date +%Y%m%d-%H%M%S)-$(ccsu_safe_name "$project")-TEAM_START_PROMPT.md"
+      { printf '%s\n\n' "$CLAUDEOS_GOAL_HEADER"; cat "$cto_prompt"; } > "$routed_prompt"
+      cto_prompt="$routed_prompt"
+      log_info "🧭 CTO ペインへ Effective Goal を渡します: ${CLAUDEOS_GOAL_EFFECTIVE:-?}"
+    fi
     log_info "📨 CTO ペインへ TEAM_START_PROMPT.md を初期プロンプトとして注入します"
   else
     log_info "📨 TEAM_START_PROMPT.md 注入なし — CTO ペインは指示待ちで起動します"

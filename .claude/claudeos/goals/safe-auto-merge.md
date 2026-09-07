@@ -4,6 +4,9 @@
 ■ Goal
 GitHub Token を利用して open PR を監査し、main/default branch は人間の選択式、main 以外は安全 gate 通過時のみ自動マージする。
 
+■ Use When
+open PR の監査と安全ゲート通過時の自動マージ。Router: intent が「自動マージ・マージして」。Primary: product-assurance 配下。main は中央 Policy / Human Gate を優先。
+
 ■ Priority
 CTO 優先順位テーブルの Verify / ReleaseManager タスク。CI 成功済み PR の滞留を安全に解消する。
 
