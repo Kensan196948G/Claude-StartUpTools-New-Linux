@@ -1,9 +1,50 @@
 {
-  "_comment": "AgentTeams managed-agents 設定テンプレート。コピーして config/managed-agents.json に保存し、各 ID を埋めて使う。API キーは必ず環境変数 ANTHROPIC_API_KEY 経由とし、このファイルには絶対に書かない。",
+  "_comment": "AgentTeams managed-agents 設定テンプレート（ClaudeOS v11 実行設定契約）。コピーして config/managed-agents.json に保存し、各 ID を埋めて使う。API キーは必ず環境変数 ANTHROPIC_API_KEY 経由とし、このファイルには絶対に書かない。",
   "_security": "config/managed-agents.json は .gitignore で除外済み。万一コミットしないこと。",
+  "_contract": {
+    "_comment": "読み手: lib/managed-agents.sh + scripts/tools/managed-session-payload.js + scripts/tools/managed-permission-policy.js。schema 不成立時は Goal Router が execution_plane=local へフォールバックする。",
+    "enabled": "bool — Managed 実行 Plane の有効化スイッチ。false は常に local。",
+    "mode": "disabled|dry-run|live — live は課金承認(人間決裁)済みのときのみ設定する。dry-run は payload を生成・記録するが API 呼び出ししない。",
+    "apiBaseUrl": "Managed Agents API ベース URL (既定 https://api.anthropic.com)",
+    "betaHeader": "anthropic-beta ヘッダ値 (既定 managed-agents-2026-04-01)",
+    "environmentId": "env_... 必須 (dry-run を含め payload 生成に必要)",
+    "orchestratorId": "agent_... 必須 (Managed Orchestrator)",
+    "vaultIds": ["vlt_..."],
+    "budget": "既定 budget {amountCents(セント整数文字列), currency:'USD'}。Session 作成時 budget は必須(後付け不可)。budget 無し Session の Managed 自律実行は禁止。",
+    "github": "workspace: Repository Resource (主系・ファイル操作)。mcp: PR/Issue 操作のみ (toolset 限定)。MCP によるファイル系操作は禁止 (2026-06 crash 教訓: docs/claude/07 §6-3)。",
+    "permissionPolicy": "scripts/tools/managed-permission-policy.js の分類をオーバーライドする追加リスト(任意)。allow|conditional|human_gate。",
+    "inferenceGeo": "推論実行場所 (global 推奨)。未指定は workspace default_inference_geo。",
+    "advisorModel": "アドバイザーモデル (任意, null 可)。"
+  },
+  "enabled": false,
+  "mode": "disabled",
+  "apiBaseUrl": "https://api.anthropic.com",
+  "betaHeader": "managed-agents-2026-04-01",
   "memoryStoreId": "memstore_xxxxxxxxxxxxxxxxxxxxxxxx",
   "environmentId": "env_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "environment": {
+    "_comment": "Environment Manager 設定。networking は unrestricted 依存を減らすため limited + allowlist を既定とする (P2 で本格移行)。",
+    "networking": "limited",
+    "allowedDomains": ["api.githubcopilot.com", "api.github.com"],
+    "selfHosted": false
+  },
+  "github": {
+    "workspace": {
+      "type": "repository_resource",
+      "_comment": "主系: GitHub Repository Resource を workspace mount し、ファイル操作は mount 内の git で行う。",
+      "resource": "repo:ORG/REPO",
+      "mountPath": "/workspace/repo"
+    },
+    "mcp": {
+      "type": "url",
+      "_comment": "GitHub リモート MCP は PR/Issue 操作専用。ファイル系ツールは blockedTools で禁止。",
+      "url": "https://api.githubcopilot.com/mcp",
+      "allowedTools": ["create_pull_request", "add_issue_comment", "create_branch", "list_commits"],
+      "blockedTools": ["get_file_contents", "create_or_update_file", "push_files", "push_files_to_branch", "delete_file", "delete_branch"]
+    }
+  },
   "specialistAgents": {
+    "_comment": "First-Class Agent roster (P1 で Outcome Grader 追加)。ID 未設定の Agent は利用しない。",
     "architect": {
       "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
       "version": 1,
@@ -38,11 +79,26 @@
   "orchestratorId": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
   "orchestratorVersion": 1,
   "lastSessionId": null,
-  "_comment_2026_08": "以下は 2026-08 新機能（docs/claude/07 §7）の適用値の記録用。読み手コードは無い（本テンプレートは全体が ID・設定の記録用プレースホルダ）。",
-  "sessionBudget": {
-    "_comment": "セッション作成 body の budget.max_list_cost へ渡す値。amount は US セント単位の整数を文字列で（例 \"500\" = $5.00・currency は USD のみ）。budget は後付け不可のため PoC 再開後はセッション作成時の budget 無指定を禁止（docs/claude/07 §7-1）",
-    "amount": null,
+  "budget": {
+    "_comment": "Session 作成 body の budget.max_list_cost へ渡す既定値。amount は US セント単位の整数を文字列で（例 \"500\" = $5.00・currency は USD のみ）。budget は後付け不可のため budget 無指定の Session 作成は禁止（docs/claude/07 §7-1）。",
+    "amountCents": "500",
     "currency": "USD"
+  },
+  "permissionPolicy": {
+    "_comment": "既定分類は scripts/tools/managed-permission-policy.js に内蔵。ここには追加 allow / 強化 gate のみ書く（弱体化リストは書かないこと）。",
+    "extraAllow": [],
+    "extraHumanGate": []
+  },
+  "sessionLifecycle": {
+    "_comment": "2 段階ライフサイクル (POST /v1/sessions → POST /v1/sessions/{id}/events)。version ピン留め・session.error 非ブロッキングは docs/claude/07 §6-2 参照。",
+    "pinAgentVersion": true,
+    "recreateSessionOnAgentUpdate": true,
+    "maxIterations": 12
+  },
+  "webhook": {
+    "_comment": "P1 Webhook Event Gateway 用プレースホルダ。P0 では未使用。",
+    "enabled": false,
+    "endpoint": null
   },
   "inferenceGeo": "global",
   "advisorModel": null
