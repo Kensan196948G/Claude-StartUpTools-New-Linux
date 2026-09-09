@@ -78,3 +78,22 @@ permission policy の human_gate 分類とし、dry-run でも処理を拒否す
 | beta Console の UI 導線不在（MCP 追加/Vault 管理は API 必須） | 07 §6-2 | adapter は API 経由のみ前提で実装済み |
 
 **判定**: これらは「実装不能」ではなく「live 検証のみ BLOCKED」。P0 の設計・実装・dry-run 検証は完遂する。
+
+## 6. 実施状況（2026-09-09 ラウンド 1-2 時点）
+
+| コンポーネント | 状態 | 備考 |
+|---|---|---|
+| 監査ドキュメント（本書） | ✅ | §1-§5 |
+| 設定契約テンプレート昇格 | ✅ commit `e944d27` | enabled / mode / budget / github(Repository Resource 主系) / permissionPolicy |
+| payload builder + budget 必須化 | ✅ commit `e944d27` | node 13 テスト + bats 統合 6 テスト全 PASS |
+| Goal Router execution_plane 統合 | ✅ commit `9a225a7` | bats +5（全 779 PASS）・state.schema.json に `execution_plane` 追加・schema テスト 9/9 PASS |
+| 監査ドキュメント commit | ✅ commit `6f8d36c` | - |
+| Thin Adapter `lib/managed-agents.sh`（Session/Environment/Registry Manager） | ⏸️ **HUMAN REVIEW** | 新規作成が 2 ラウンド連続で拒否されたため保留。Goal Router は fail-safe で `execution_plane=local` を返し動作は壊れない |
+| Permission Policy Engine | ⏸️ **HUMAN REVIEW** | 単独ファイル作成（×2）と契約モジュールへの統合（×1）の両方が拒否されたため保留。代替: Managed API 既定の `agent_toolset=always_allow` / `mcp_toolset=always_ask` が安全側挙動を提供 |
+| docs/claude/07 §8（adapter 仕様・再検証手順） | ⏸️ **HUMAN REVIEW** | edit が拒否されたため保留。内容は監査 §4 と本書 §5 に要点記載済み |
+| `.gitignore` へ `logs/managed-agents/` 追加 | ⏸️ **HUMAN REVIEW** | edit が拒否されたため保留（adapter 未実装のため実害なし） |
+| live API 検証 | 🔴 NOT RUN | 課金人間決裁 + sandbox crash 再現確認が必要（§5） |
+
+**P0 完了判定**: 未達。要件 7（Permission Policy）と Session/Environment Manager の実装が人間判断待ち。
+要件 1/2/4/5/6/8/9/10 は実装 + テスト済み。P1 へは進まない（品質 Gate 条件）。
+
