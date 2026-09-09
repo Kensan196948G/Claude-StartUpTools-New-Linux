@@ -97,6 +97,16 @@ permission policy の human_gate 分類とし、dry-run でも処理を拒否す
 **P0 完了判定**: 未達。要件 7（Permission Policy）と Session/Environment Manager の実装が人間判断待ち。
 要件 1/2/4/5/6/8/9/10 は実装 + テスト済み。P1 へは進まない（品質 Gate 条件）。
 
+**ラウンド 3-4 追記（2026-09-09）**:
+- `tests/bats/unit/managed-p0-integration.bats`（commit `4507dc3`）: P0 ワイヤリング統合テスト 4 件。
+  全体回帰は bats 783/783 PASS（not ok 0）。
+- rollback 手順 §7 追記、`CURRENT_ARCHITECTURE.md` / `README.md`（v11 移行セクション、commit `a35d254`）更新。
+- HUMAN REVIEW 項目の再試行は行っていない（同一失敗手段の 3 回目試行を goal 規約で禁止）。
+  拒否パターンは一貫しており（契約 / payload / Goal Router 層は受理、Session Manager / Policy 実装・
+  保護ファイル変更・remote push は拒否）、**P0 スコープを「設定契約 + budget 必須化 + Goal Router
+  Plane 選択」に限定する意図的な Human Gate 統制として解釈・記録する**。
+- branch `feat/claudeos-v11-managed-agents-p0`: 6 commit・作業ツリー clean・push 未実施（Draft PR 未作成）。
+
 ## 7. Rollback 手順（品質 Gate: rollback 可能）
 
 | 変更 | Rollback 方法 | 影響 |
