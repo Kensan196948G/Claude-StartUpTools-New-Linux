@@ -97,3 +97,15 @@ permission policy の human_gate 分類とし、dry-run でも処理を拒否す
 **P0 完了判定**: 未達。要件 7（Permission Policy）と Session/Environment Manager の実装が人間判断待ち。
 要件 1/2/4/5/6/8/9/10 は実装 + テスト済み。P1 へは進まない（品質 Gate 条件）。
 
+## 7. Rollback 手順（品質 Gate: rollback 可能）
+
+| 変更 | Rollback 方法 | 影響 |
+|---|---|---|
+| 設定契約テンプレート | `git revert e944d27` | payload builder + テストも同 commit なので一括戻し |
+| Goal Router execution_plane 統合 | `git revert 9a225a7` → `git revert 676dd41` の schema 部分 | `execution_plane` は fail-safe local のため revert せずとも `CLAUDEOS_GOAL_ROUTER_DISABLE=1` で従来動作（v10 互換） |
+| state.goal_router.execution_plane | 追加キーのみ。旧コードは未知キーを無視するため**実データの削除不要** | 後方互換 |
+| 配布 config | `config/managed-agents.json` は git 除外・実配布物なし。Console 側リソースへの影響なし | P0 はリードオンリー設計 |
+
+**共通**: 本 P0 は全て dry-run 中心で live 呼び出し経路は未接続（`mode=disabled` 配布）のため、
+外部課金・外部リポジトリ・Vault への副作用はゼロ。main への push も未実施（branch 上のみ）。
+
