@@ -119,3 +119,9 @@ permission policy の human_gate 分類とし、dry-run でも処理を拒否す
 **共通**: 本 P0 は全て dry-run 中心で live 呼び出し経路は未接続（`mode=disabled` 配布）のため、
 外部課金・外部リポジトリ・Vault への副作用はゼロ。main への push も未実施（branch 上のみ）。
 
+**Rollback drill 実証（2026-09-09・scratch clone）**: ローカル clone で 7 commit を
+`git revert --no-edit`（新→旧順）で一括適用 → **競合 0**・P0 追加の完全除去を確認
+（`execution_plane` が schema/goal-router から消滅、新規ファイル 3 件削除）。
+revert 後ツリーで `goal-router.bats` **70/70 PASS**・`validate-state-example.js` PASS =
+v10 状態への完全復帰を実証（手順 §7 の妥当性確認済み）。
+
