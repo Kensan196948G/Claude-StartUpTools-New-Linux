@@ -25,6 +25,11 @@
 #   ctl__approval_check   ... → 実行可能な承認か判定 (改変検出・期限・承認数を確認)
 #   ctl__eval_define / ctl__eval_record → 評価定義の登録 / 結果の記録
 #   ctl__usage_record     ... → モデル利用量 (token/cost) の記録
+#   ctl__project_register ... → project の冪等登録
+#   ctl__run_start / ctl__run_heartbeat / ctl__run_finish → run のライフサイクル
+#   ctl__agent_register   ... → agent の冪等登録
+#   ctl__agent_assign / ctl__agent_release → 排他 path_scope 付き割当
+#   ctl__handoff_offer / ctl__handoff_accept → Agent 間引き継ぎ
 #
 # migration runner の規約:
 #   - ファイル名は NNNN_name.sql (4 桁通し番号)。違反は rc=2。
@@ -712,4 +717,385 @@ ctl__usage_record() {
     );
   " || { _ctl__err "利用量の記録に失敗しました"; return 1; }
   _ctl__log "利用量を記録しました: model=$model_id input=$input_tokens output=$output_tokens cost_micro_usd=$cost_micro_usd"
+}
+
+# ------------------------------------------------------------
+# Projects / Runs ライフサイクル
+# ------------------------------------------------------------
+
+# ctl__project_register --key k [--db d] [--display-name n] [--repo-path p]
+#   [--remote-slug owner/repo] [--default-branch b]
+#   project_key で冪等登録 (既存なら display_name 等のみ更新)。project_id を返す。
+ctl__project_register() {
+  local db="$CTL_DB" key="" display_name="" repo_path="" remote_slug="" default_branch="main"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --display-name) display_name="$2"; shift 2 ;;
+      --repo-path) repo_path="$2"; shift 2 ;;
+      --remote-slug) remote_slug="$2"; shift 2 ;;
+      --default-branch) default_branch="$2"; shift 2 ;;
+      *) _ctl__err "ctl__project_register: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$key" ]] || { _ctl__err "ctl__project_register: --key は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local repo_path_sql="NULL" remote_slug_sql="NULL"
+  [[ -n "$repo_path" ]] && repo_path_sql="'$(_ctl__sqlq "$repo_path")'"
+  [[ -n "$remote_slug" ]] && remote_slug_sql="'$(_ctl__sqlq "$remote_slug")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.projects (project_key, display_name, repo_path, remote_slug, default_branch)
+    VALUES ('$(_ctl__sqlq "$key")', '$(_ctl__sqlq "$display_name")', $repo_path_sql, $remote_slug_sql, '$(_ctl__sqlq "$default_branch")')
+    ON CONFLICT (project_key) DO UPDATE
+      SET display_name = excluded.display_name, repo_path = excluded.repo_path,
+          remote_slug = excluded.remote_slug, default_branch = excluded.default_branch,
+          updated_at = now()
+    RETURNING project_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "project 登録に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  _ctl__log "project 登録: key=$key project_id=$out" >&2
+  printf '%s\n' "$out"
+}
+
+# ctl__run_start --project-key k [--db d] [--task-key tk] [--run-kind interactive|cron|
+#   supervisor|headless|team|worktree|manual] [--goal-type g] [--session-ref s]
+#   [--git-head-sha sha] [--lease-owner o] [--lease-ttl-min N]
+#   project を (無ければ最小構成で) 冪等登録してから run を作成する。run_id を返す。
+ctl__run_start() {
+  local db="$CTL_DB" project_key="" task_key="" run_kind="interactive" goal_type=""
+  local session_ref="" git_head_sha="" lease_owner="" lease_ttl_min=5
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --project-key) project_key="$2"; shift 2 ;;
+      --task-key) task_key="$2"; shift 2 ;;
+      --run-kind) run_kind="$2"; shift 2 ;;
+      --goal-type) goal_type="$2"; shift 2 ;;
+      --session-ref) session_ref="$2"; shift 2 ;;
+      --git-head-sha) git_head_sha="$2"; shift 2 ;;
+      --lease-owner) lease_owner="$2"; shift 2 ;;
+      --lease-ttl-min) lease_ttl_min="$2"; shift 2 ;;
+      *) _ctl__err "ctl__run_start: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$project_key" ]] || { _ctl__err "ctl__run_start: --project-key は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local project_id
+  project_id="$(ctl__project_register --db "$db" --key "$project_key" 2>/dev/null)"
+  [[ -n "$project_id" ]] || { _ctl__err "project の解決に失敗しました: $project_key"; return 1; }
+
+  local goal_type_sql="NULL" session_ref_sql="NULL" git_head_sha_sql="NULL" lease_owner_sql="NULL"
+  local lease_token_sql="NULL" lease_expires_sql="NULL"
+  [[ -n "$goal_type" ]] && goal_type_sql="'$(_ctl__sqlq "$goal_type")'"
+  [[ -n "$session_ref" ]] && session_ref_sql="'$(_ctl__sqlq "$session_ref")'"
+  [[ -n "$git_head_sha" ]] && git_head_sha_sql="'$(_ctl__sqlq "$git_head_sha")'"
+  if [[ -n "$lease_owner" ]]; then
+    lease_owner_sql="'$(_ctl__sqlq "$lease_owner")'"
+    lease_token_sql="gen_random_uuid()"
+    lease_expires_sql="now() + interval '${lease_ttl_min} minutes'"
+  fi
+
+  local task_id_sql="NULL"
+  if [[ -n "$task_key" ]]; then
+    local psql0; psql0="$(pg__cmd psql)"
+    local tid; tid="$("$psql0" -h "$PGHOST" -d "$db" -Atqc "select task_id from control.tasks where project_id='$(_ctl__sqlq "$project_id")' and task_key='$(_ctl__sqlq "$task_key")'" 2>/dev/null || true)"
+    [[ -n "$tid" ]] && task_id_sql="'$(_ctl__sqlq "$tid")'"
+  fi
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.runs
+      (project_id, task_id, run_kind, goal_type, status, lease_owner, lease_token,
+       lease_expires_at, heartbeat_at, started_at, session_ref, git_head_sha)
+    VALUES (
+      '$(_ctl__sqlq "$project_id")', $task_id_sql, '$(_ctl__sqlq "$run_kind")', $goal_type_sql,
+      $( [[ -n "$lease_owner" ]] && echo "'running'" || echo "'queued'" ),
+      $lease_owner_sql, $lease_token_sql, $lease_expires_sql,
+      $( [[ -n "$lease_owner" ]] && echo "now()" || echo "NULL" ),
+      $( [[ -n "$lease_owner" ]] && echo "now()" || echo "NULL" ),
+      $session_ref_sql, $git_head_sha_sql
+    )
+    RETURNING run_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "run 開始に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  _ctl__log "run 開始: run_id=$out (project=$project_key, kind=$run_kind)" >&2
+  printf '%s\n' "$out"
+}
+
+# ctl__run_heartbeat --run-id id [--db d] [--lease-ttl-min N]
+ctl__run_heartbeat() {
+  local db="$CTL_DB" run_id="" lease_ttl_min=5
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --lease-ttl-min) lease_ttl_min="$2"; shift 2 ;;
+      *) _ctl__err "ctl__run_heartbeat: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$run_id" ]] || { _ctl__err "ctl__run_heartbeat: --run-id は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    UPDATE control.runs
+       SET heartbeat_at = now(), heartbeat_seq = heartbeat_seq + 1,
+           lease_expires_at = now() + interval '${lease_ttl_min} minutes'
+     WHERE run_id = '$(_ctl__sqlq "$run_id")'
+       AND status IN ('leased','running');
+  " || { _ctl__err "heartbeat 更新に失敗しました"; return 1; }
+}
+
+# ctl__run_finish --run-id id --status succeeded|failed|cancelled|blocked [--db d]
+#   [--exit-code n] [--summary s]
+ctl__run_finish() {
+  local db="$CTL_DB" run_id="" status="" exit_code="" summary=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --status) status="$2"; shift 2 ;;
+      --exit-code) exit_code="$2"; shift 2 ;;
+      --summary) summary="$2"; shift 2 ;;
+      *) _ctl__err "ctl__run_finish: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$run_id" && -n "$status" ]] || { _ctl__err "ctl__run_finish: --run-id/--status は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local exit_code_sql="NULL" summary_sql="NULL"
+  [[ -n "$exit_code" ]] && exit_code_sql="$exit_code"
+  [[ -n "$summary" ]] && summary_sql="'$(_ctl__sqlq "$summary")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    UPDATE control.runs
+       SET status = '$(_ctl__sqlq "$status")', ended_at = now(),
+           exit_code = $exit_code_sql, summary = $summary_sql
+     WHERE run_id = '$(_ctl__sqlq "$run_id")';
+  " || { _ctl__err "run 終了の記録に失敗しました"; return 1; }
+  _ctl__log "run 終了: run_id=$run_id status=$status"
+}
+
+# ------------------------------------------------------------
+# Agent Registry / Assignment / Handoff
+# ------------------------------------------------------------
+
+# ctl__agent_register --name n [--db d] [--kind k] [--execution-plane p]
+#   [--model-id m] [--instruction-ref r] [--verifier]
+#   agent_name で冪等登録 (既存なら属性を更新)。agent_id を返す。
+ctl__agent_register() {
+  local db="$CTL_DB" name="" kind="generalist" plane="subagent" model_id="" instruction_ref="" verifier=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --name) name="$2"; shift 2 ;;
+      --kind) kind="$2"; shift 2 ;;
+      --execution-plane) plane="$2"; shift 2 ;;
+      --model-id) model_id="$2"; shift 2 ;;
+      --instruction-ref) instruction_ref="$2"; shift 2 ;;
+      --verifier) verifier=1; shift ;;
+      *) _ctl__err "ctl__agent_register: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$name" ]] || { _ctl__err "ctl__agent_register: --name は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local model_id_sql="NULL" instruction_ref_sql="NULL"
+  [[ -n "$model_id" ]] && model_id_sql="'$(_ctl__sqlq "$model_id")'"
+  [[ -n "$instruction_ref" ]] && instruction_ref_sql="'$(_ctl__sqlq "$instruction_ref")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.agents (agent_name, agent_kind, execution_plane, model_id, instruction_ref, is_verifier)
+    VALUES ('$(_ctl__sqlq "$name")', '$(_ctl__sqlq "$kind")', '$(_ctl__sqlq "$plane")', $model_id_sql, $instruction_ref_sql, $( (( verifier )) && echo true || echo false ))
+    ON CONFLICT (agent_name) DO UPDATE
+      SET agent_kind = excluded.agent_kind, execution_plane = excluded.execution_plane,
+          model_id = excluded.model_id, instruction_ref = excluded.instruction_ref,
+          is_verifier = excluded.is_verifier, updated_at = now()
+    RETURNING agent_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "agent 登録に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  _ctl__log "agent 登録: name=$name agent_id=$out" >&2
+  printf '%s\n' "$out"
+}
+
+# ctl__agent_assign --project-key k --run-id id --agent-name n [--db d]
+#   [--task-key tk] [--role implementer|reviewer|verifier|planner|observer]
+#   [--path-scope p] [--worktree-path wp] [--branch bn]
+#   同一 project の同一 path_scope が既に (released_at IS NULL で) 割当済みなら
+#   rc=5 で衝突を報告する (同一ファイルへの並列書込み禁止の機械的担保)。
+ctl__agent_assign() {
+  local db="$CTL_DB" project_key="" run_id="" agent_name="" task_key="" role="implementer"
+  local path_scope="" worktree_path="" branch=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --project-key) project_key="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --agent-name) agent_name="$2"; shift 2 ;;
+      --task-key) task_key="$2"; shift 2 ;;
+      --role) role="$2"; shift 2 ;;
+      --path-scope) path_scope="$2"; shift 2 ;;
+      --worktree-path) worktree_path="$2"; shift 2 ;;
+      --branch) branch="$2"; shift 2 ;;
+      *) _ctl__err "ctl__agent_assign: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$project_key" || -z "$run_id" || -z "$agent_name" ]]; then
+    _ctl__err "ctl__agent_assign: --project-key/--run-id/--agent-name は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  local project_id
+  project_id="$("$psql" -h "$PGHOST" -d "$db" -Atqc "select project_id from control.projects where project_key='$(_ctl__sqlq "$project_key")'" 2>/dev/null || true)"
+  [[ -n "$project_id" ]] || { _ctl__err "project が見つかりません: $project_key"; return 1; }
+  local agent_id
+  agent_id="$("$psql" -h "$PGHOST" -d "$db" -Atqc "select agent_id from control.agents where agent_name='$(_ctl__sqlq "$agent_name")'" 2>/dev/null || true)"
+  [[ -n "$agent_id" ]] || { _ctl__err "agent が見つかりません (先に ctl__agent_register): $agent_name"; return 1; }
+
+  local task_id_sql="NULL"
+  if [[ -n "$task_key" ]]; then
+    local tid; tid="$("$psql" -h "$PGHOST" -d "$db" -Atqc "select task_id from control.tasks where project_id='$(_ctl__sqlq "$project_id")' and task_key='$(_ctl__sqlq "$task_key")'" 2>/dev/null || true)"
+    [[ -n "$tid" ]] && task_id_sql="'$(_ctl__sqlq "$tid")'"
+  fi
+  local path_scope_sql="NULL" worktree_path_sql="NULL" branch_sql="NULL"
+  [[ -n "$path_scope" ]] && path_scope_sql="'$(_ctl__sqlq "$path_scope")'"
+  [[ -n "$worktree_path" ]] && worktree_path_sql="'$(_ctl__sqlq "$worktree_path")'"
+  [[ -n "$branch" ]] && branch_sql="'$(_ctl__sqlq "$branch")'"
+
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.agent_assignments
+      (project_id, run_id, agent_id, task_id, assigned_role, path_scope, worktree_path, branch_name)
+    VALUES (
+      '$(_ctl__sqlq "$project_id")', '$(_ctl__sqlq "$run_id")', '$(_ctl__sqlq "$agent_id")',
+      $task_id_sql, '$(_ctl__sqlq "$role")', $path_scope_sql, $worktree_path_sql, $branch_sql
+    )
+    RETURNING assignment_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    if [[ "$out" == *"uq_agent_assignments_active_scope"* ]]; then
+      _ctl__err "衝突: path_scope '$path_scope' は project '$project_key' で既に割当済みです (同一ファイルへの並列割当は禁止)"
+      return 5
+    fi
+    _ctl__err "agent 割当に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  _ctl__log "agent 割当: agent=$agent_name role=$role path_scope=${path_scope:-<なし>} assignment_id=$out" >&2
+  printf '%s\n' "$out"
+}
+
+# ctl__agent_release --assignment-id id [--db d] [--reason r]
+ctl__agent_release() {
+  local db="$CTL_DB" assignment_id="" reason=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --assignment-id) assignment_id="$2"; shift 2 ;;
+      --reason) reason="$2"; shift 2 ;;
+      *) _ctl__err "ctl__agent_release: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$assignment_id" ]] || { _ctl__err "ctl__agent_release: --assignment-id は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local reason_sql="NULL"
+  [[ -n "$reason" ]] && reason_sql="'$(_ctl__sqlq "$reason")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    UPDATE control.agent_assignments
+       SET released_at = now(), release_reason = $reason_sql
+     WHERE assignment_id = '$(_ctl__sqlq "$assignment_id")' AND released_at IS NULL;
+  " || { _ctl__err "割当解放に失敗しました"; return 1; }
+}
+
+# ctl__handoff_offer --run-id id --to-agent-name n --summary s [--db d]
+#   [--from-agent-name n2] [--kind work|review|verification|escalation|information]
+#   [--ttl-hours N]
+ctl__handoff_offer() {
+  local db="$CTL_DB" run_id="" to_agent_name="" from_agent_name="" summary="" kind="work" ttl_hours=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --to-agent-name) to_agent_name="$2"; shift 2 ;;
+      --from-agent-name) from_agent_name="$2"; shift 2 ;;
+      --summary) summary="$2"; shift 2 ;;
+      --kind) kind="$2"; shift 2 ;;
+      --ttl-hours) ttl_hours="$2"; shift 2 ;;
+      *) _ctl__err "ctl__handoff_offer: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$run_id" || -z "$to_agent_name" || -z "$summary" ]]; then
+    _ctl__err "ctl__handoff_offer: --run-id/--to-agent-name/--summary は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  local to_agent_id
+  to_agent_id="$("$psql" -h "$PGHOST" -d "$db" -Atqc "select agent_id from control.agents where agent_name='$(_ctl__sqlq "$to_agent_name")'" 2>/dev/null || true)"
+  [[ -n "$to_agent_id" ]] || { _ctl__err "agent が見つかりません: $to_agent_name"; return 1; }
+  local from_agent_id_sql="NULL"
+  if [[ -n "$from_agent_name" ]]; then
+    local fid; fid="$("$psql" -h "$PGHOST" -d "$db" -Atqc "select agent_id from control.agents where agent_name='$(_ctl__sqlq "$from_agent_name")'" 2>/dev/null || true)"
+    [[ -n "$fid" ]] && from_agent_id_sql="'$(_ctl__sqlq "$fid")'"
+  fi
+  local expires_sql="NULL"
+  [[ -n "$ttl_hours" ]] && expires_sql="now() + interval '${ttl_hours} hours'"
+
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.handoffs (run_id, from_agent_id, to_agent_id, handoff_kind, summary, expires_at)
+    VALUES ('$(_ctl__sqlq "$run_id")', $from_agent_id_sql, '$(_ctl__sqlq "$to_agent_id")', '$(_ctl__sqlq "$kind")', '$(_ctl__sqlq "$summary")', $expires_sql)
+    RETURNING handoff_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "handoff 作成に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  _ctl__log "handoff 提示: to=$to_agent_name handoff_id=$out" >&2
+  printf '%s\n' "$out"
+}
+
+# ctl__handoff_accept --handoff-id id [--db d]
+ctl__handoff_accept() {
+  local db="$CTL_DB" handoff_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --handoff-id) handoff_id="$2"; shift 2 ;;
+      *) _ctl__err "ctl__handoff_accept: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$handoff_id" ]] || { _ctl__err "ctl__handoff_accept: --handoff-id は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    UPDATE control.handoffs
+       SET state = 'accepted', accepted_at = now()
+     WHERE handoff_id = '$(_ctl__sqlq "$handoff_id")' AND state = 'offered';
+  " || { _ctl__err "handoff 受諾に失敗しました"; return 1; }
 }

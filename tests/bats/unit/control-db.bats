@@ -111,6 +111,80 @@ case "$args" in
       exit 1
     fi
     exit 0 ;;
+  *"INSERT INTO control.projects"*)
+    if [ "${FORCE_PROJECT_FAIL:-0}" = "1" ]; then
+      echo "stub: forced project failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${PROJECT_ID_STUB:-project-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.runs"*)
+    if [ "${FORCE_RUN_START_FAIL:-0}" = "1" ]; then
+      echo "stub: forced run-start failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${RUN_ID_STUB:-run-stub-id}"
+    exit 0 ;;
+  *"SET heartbeat_at = now()"*)
+    if [ "${FORCE_HEARTBEAT_FAIL:-0}" = "1" ]; then
+      echo "stub: forced heartbeat failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  *"SET status = "*"ended_at = now()"*)
+    if [ "${FORCE_RUN_FINISH_FAIL:-0}" = "1" ]; then
+      echo "stub: forced run-finish failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  *"INSERT INTO control.agents"*)
+    if [ "${FORCE_AGENT_REGISTER_FAIL:-0}" = "1" ]; then
+      echo "stub: forced agent-register failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${AGENT_ID_STUB:-agent-stub-id}"
+    exit 0 ;;
+  *"select project_id from control.projects where project_key="*)
+    printf '%s\n' "${PROJECT_LOOKUP_STUB:-project-stub-id}"
+    exit 0 ;;
+  *"select agent_id from control.agents where agent_name="*)
+    val="${AGENT_LOOKUP_STUB:-agent-stub-id}"
+    [ "$val" = "__NONE__" ] && val=""
+    printf '%s\n' "$val"
+    exit 0 ;;
+  *"select task_id from control.tasks where"*)
+    printf '%s\n' "${TASK_LOOKUP_STUB:-}"
+    exit 0 ;;
+  *"INSERT INTO control.agent_assignments"*)
+    if [ "${FORCE_ASSIGN_CONFLICT:-0}" = "1" ]; then
+      echo "ERROR:  duplicate key value violates unique constraint \"uq_agent_assignments_active_scope\"" >&2
+      exit 1
+    fi
+    if [ "${FORCE_ASSIGN_FAIL:-0}" = "1" ]; then
+      echo "stub: forced assign failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${ASSIGNMENT_ID_STUB:-assignment-stub-id}"
+    exit 0 ;;
+  *"UPDATE control.agent_assignments"*)
+    if [ "${FORCE_RELEASE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced release failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  *"INSERT INTO control.handoffs"*)
+    if [ "${FORCE_HANDOFF_OFFER_FAIL:-0}" = "1" ]; then
+      echo "stub: forced handoff-offer failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${HANDOFF_ID_STUB:-handoff-stub-id}"
+    exit 0 ;;
+  *"UPDATE control.handoffs"*)
+    if [ "${FORCE_HANDOFF_ACCEPT_FAIL:-0}" = "1" ]; then
+      echo "stub: forced handoff-accept failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
   *)
     exit 0 ;;
 esac
@@ -131,6 +205,11 @@ setup() {
   export PSQL_LOG="$TEST_TEMP/psql.log"
   export EXISTING_ROLES="" EXISTING_DB="" APPLIED_MIGRATIONS="" LAST_MIGRATION="" SCHEMA_EXISTS="0" FORCE_FAIL_ON=""
   export STALE_RUN_IDS="" FORCE_RECONCILE_FAIL="0"
+  export PROJECT_ID_STUB="" PROJECT_LOOKUP_STUB="" FORCE_PROJECT_FAIL="0"
+  export RUN_ID_STUB="" FORCE_RUN_START_FAIL="0" FORCE_HEARTBEAT_FAIL="0" FORCE_RUN_FINISH_FAIL="0"
+  export AGENT_ID_STUB="" AGENT_LOOKUP_STUB="" FORCE_AGENT_REGISTER_FAIL="0"
+  export TASK_LOOKUP_STUB="" ASSIGNMENT_ID_STUB="" FORCE_ASSIGN_FAIL="0" FORCE_ASSIGN_CONFLICT="0" FORCE_RELEASE_FAIL="0"
+  export HANDOFF_ID_STUB="" FORCE_HANDOFF_OFFER_FAIL="0" FORCE_HANDOFF_ACCEPT_FAIL="0"
   mkdir -p "$CCSU_CONTROL_MIG_DIR"
   : > "$PSQL_LOG"
   make_stub_bin pg_lsclusters 'printf "Ver Cluster Port Status Owner Data\n16  main 5432 online postgres /x\n"'
@@ -442,4 +521,132 @@ _mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
   export FORCE_USAGE_FAIL="1"
   run ctl__usage_record --model-id "m"
   [ "$status" -eq 1 ]
+}
+
+# ---- project_register / run lifecycle ---------------------------
+@test "ctl__project_register: --key 必須" {
+  run ctl__project_register --display-name x
+  [ "$status" -eq 2 ]
+}
+@test "ctl__project_register: 正常系は project_id を返す" {
+  export PROJECT_ID_STUB="pppp0000-0000-0000-0000-000000000000"
+  run ctl__project_register --key "demo"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pppp0000"* ]]
+  grep -q "ON CONFLICT (project_key) DO UPDATE" "$PSQL_LOG"
+}
+@test "ctl__run_start: --project-key 必須" {
+  run ctl__run_start --run-kind interactive
+  [ "$status" -eq 2 ]
+}
+@test "ctl__run_start: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__run_start --project-key demo
+  [ "$status" -eq 3 ]
+}
+@test "ctl__run_start: 正常系は run_id を返し queued 状態で作る (lease-owner 省略時)" {
+  export PROJECT_ID_STUB="p1" RUN_ID_STUB="rrrr0000-0000-0000-0000-000000000000"
+  run ctl__run_start --project-key demo
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rrrr0000"* ]]
+  grep -q "'queued'" "$PSQL_LOG"
+}
+@test "ctl__run_start: --lease-owner 指定時は running 状態で作る" {
+  export PROJECT_ID_STUB="p1" RUN_ID_STUB="r1"
+  run ctl__run_start --project-key demo --lease-owner "host/pid1"
+  [ "$status" -eq 0 ]
+  grep -q "'running'" "$PSQL_LOG"
+  grep -q "host/pid1" "$PSQL_LOG"
+}
+@test "ctl__run_heartbeat: --run-id 必須" {
+  run ctl__run_heartbeat
+  [ "$status" -eq 2 ]
+}
+@test "ctl__run_heartbeat: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__run_heartbeat --run-id r1
+  [ "$status" -eq 3 ]
+}
+@test "ctl__run_heartbeat: 正常系は rc=0" {
+  run ctl__run_heartbeat --run-id r1
+  [ "$status" -eq 0 ]
+}
+@test "ctl__run_finish: --run-id/--status 必須" {
+  run ctl__run_finish --run-id r1
+  [ "$status" -eq 2 ]
+}
+@test "ctl__run_finish: 正常系は SQL に status を反映する" {
+  run ctl__run_finish --run-id r1 --status succeeded --exit-code 0
+  [ "$status" -eq 0 ]
+  grep -q "'succeeded'" "$PSQL_LOG"
+}
+
+# ---- agent_register / agent_assign / agent_release ---------------
+@test "ctl__agent_register: --name 必須" {
+  run ctl__agent_register --kind reviewer
+  [ "$status" -eq 2 ]
+}
+@test "ctl__agent_register: 正常系は agent_id を返す" {
+  export AGENT_ID_STUB="aaaa0000-0000-0000-0000-000000000000"
+  run ctl__agent_register --name "code-reviewer" --kind reviewer --verifier
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"aaaa0000"* ]]
+  grep -q "'code-reviewer'" "$PSQL_LOG"
+  grep -q ", true)" "$PSQL_LOG"
+}
+@test "ctl__agent_assign: 必須引数不足は rc=2" {
+  run ctl__agent_assign --project-key demo
+  [ "$status" -eq 2 ]
+}
+@test "ctl__agent_assign: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__agent_assign --project-key demo --run-id r1 --agent-name code-reviewer
+  [ "$status" -eq 3 ]
+}
+@test "ctl__agent_assign: 正常系は assignment_id を返す" {
+  export PROJECT_LOOKUP_STUB="p1" AGENT_LOOKUP_STUB="a1" ASSIGNMENT_ID_STUB="asgn0000-0000-0000-0000-000000000000"
+  run ctl__agent_assign --project-key demo --run-id r1 --agent-name code-reviewer --path-scope "lib/x.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"asgn0000"* ]]
+}
+@test "ctl__agent_assign: path_scope 競合検知は rc=5" {
+  export PROJECT_LOOKUP_STUB="p1" AGENT_LOOKUP_STUB="a1" FORCE_ASSIGN_CONFLICT="1"
+  run ctl__agent_assign --project-key demo --run-id r1 --agent-name code-reviewer --path-scope "lib/x.sh"
+  [ "$status" -eq 5 ]
+  [[ "$output" == *"衝突"* ]]
+}
+@test "ctl__agent_release: --assignment-id 必須" {
+  run ctl__agent_release
+  [ "$status" -eq 2 ]
+}
+@test "ctl__agent_release: 正常系は rc=0" {
+  run ctl__agent_release --assignment-id asgn1 --reason done
+  [ "$status" -eq 0 ]
+  grep -q "'done'" "$PSQL_LOG"
+}
+
+# ---- handoff_offer / handoff_accept -------------------------------
+@test "ctl__handoff_offer: 必須引数不足は rc=2" {
+  run ctl__handoff_offer --run-id r1
+  [ "$status" -eq 2 ]
+}
+@test "ctl__handoff_offer: to-agent が見つからなければ rc=1" {
+  export AGENT_LOOKUP_STUB="__NONE__"
+  run ctl__handoff_offer --run-id r1 --to-agent-name nope --summary "レビュー依頼"
+  [ "$status" -eq 1 ]
+}
+@test "ctl__handoff_offer: 正常系は handoff_id を返す" {
+  export AGENT_LOOKUP_STUB="a1" HANDOFF_ID_STUB="hoff0000-0000-0000-0000-000000000000"
+  run ctl__handoff_offer --run-id r1 --to-agent-name reviewer --summary "レビュー依頼"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hoff0000"* ]]
+}
+@test "ctl__handoff_accept: --handoff-id 必須" {
+  run ctl__handoff_accept
+  [ "$status" -eq 2 ]
+}
+@test "ctl__handoff_accept: 正常系は rc=0" {
+  run ctl__handoff_accept --handoff-id h1
+  [ "$status" -eq 0 ]
+  grep -q "'accepted'" "$PSQL_LOG"
 }

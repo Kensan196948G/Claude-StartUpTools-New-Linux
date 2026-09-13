@@ -15,6 +15,15 @@
 #   control-db.sh eval-define --key k --kind golden|regression|security|outcome|performance|smoke --title t [--required]
 #   control-db.sh eval-record --key k --verdict PASS|FAIL|BLOCKED|NOT_RUN
 #   control-db.sh usage-record --model-id id [--input-tokens n] [--output-tokens n] [--cost-micro-usd n]
+#   control-db.sh project-register --key k [--display-name n] [--repo-path p] [--remote-slug o/r]
+#   control-db.sh run-start --project-key k [--run-kind k] [--lease-owner o]
+#   control-db.sh run-heartbeat --run-id id
+#   control-db.sh run-finish --run-id id --status succeeded|failed|cancelled|blocked
+#   control-db.sh agent-register --name n [--kind k] [--execution-plane p] [--verifier]
+#   control-db.sh agent-assign --project-key k --run-id id --agent-name n [--path-scope p]
+#   control-db.sh agent-release --assignment-id id
+#   control-db.sh handoff-offer --run-id id --to-agent-name n --summary s
+#   control-db.sh handoff-accept --handoff-id id
 #   control-db.sh status
 #   control-db.sh grants [db]
 #   control-db.sh units <project> <db> [--install]   systemd projection/reconcile unit を生成
@@ -75,6 +84,15 @@ main() {
     eval-define)         ctl__eval_define "$@" ;;
     eval-record)         ctl__eval_record "$@" ;;
     usage-record)        ctl__usage_record "$@" ;;
+    project-register)    ctl__project_register "$@" ;;
+    run-start)           ctl__run_start "$@" ;;
+    run-heartbeat)       ctl__run_heartbeat "$@" ;;
+    run-finish)          ctl__run_finish "$@" ;;
+    agent-register)      ctl__agent_register "$@" ;;
+    agent-assign)        ctl__agent_assign "$@" ;;
+    agent-release)       ctl__agent_release "$@" ;;
+    handoff-offer)       ctl__handoff_offer "$@" ;;
+    handoff-accept)      ctl__handoff_accept "$@" ;;
     status)              ctl__status_json ;;
     grants)              ctl__grant_matrix "${1:-}" ;;
     units)               [[ -n "${1:-}" && -n "${2:-}" ]] || die "units <project> <db> [--install] が必要です"
