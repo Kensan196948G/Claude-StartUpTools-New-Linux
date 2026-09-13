@@ -56,3 +56,11 @@ Implementation Agent が自分の変更だけを根拠に成功判定しない�
 ## 6. 失敗制御
 
 同一 failure ×2 → Root Cause Analysis、同一 strategy ×3 失敗 → Strategy Change、回復不能 → BLOCKED（Evidence / Root Cause / Attempts / Recommended Action / Human Decision Required）。無限ループ禁止。
+
+## 7. Control Plane との接続点
+
+`execution.routing_log`（`state.json`、最新 20 件）と `.claude/claudeos/data/audit-log.jsonl` は、PostgreSQL 上の `claudeos_control` データベースへ段階的に射影される（詳細は `docs/architecture/ControlPlaneデータ基盤仕様.md`）。既存のファイルベースの記録は当面の正本のまま維持し、Control Plane は横断クエリ・監査・Agent 別成功率やコストの集計を可能にする**外側の層**として追加される。
+
+- Router の決定 → `control.workflow_events` / `control.agent_assignments`（排他 `path_scope` により同一ファイルへの二重割当を DB 制約でも防止）
+- 失敗の反復判定（同一 failure ×2 / 同一 strategy ×3）→ `control.failure_events` と `control.v_repeated_failures` ビューが機械的に検出
+- BLOCKED の Human Decision Required → `control.approvals` / `control.approval_decisions`（PR#5 以降）
