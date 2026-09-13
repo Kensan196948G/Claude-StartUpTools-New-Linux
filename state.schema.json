@@ -143,6 +143,18 @@
           "type": "string",
           "description": "<transition>:<trigger> e.g. kept:cron, reroute:user, unchanged:supervisor-resume"
         },
+        "execution_plane": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "managed",
+            "local",
+            null
+          ],
+          "description": "v11 P0: execution plane selected by Goal Router. managed requires the managed-agents contract (enabled/mode/environmentId/orchestratorId/budget); anything else falls back safely to local"
+        },
         "evidence_snapshot": {
           "type": "object",
           "properties": {
