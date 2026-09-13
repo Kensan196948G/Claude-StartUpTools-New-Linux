@@ -1,0 +1,230 @@
+#!/usr/bin/env bats
+# ============================================================
+# control-db.bats — lib/control-db.sh のユニットテスト (psql を PATH スタブで密閉)
+#
+# 検証観点:
+#   - init: dry-run は何も実行しない / 冪等 (既存 role/db は変更しない)
+#   - migrate: 命名規約違反 / checksum drift / 順序違反(gap) はいずれも rc=4 (drift/gap) か rc=2 (命名)
+#   - migrate: 破壊的操作は既定で拒否、--allow-destructive で明示許可した版のみ通す
+#   - migrate: DB 接続不可は rc=3、dry-run は列挙のみで psql -f を呼ばない
+#   - migrate: 正常適用は pending の各ファイルへ psql -f を順に呼ぶ
+#   - status_json: DB 停止時でも rc=0 で妥当な JSON を返す
+#   - 秘密情報 (接続文字列・パスワード) がいかなる出力にも出ない
+# ============================================================
+
+load '../helpers/common-setup'
+
+_write_psql_stub() {
+  # 呼び出し引数と、-f で渡されたファイルの適用ログを $PSQL_LOG へ記録する。
+  # EXISTING_ROLES (空白区切り) / EXISTING_DB / APPLIED_MIGRATIONS ("v:sum" を ; 区切り)
+  # / FORCE_FAIL_ON (含まれるとその -f 呼び出しを失敗させる部分文字列) で状態を模擬する。
+  # 単純な部分文字列一致だけで判定し、正規表現・sed 抽出は使わない (引用符ネスト事故を避けるため)。
+  local body
+  body="$(cat <<'STUBEOF'
+args="$*"
+printf '%s\n' "$args" >> "$PSQL_LOG"
+file=""; prev=""
+for a in "$@"; do
+  if [ "$prev" = "-f" ]; then file="$a"; fi
+  prev="$a"
+done
+if [ -n "$file" ]; then
+  printf 'APPLY:%s\n' "$file" >> "$PSQL_LOG"
+  if [ -n "${FORCE_FAIL_ON:-}" ] && printf '%s' "$file" | grep -q "$FORCE_FAIL_ON"; then
+    echo "stub: forced failure for $file" >&2
+    exit 1
+  fi
+  exit 0
+fi
+case "$args" in
+  *"select 1 from pg_roles"*)
+    for r in $EXISTING_ROLES; do
+      case "$args" in *"rolname='$r'"*) echo 1; exit 0 ;; esac
+    done
+    exit 0 ;;
+  *"select 1 from pg_database"*)
+    if [ -n "${EXISTING_DB:-}" ]; then
+      case "$args" in *"datname='$EXISTING_DB'"*) echo 1 ;; esac
+    fi
+    exit 0 ;;
+  *"select version, checksum, applied_at from control.schema_migrations"*)
+    printf '%s\n' "${APPLIED_MIGRATIONS:-}" | tr ';' '\n' | sed '/^$/d' | sed 's/:/\t/' | sed 's/$/\t2026-09-13T00:00:00Z/'
+    exit 0 ;;
+  *"select version, checksum from control.schema_migrations"*)
+    printf '%s\n' "${APPLIED_MIGRATIONS:-}" | tr ';' '\n' | sed '/^$/d' | sed 's/:/\t/'
+    exit 0 ;;
+  *"select count(*) from control.schema_migrations"*)
+    printf '%s\n' "${APPLIED_MIGRATIONS:-}" | tr ';' '\n' | sed '/^$/d' | wc -l | tr -d ' '
+    exit 0 ;;
+  *"filename from control.schema_migrations"*)
+    printf '%s\n' "${LAST_MIGRATION:-}"
+    exit 0 ;;
+  *"select 1 from information_schema.schemata"*)
+    [ "${SCHEMA_EXISTS:-0}" = "1" ] && echo 1
+    exit 0 ;;
+  *)
+    exit 0 ;;
+esac
+STUBEOF
+)"
+  make_stub_bin psql "$body"
+}
+
+setup() {
+  _bats_common_setup
+  export CCSU_HOME="$TEST_TEMP/home"
+  export PGHOST="$TEST_TEMP/sock"
+  export PG_BIN="$STUB_BIN"
+  export CTL_DB="ctltest"
+  export CTL_ROLE_PREFIX="ctl"
+  export CCSU_CONTROL_MIG_DIR="$TEST_TEMP/migrations"
+  export CCSU_CONTROL_STATE_DIR="$TEST_TEMP/control-plane"
+  export PSQL_LOG="$TEST_TEMP/psql.log"
+  export EXISTING_ROLES="" EXISTING_DB="" APPLIED_MIGRATIONS="" LAST_MIGRATION="" SCHEMA_EXISTS="0" FORCE_FAIL_ON=""
+  mkdir -p "$CCSU_CONTROL_MIG_DIR"
+  : > "$PSQL_LOG"
+  make_stub_bin pg_lsclusters 'printf "Ver Cluster Port Status Owner Data\n16  main 5432 online postgres /x\n"'
+  make_stub_bin pg_isready 'exit 0'
+  _write_psql_stub
+  source "$REPO_ROOT/lib/common.sh"
+  source "$REPO_ROOT/lib/postgres.sh"
+  source "$REPO_ROOT/lib/control-db.sh"
+}
+teardown() { _bats_common_teardown; }
+
+_mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
+
+# ---- init --------------------------------------------------
+@test "ctl__init --dry-run: CREATE / GRANT を一切実行しない" {
+  run ctl__init --grant-to tester --dry-run
+  [ "$status" -eq 0 ]
+  ! grep -qi "CREATE ROLE" "$PSQL_LOG"
+  ! grep -qi "GRANT" "$PSQL_LOG"
+  ! grep -qi "CREATE DATABASE" "$PSQL_LOG"
+}
+@test "ctl__init: role/db が既存なら CREATE を発行せず冪等" {
+  export EXISTING_ROLES="ctl_migrator ctl_app ctl_ro ctl_audit" EXISTING_DB="ctltest"
+  run ctl__init --grant-to tester
+  [ "$status" -eq 0 ]
+  ! grep -qi "CREATE ROLE" "$PSQL_LOG"
+  ! grep -qi "CREATE DATABASE" "$PSQL_LOG"
+}
+@test "ctl__init: role/db 未存在なら作成し GRANT する" {
+  run ctl__init --grant-to tester
+  [ "$status" -eq 0 ]
+  grep -q "CREATE ROLE \"ctl_migrator\"" "$PSQL_LOG"
+  grep -q 'GRANT "ctl_migrator", "ctl_app", "ctl_ro", "ctl_audit" TO "tester"' "$PSQL_LOG"
+  grep -q "CREATE DATABASE \"ctltest\"" "$PSQL_LOG"
+}
+@test "ctl__init: 不正な識別子は rc=2" {
+  run ctl__init --db "Bad-Name!"
+  [ "$status" -eq 2 ]
+}
+
+# ---- migrate: 命名規約 -------------------------------------
+@test "ctl__migrate: 命名規約違反ファイルは rc=2" {
+  _mig "not-a-migration.sql" "select 1;"
+  run ctl__migrate
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"命名規約違反"* ]]
+}
+
+# ---- migrate: drift / gap ----------------------------------
+@test "ctl__migrate: checksum drift は rc=4 で 1 件も適用しない" {
+  _mig "0001_a.sql" "select 1;"
+  export APPLIED_MIGRATIONS="0001:deadbeef"
+  run ctl__migrate
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"checksum drift"* ]]
+  ! grep -q "APPLY:" "$PSQL_LOG"
+}
+@test "ctl__migrate: 順序違反(gap) は rc=4" {
+  _mig "0001_a.sql" "select 1;"
+  _mig "0002_b.sql" "select 1;"
+  _mig "0003_c.sql" "select 1;"
+  local sum1 sum3
+  sum1="$(sha256sum "$CCSU_CONTROL_MIG_DIR/0001_a.sql" | cut -d' ' -f1)"
+  sum3="$(sha256sum "$CCSU_CONTROL_MIG_DIR/0003_c.sql" | cut -d' ' -f1)"
+  export APPLIED_MIGRATIONS="0001:${sum1};0003:${sum3}"
+  run ctl__migrate
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"順序違反"* ]]
+}
+
+# ---- migrate: 破壊的操作 ------------------------------------
+@test "ctl__migrate: 破壊的 SQL は既定で拒否 (rc=1)、適用されない" {
+  _mig "0001_a.sql" "DROP TABLE legacy;"
+  run ctl__migrate
+  [ "$status" -eq 1 ]
+  ! grep -q "APPLY:" "$PSQL_LOG"
+}
+@test "ctl__migrate: --allow-destructive で明示許可した版のみ適用される" {
+  _mig "0001_a.sql" "DROP TABLE legacy;"
+  run ctl__migrate --allow-destructive 0001
+  [ "$status" -eq 0 ]
+  grep -q "APPLY:$CCSU_CONTROL_MIG_DIR/0001_a.sql" "$PSQL_LOG"
+}
+
+# ---- migrate: 接続不可 / dry-run / 正常適用 ------------------
+@test "ctl__migrate: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  _mig "0001_a.sql" "select 1;"
+  run ctl__migrate
+  [ "$status" -eq 3 ]
+}
+@test "ctl__migrate --dry-run: 列挙のみで psql -f を呼ばない" {
+  _mig "0001_a.sql" "select 1;"
+  _mig "0002_b.sql" "select 1;"
+  run ctl__migrate --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"0001_a.sql"* && "$output" == *"0002_b.sql"* ]]
+  ! grep -q "APPLY:" "$PSQL_LOG"
+}
+@test "ctl__migrate: 正常適用は pending の各ファイルへ psql -f を順に呼ぶ" {
+  _mig "0001_a.sql" "select 1;"
+  _mig "0002_b.sql" "select 1;"
+  run ctl__migrate
+  [ "$status" -eq 0 ]
+  grep -q "APPLY:$CCSU_CONTROL_MIG_DIR/0001_a.sql" "$PSQL_LOG"
+  grep -q "APPLY:$CCSU_CONTROL_MIG_DIR/0002_b.sql" "$PSQL_LOG"
+  [ "$(grep -n 'APPLY:' "$PSQL_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n 'APPLY:' "$PSQL_LOG" | tail -1 | cut -d: -f1)" ]
+}
+@test "ctl__migrate: 適用済み分は再適用しない (冪等)" {
+  _mig "0001_a.sql" "select 1;"
+  local sum1; sum1="$(sha256sum "$CCSU_CONTROL_MIG_DIR/0001_a.sql" | cut -d' ' -f1)"
+  export APPLIED_MIGRATIONS="0001:${sum1}"
+  run ctl__migrate
+  [ "$status" -eq 0 ]
+  ! grep -q "APPLY:" "$PSQL_LOG"
+  [[ "$output" == *"適用対象なし"* ]]
+}
+
+# ---- status_json --------------------------------------------
+@test "ctl__status_json: 正常時に妥当な JSON を返す" {
+  export APPLIED_MIGRATIONS="0001:abc"
+  run ctl__status_json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.db == "ctltest" and .health == true and .migrations_applied == 1'
+}
+@test "ctl__status_json: DB 停止時でも rc=0 で妥当な JSON を返す" {
+  make_stub_bin pg_isready 'exit 1'
+  make_stub_bin psql 'exit 1'
+  run ctl__status_json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.health == false and .migrations_applied == 0'
+}
+
+# ---- 秘密情報の非出力 -----------------------------------------
+@test "秘密情報 (パスワード・接続文字列) がいかなる出力にも含まれない" {
+  export EXISTING_ROLES="" EXISTING_DB=""
+  run ctl__init --grant-to tester
+  [[ "$output" != *"password"* ]]
+  [[ "$output" != *"postgresql://"* ]]
+  ! grep -qi "password" "$PSQL_LOG"
+  ! grep -qi "postgresql://" "$PSQL_LOG"
+}
+
+@test "control-db.sh: 引数不足は non-zero" {
+  run bash "$REPO_ROOT/bin/control-db.sh" migrate --db
+  [ "$status" -ne 0 ]
+}
