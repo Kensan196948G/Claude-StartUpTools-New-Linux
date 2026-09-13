@@ -19,6 +19,7 @@
 #   ctl__migration_status [--db d] [--dir path] [--json]
 #   ctl__status_json                         → Mission Control 用 (常に rc=0)
 #   ctl__grant_matrix [db]                   → 権限一覧 (TSV, 監査用 read-only)
+#   ctl__reconcile [--db d] [--reason r] [--dry-run] → 放棄された run を stale へ遷移
 #
 # migration runner の規約:
 #   - ファイル名は NNNN_name.sql (4 桁通し番号)。違反は rc=2。
@@ -326,4 +327,50 @@ ctl__grant_matrix() {
   "$(pg__cmd psql)" -h "$PGHOST" -d "$db" -A -t -q -F $'\t' -c \
     "select grantee, table_name, string_agg(privilege_type, ',' order by privilege_type) from information_schema.table_privileges where table_schema='control' group by grantee, table_name order by grantee, table_name" \
     2>/dev/null
+}
+
+# ctl__reconcile [--db d] [--reason r] [--dry-run]
+#   control.v_stale_runs (lease 失効または heartbeat 途絶) に該当する run を
+#   status='stale' へ遷移させる。すでに終端状態 (succeeded/failed/...) の
+#   run は対象外なので、放棄されていない run を誤って上書きすることはない。
+#   戻り値: 0=成功 (対象0件も含む), 2=引数エラー, 3=DB 接続不可, 1=更新失敗
+ctl__reconcile() {
+  local db="$CTL_DB" reason="lease_expired_reconciler" dry_run=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --reason) reason="$2"; shift 2 ;;
+      --dry-run) dry_run=1; shift ;;
+      *) _ctl__err "ctl__reconcile: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  if (( dry_run )); then
+    local ids
+    ids="$("$psql" -h "$PGHOST" -d "$db" -Atqc \
+      "select run_id from control.v_stale_runs" 2>/dev/null || true)"
+    local n; n="$(printf '%s\n' "$ids" | sed '/^$/d' | wc -l | tr -d ' ')"
+    _ctl__log "[dry-run] reconcile 対象: ${n} 件 (db=$db)"
+    return 0
+  fi
+
+  local reason_escaped="${reason//\'/\'\'}"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    UPDATE control.runs
+       SET status = 'stale',
+           reconciled_at = now(),
+           reconcile_reason = '${reason_escaped}'
+     WHERE run_id IN (SELECT run_id FROM control.v_stale_runs)
+       AND status IN ('leased','running')
+    RETURNING run_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "reconcile 更新に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  local n; n="$(printf '%s\n' "$out" | sed '/^$/d' | wc -l | tr -d ' ')"
+  _ctl__log "reconcile 完了: ${n} 件を stale へ遷移 (db=$db, reason=$reason)"
 }

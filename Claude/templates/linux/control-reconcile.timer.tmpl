@@ -1,0 +1,10 @@
+[Unit]
+Description=ClaudeOS @PROJECT@ Control Plane stale-run reconcile timer (@DB@)
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
