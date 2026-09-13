@@ -62,6 +62,16 @@ case "$args" in
   *"select 1 from information_schema.schemata"*)
     [ "${SCHEMA_EXISTS:-0}" = "1" ] && echo 1
     exit 0 ;;
+  *"select run_id from control.v_stale_runs"*)
+    printf '%s\n' "${STALE_RUN_IDS:-}" | tr ';' '\n' | sed '/^$/d'
+    exit 0 ;;
+  *"UPDATE control.runs"*)
+    if [ "${FORCE_RECONCILE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced reconcile failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${STALE_RUN_IDS:-}" | tr ';' '\n' | sed '/^$/d'
+    exit 0 ;;
   *)
     exit 0 ;;
 esac
@@ -81,6 +91,7 @@ setup() {
   export CCSU_CONTROL_STATE_DIR="$TEST_TEMP/control-plane"
   export PSQL_LOG="$TEST_TEMP/psql.log"
   export EXISTING_ROLES="" EXISTING_DB="" APPLIED_MIGRATIONS="" LAST_MIGRATION="" SCHEMA_EXISTS="0" FORCE_FAIL_ON=""
+  export STALE_RUN_IDS="" FORCE_RECONCILE_FAIL="0"
   mkdir -p "$CCSU_CONTROL_MIG_DIR"
   : > "$PSQL_LOG"
   make_stub_bin pg_lsclusters 'printf "Ver Cluster Port Status Owner Data\n16  main 5432 online postgres /x\n"'
@@ -227,4 +238,42 @@ _mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
 @test "control-db.sh: 引数不足は non-zero" {
   run bash "$REPO_ROOT/bin/control-db.sh" migrate --db
   [ "$status" -ne 0 ]
+}
+
+# ---- reconcile -------------------------------------------------
+@test "ctl__reconcile: 対象なしは 0 件で成功 (UPDATE 自体は WHERE 一致 0 件で安全に空振りする)" {
+  run ctl__reconcile
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"0 件"* ]]
+}
+@test "ctl__reconcile: 対象がある場合は stale へ遷移し件数を報告する" {
+  export STALE_RUN_IDS="11111111-1111-1111-1111-111111111111;22222222-2222-2222-2222-222222222222"
+  run ctl__reconcile
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"2 件"* ]]
+  grep -q "UPDATE control.runs" "$PSQL_LOG"
+  grep -q "lease_expired_reconciler" "$PSQL_LOG"
+}
+@test "ctl__reconcile --dry-run: UPDATE を発行せず件数だけ報告する" {
+  export STALE_RUN_IDS="11111111-1111-1111-1111-111111111111"
+  run ctl__reconcile --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[dry-run]"* && "$output" == *"1 件"* ]]
+  ! grep -q "UPDATE control.runs" "$PSQL_LOG"
+}
+@test "ctl__reconcile: --reason を SQL へ反映する" {
+  export STALE_RUN_IDS="11111111-1111-1111-1111-111111111111"
+  run ctl__reconcile --reason "manual test reason"
+  [ "$status" -eq 0 ]
+  grep -q "manual test reason" "$PSQL_LOG"
+}
+@test "ctl__reconcile: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__reconcile
+  [ "$status" -eq 3 ]
+}
+@test "ctl__reconcile: UPDATE 失敗時は rc=1" {
+  export STALE_RUN_IDS="11111111-1111-1111-1111-111111111111" FORCE_RECONCILE_FAIL="1"
+  run ctl__reconcile
+  [ "$status" -eq 1 ]
 }
