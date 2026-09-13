@@ -29,7 +29,8 @@
 #   control-db.sh dashboard [db]
 #   control-db.sh status
 #   control-db.sh grants [db]
-#   control-db.sh units <project> <db> [--install]   systemd projection/reconcile unit を生成
+#   control-db.sh units <project> <db> [--install] [--with-a2a-gateway]
+#     systemd projection/reconcile unit (+ A2A Gateway, --with-a2a-gateway 時のみ) を生成
 #
 # 既定 db: $CTL_DB (= claudeos_control)。既定 migrations dir: db/control/migrations。
 # ロールは claudeos_control_{migrator,app,ro,audit} (NOLOGIN グループロール)。
@@ -46,12 +47,18 @@ source "$SCRIPT_DIR/../lib/postgres.sh"
 source "$SCRIPT_DIR/../lib/control-db.sh"
 
 ctlops__render_units() {
-  local project="$1" db="$2" install="${3:-0}"
+  local project="$1" db="$2" install="${3:-0}" with_a2a="${4:-0}"
   local tdir="$CCSU_ROOT/Claude/templates/linux" out="${CCSU_CONTROL_UNITS_DIR:-$CCSU_HOME/units}"
   local pgbin; pgbin="$(pg__bin_dir)"; [[ -n "$pgbin" ]] || pgbin="/usr/lib/postgresql/16/bin"
   mkdir -p "$out"
+  local units=(control-projection.service control-projection.timer control-reconcile.service control-reconcile.timer)
+  # A2A Gateway (localhost 限定の常駐 HTTP API) は timer と違い性質が異なる
+  # (常駐ネットワークリスナー) ため、--install だけでは有効化せず
+  # --with-a2a-gateway を明示した場合のみ生成・有効化の対象に含める。
+  (( with_a2a )) && units+=(control-a2a-gateway.service)
+
   local f name
-  for f in control-projection.service control-projection.timer control-reconcile.service control-reconcile.timer; do
+  for f in "${units[@]}"; do
     [[ -f "$tdir/$f.tmpl" ]] || { log_error "テンプレートがありません: $tdir/$f.tmpl"; return 1; }
     name="claudeos-${project}-${f}"
     sed -e "s|@PROJECT@|$project|g" -e "s|@DB@|$db|g" -e "s|@USER@|$USER|g" -e "s|@CCSU_ROOT@|$CCSU_ROOT|g" \
@@ -62,12 +69,16 @@ ctlops__render_units() {
   if (( install )); then
     require_cmd sudo
     log_info "systemd unit を /etc/systemd/system へ配置します (sudo)"
-    for f in control-projection.service control-projection.timer control-reconcile.service control-reconcile.timer; do
+    for f in "${units[@]}"; do
       sudo cp "$out/claudeos-${project}-${f}" "/etc/systemd/system/claudeos-${project}-${f}"
     done
     sudo systemctl daemon-reload
     sudo systemctl enable --now "claudeos-${project}-control-projection.timer" "claudeos-${project}-control-reconcile.timer"
     log_ok "timer 有効化: claudeos-${project}-control-projection.timer / claudeos-${project}-control-reconcile.timer"
+    if (( with_a2a )); then
+      sudo systemctl enable --now "claudeos-${project}-control-a2a-gateway.service"
+      log_ok "A2A Gateway 有効化 (127.0.0.1 限定): claudeos-${project}-control-a2a-gateway.service"
+    fi
   else
     log_info "生成のみ (--install で配置)。内容を確認してから導入してください。"
   fi
@@ -101,9 +112,13 @@ main() {
     dashboard)           ctl__dashboard_json "${1:-}" ;;
     status)              ctl__status_json ;;
     grants)              ctl__grant_matrix "${1:-}" ;;
-    units)               [[ -n "${1:-}" && -n "${2:-}" ]] || die "units <project> <db> [--install] が必要です"
-                         local inst=0; [[ "${3:-}" == "--install" ]] && inst=1
-                         ctlops__render_units "$1" "$2" "$inst" ;;
+    units)               [[ -n "${1:-}" && -n "${2:-}" ]] || die "units <project> <db> [--install] [--with-a2a-gateway] が必要です"
+                         local inst=0 with_a2a=0 a
+                         for a in "${@:3}"; do
+                           [[ "$a" == "--install" ]] && inst=1
+                           [[ "$a" == "--with-a2a-gateway" ]] && with_a2a=1
+                         done
+                         ctlops__render_units "$1" "$2" "$inst" "$with_a2a" ;;
     -h|--help|"") sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
     *) die "不明なコマンド: $cmd" ;;
   esac
