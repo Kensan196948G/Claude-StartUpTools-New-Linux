@@ -72,6 +72,45 @@ case "$args" in
     fi
     printf '%s\n' "${STALE_RUN_IDS:-}" | tr ';' '\n' | sed '/^$/d'
     exit 0 ;;
+  *"INSERT INTO control.approvals"*)
+    if [ "${FORCE_APPROVAL_FAIL:-0}" = "1" ]; then
+      echo "stub: forced approval failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${APPROVAL_ID_STUB:-approval-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.approval_decisions"*)
+    if [ "${FORCE_DECIDE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced decide failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${DECIDE_STATUS_STUB:-pending}"
+    exit 0 ;;
+  *"jsonb_build_object"*)
+    printf '%s\n' "${APPROVAL_CHECK_JSON_STUB:-}"
+    exit 0 ;;
+  *"v_actionable_approvals"*)
+    [ -n "${APPROVAL_ACTIONABLE_STUB:-}" ] && echo 1
+    exit 0 ;;
+  *"INSERT INTO control.eval_definitions"*)
+    if [ "${FORCE_EVAL_DEFINE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced eval-define failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  *"INSERT INTO control.eval_results"*)
+    if [ "${FORCE_EVAL_FAIL:-0}" = "1" ]; then
+      echo "stub: forced eval-record failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${EVAL_RESULT_ID_STUB:-}"
+    exit 0 ;;
+  *"INSERT INTO control.model_usage"*)
+    if [ "${FORCE_USAGE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced usage failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
   *)
     exit 0 ;;
 esac
@@ -275,5 +314,132 @@ _mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
 @test "ctl__reconcile: UPDATE 失敗時は rc=1" {
   export STALE_RUN_IDS="11111111-1111-1111-1111-111111111111" FORCE_RECONCILE_FAIL="1"
   run ctl__reconcile
+  [ "$status" -eq 1 ]
+}
+
+# ---- approval_request ---------------------------------------
+@test "ctl__approval_request: 必須引数不足は rc=2" {
+  run ctl__approval_request --category deployment
+  [ "$status" -eq 2 ]
+}
+@test "ctl__approval_request: object-sha256 が64桁hexでなければ rc=2" {
+  run ctl__approval_request --category deployment --subject-kind pull_request \
+    --subject-ref "o/r#1" --object-sha256 "not-a-hash" --requested-by "u"
+  [ "$status" -eq 2 ]
+}
+@test "ctl__approval_request: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__approval_request --category deployment --subject-kind pull_request \
+    --subject-ref "o/r#1" --object-sha256 "$(printf x | sha256sum | cut -d' ' -f1)" --requested-by "u"
+  [ "$status" -eq 3 ]
+}
+@test "ctl__approval_request: 正常系は approval_id を返し SQL に値が反映される" {
+  export APPROVAL_ID_STUB="aaaa1111-0000-0000-0000-000000000000"
+  local sha; sha="$(printf x | sha256sum | cut -d' ' -f1)"
+  run ctl__approval_request --category deployment --subject-kind pull_request \
+    --subject-ref "o/r#42" --object-sha256 "$sha" --requested-by "kensan"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"aaaa1111-0000-0000-0000-000000000000"* ]]
+  grep -q "o/r#42" "$PSQL_LOG"
+  grep -q "'kensan'" "$PSQL_LOG"
+}
+@test "ctl__approval_request: 秘密情報を含まない" {
+  local sha; sha="$(printf x | sha256sum | cut -d' ' -f1)"
+  run ctl__approval_request --category deployment --subject-kind pull_request \
+    --subject-ref "o/r#1" --object-sha256 "$sha" --requested-by "u"
+  [[ "$output" != *"password"* && "$output" != *"postgresql://"* ]]
+}
+
+# ---- approval_decide ------------------------------------------
+@test "ctl__approval_decide: decision が Y/N 以外は rc=2" {
+  run ctl__approval_decide --approval-id x --approver a --approver-role owner --decision MAYBE --object-sha256 "$(printf x | sha256sum | cut -d' ' -f1)"
+  [ "$status" -eq 2 ]
+}
+@test "ctl__approval_decide: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__approval_decide --approval-id x --approver a --approver-role owner --decision Y --object-sha256 "$(printf x | sha256sum | cut -d' ' -f1)"
+  [ "$status" -eq 3 ]
+}
+@test "ctl__approval_decide: 正常系は遷移後の status を返す" {
+  export DECIDE_STATUS_STUB="approved"
+  run ctl__approval_decide --approval-id x --approver a --approver-role owner --decision Y --object-sha256 "$(printf x | sha256sum | cut -d' ' -f1)"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"approved"* ]]
+}
+@test "ctl__approval_decide: 記録失敗は rc=1" {
+  export FORCE_DECIDE_FAIL="1"
+  run ctl__approval_decide --approval-id x --approver a --approver-role owner --decision Y --object-sha256 "$(printf x | sha256sum | cut -d' ' -f1)"
+  [ "$status" -eq 1 ]
+}
+
+# ---- approval_check ---------------------------------------------
+@test "ctl__approval_check: 存在しない approval は rc=1 で not_found を返す" {
+  export APPROVAL_CHECK_JSON_STUB=""
+  run ctl__approval_check --approval-id nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not_found"* ]]
+}
+@test "ctl__approval_check: actionable なら rc=0" {
+  export APPROVAL_CHECK_JSON_STUB='{"approval_id":"x","status":"approved","actionable":true}'
+  export APPROVAL_ACTIONABLE_STUB="1"
+  run ctl__approval_check --approval-id x
+  [ "$status" -eq 0 ]
+}
+@test "ctl__approval_check: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__approval_check --approval-id x
+  [ "$status" -eq 3 ]
+}
+
+# ---- eval_define / eval_record --------------------------------
+@test "ctl__eval_define: 必須引数不足は rc=2" {
+  run ctl__eval_define --key k
+  [ "$status" -eq 2 ]
+}
+@test "ctl__eval_define: 正常系は ON CONFLICT DO NOTHING で冪等登録する" {
+  run ctl__eval_define --key pr5-demo --kind smoke --title "デモ"
+  [ "$status" -eq 0 ]
+  grep -q "ON CONFLICT (eval_key) DO NOTHING" "$PSQL_LOG"
+}
+@test "ctl__eval_record: 必須引数不足は rc=2" {
+  run ctl__eval_record --key k
+  [ "$status" -eq 2 ]
+}
+@test "ctl__eval_record: 対応する eval 定義が無ければ rc=1" {
+  export EVAL_RESULT_ID_STUB=""
+  run ctl__eval_record --key nope --verdict PASS
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"見つかりません"* ]]
+}
+@test "ctl__eval_record: 正常系は result_id を返す" {
+  export EVAL_RESULT_ID_STUB="rrrr2222-0000-0000-0000-000000000000"
+  run ctl__eval_record --key pr5-demo --verdict PASS --score 0.9
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rrrr2222"* ]]
+}
+@test "ctl__eval_record: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__eval_record --key k --verdict PASS
+  [ "$status" -eq 3 ]
+}
+
+# ---- usage_record ------------------------------------------------
+@test "ctl__usage_record: model-id 必須、無ければ rc=2" {
+  run ctl__usage_record --input-tokens 10
+  [ "$status" -eq 2 ]
+}
+@test "ctl__usage_record: 正常系は INSERT を発行する" {
+  run ctl__usage_record --model-id "claude-sonnet-5" --input-tokens 100 --output-tokens 20 --cost-micro-usd 50
+  [ "$status" -eq 0 ]
+  grep -q "claude-sonnet-5" "$PSQL_LOG"
+}
+@test "ctl__usage_record: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__usage_record --model-id "m"
+  [ "$status" -eq 3 ]
+}
+@test "ctl__usage_record: 記録失敗は rc=1" {
+  export FORCE_USAGE_FAIL="1"
+  run ctl__usage_record --model-id "m"
   [ "$status" -eq 1 ]
 }
