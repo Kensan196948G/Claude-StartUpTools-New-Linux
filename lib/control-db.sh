@@ -32,6 +32,13 @@
 #   ctl__handoff_offer / ctl__handoff_accept → Agent 間引き継ぎ
 #   ctl__dashboard_json   ... → Mission Control 用の集計 JSON (常に rc=0)
 #   ctl__passport_export / ctl__passport_import → Task Passport (他ランタイムへの引き継ぎ)
+#   ctl__failure_pattern_record → failure_events の signature を集約
+#   ctl__improvement_proposal_create → 改善提案の作成
+#   ctl__skill_candidate_create / ctl__skill_version_create → skill 候補・版の登録
+#   ctl__skill_evaluation_record → golden eval / 回帰確認の結果記録
+#   ctl__skill_promote → skill の昇格 (promoted は実行可能な承認が必須)
+#   ctl__canary_run_start / ctl__canary_run_finish → canary 比較の記録
+#   ctl__trust_score_record → 信頼スコアの記録
 #
 # migration runner の規約:
 #   - ファイル名は NNNN_name.sql (4 桁通し番号)。違反は rc=2。
@@ -1275,5 +1282,401 @@ ctl__passport_import() {
     return 1
   fi
   _ctl__log "passport 取り込み完了: run_id=$out (project=$project_key, issuer=$(jq -r .issuer.runtime <<<"$doc"))" >&2
+  printf '%s\n' "$out"
+}
+
+# ------------------------------------------------------------
+# Self-Improvement (0005): failure_patterns / improvement_proposals /
+# skill_candidates / skill_versions / skill_evaluations / skill_promotions /
+# canary_runs / trust_scores
+#
+# 重要な業務規約: skill_promotions.to_status = 'promoted' は
+# control.approvals の実行可能な承認 (v_actionable_approvals) を必須とする。
+# 自己改善結果 (skills / agents / workflow / routing / prompt) の main 反映は
+# Approval PR 対象という組織方針を、DB 制約とアプリ両方で担保する
+# (defense in depth: ここでの事前検証と、DB 側 CHECK 制約の二重防御)。
+# ------------------------------------------------------------
+
+# ctl__failure_pattern_record --signature h --title t --failure-kind k
+#   [--db d] [--severity low|medium|high|critical]
+#   signature で冪等に集約する。既存なら occurrence_count を増やし
+#   last_seen_at を更新する。pattern_id を返す。
+ctl__failure_pattern_record() {
+  local db="$CTL_DB" signature="" title="" failure_kind="" severity="medium"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --signature) signature="$2"; shift 2 ;;
+      --title) title="$2"; shift 2 ;;
+      --failure-kind) failure_kind="$2"; shift 2 ;;
+      --severity) severity="$2"; shift 2 ;;
+      *) _ctl__err "ctl__failure_pattern_record: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$signature" || -z "$title" || -z "$failure_kind" ]]; then
+    _ctl__err "ctl__failure_pattern_record: --signature/--title/--failure-kind は必須です"
+    return 2
+  fi
+  [[ "$signature" =~ ^[0-9a-f]{64}$ ]] || { _ctl__err "--signature は sha256 hex (64桁) が必要です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.failure_patterns (signature, title, failure_kind, severity)
+    VALUES ('$(_ctl__sqlq "$signature")', '$(_ctl__sqlq "$title")', '$(_ctl__sqlq "$failure_kind")', '$(_ctl__sqlq "$severity")')
+    ON CONFLICT (signature) DO UPDATE
+      SET occurrence_count = control.failure_patterns.occurrence_count + 1,
+          last_seen_at = now(), updated_at = now()
+    RETURNING pattern_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "failure_pattern の記録に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ctl__improvement_proposal_create --target-kind k --target-ref r --title t [--db d]
+#   [--pattern-id id] [--rationale r] [--pr-ref owner/repo#N]
+ctl__improvement_proposal_create() {
+  local db="$CTL_DB" target_kind="" target_ref="" title="" pattern_id="" rationale="" pr_ref=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --target-kind) target_kind="$2"; shift 2 ;;
+      --target-ref) target_ref="$2"; shift 2 ;;
+      --title) title="$2"; shift 2 ;;
+      --pattern-id) pattern_id="$2"; shift 2 ;;
+      --rationale) rationale="$2"; shift 2 ;;
+      --pr-ref) pr_ref="$2"; shift 2 ;;
+      *) _ctl__err "ctl__improvement_proposal_create: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$target_kind" || -z "$target_ref" || -z "$title" ]]; then
+    _ctl__err "ctl__improvement_proposal_create: --target-kind/--target-ref/--title は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local pattern_id_sql="NULL" rationale_sql="''" pr_ref_sql="NULL"
+  [[ -n "$pattern_id" ]] && pattern_id_sql="'$(_ctl__sqlq "$pattern_id")'"
+  [[ -n "$rationale" ]] && rationale_sql="'$(_ctl__sqlq "$rationale")'"
+  [[ -n "$pr_ref" ]] && pr_ref_sql="'$(_ctl__sqlq "$pr_ref")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.improvement_proposals (pattern_id, target_kind, target_ref, title, rationale, pr_ref)
+    VALUES ($pattern_id_sql, '$(_ctl__sqlq "$target_kind")', '$(_ctl__sqlq "$target_ref")', '$(_ctl__sqlq "$title")', $rationale_sql, $pr_ref_sql)
+    RETURNING proposal_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "improvement_proposal の作成に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ctl__skill_candidate_create --key k [--db d] [--origin failure_pattern|manual|proposal|usage_analysis]
+#   [--pattern-id id] [--proposal-id id] [--rationale r]
+ctl__skill_candidate_create() {
+  local db="$CTL_DB" key="" origin="manual" pattern_id="" proposal_id="" rationale=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --origin) origin="$2"; shift 2 ;;
+      --pattern-id) pattern_id="$2"; shift 2 ;;
+      --proposal-id) proposal_id="$2"; shift 2 ;;
+      --rationale) rationale="$2"; shift 2 ;;
+      *) _ctl__err "ctl__skill_candidate_create: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$key" ]] || { _ctl__err "ctl__skill_candidate_create: --key は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local pattern_id_sql="NULL" proposal_id_sql="NULL" rationale_sql="''"
+  [[ -n "$pattern_id" ]] && pattern_id_sql="'$(_ctl__sqlq "$pattern_id")'"
+  [[ -n "$proposal_id" ]] && proposal_id_sql="'$(_ctl__sqlq "$proposal_id")'"
+  [[ -n "$rationale" ]] && rationale_sql="'$(_ctl__sqlq "$rationale")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.skill_candidates (candidate_key, origin, pattern_id, proposal_id, rationale)
+    VALUES ('$(_ctl__sqlq "$key")', '$(_ctl__sqlq "$origin")', $pattern_id_sql, $proposal_id_sql, $rationale_sql)
+    ON CONFLICT (candidate_key) DO UPDATE SET updated_at = now()
+    RETURNING candidate_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "skill_candidate の作成に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ctl__skill_version_create --skill-key k --version n --content-sha256 h --source-ref r [--db d]
+#   [--candidate-id id] [--authored-by u]
+#   Skill 本文は保存しない (配布正本は Claude/templates/**)。所在と内容ハッシュのみ。
+ctl__skill_version_create() {
+  local db="$CTL_DB" skill_key="" version="" content_sha256="" source_ref="" candidate_id="" authored_by=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --skill-key) skill_key="$2"; shift 2 ;;
+      --version) version="$2"; shift 2 ;;
+      --content-sha256) content_sha256="$2"; shift 2 ;;
+      --source-ref) source_ref="$2"; shift 2 ;;
+      --candidate-id) candidate_id="$2"; shift 2 ;;
+      --authored-by) authored_by="$2"; shift 2 ;;
+      *) _ctl__err "ctl__skill_version_create: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$skill_key" || -z "$version" || -z "$content_sha256" || -z "$source_ref" ]]; then
+    _ctl__err "ctl__skill_version_create: --skill-key/--version/--content-sha256/--source-ref は必須です"
+    return 2
+  fi
+  [[ "$content_sha256" =~ ^[0-9a-f]{64}$ ]] || { _ctl__err "--content-sha256 は sha256 hex (64桁) が必要です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local candidate_id_sql="NULL" authored_by_sql="NULL"
+  [[ -n "$candidate_id" ]] && candidate_id_sql="'$(_ctl__sqlq "$candidate_id")'"
+  [[ -n "$authored_by" ]] && authored_by_sql="'$(_ctl__sqlq "$authored_by")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.skill_versions (candidate_id, skill_key, version, content_sha256, source_ref, authored_by)
+    VALUES ($candidate_id_sql, '$(_ctl__sqlq "$skill_key")', $version, '$(_ctl__sqlq "$content_sha256")', '$(_ctl__sqlq "$source_ref")', $authored_by_sql)
+    RETURNING skill_version_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "skill_version の作成に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ctl__skill_evaluation_record --skill-version-id id --verdict PASS|FAIL|BLOCKED|NOT_RUN [--db d]
+#   [--score n] [--baseline-score n]
+ctl__skill_evaluation_record() {
+  local db="$CTL_DB" skill_version_id="" verdict="" score="" baseline_score=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --skill-version-id) skill_version_id="$2"; shift 2 ;;
+      --verdict) verdict="$2"; shift 2 ;;
+      --score) score="$2"; shift 2 ;;
+      --baseline-score) baseline_score="$2"; shift 2 ;;
+      *) _ctl__err "ctl__skill_evaluation_record: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$skill_version_id" || -z "$verdict" ]]; then
+    _ctl__err "ctl__skill_evaluation_record: --skill-version-id/--verdict は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local score_sql="NULL" baseline_sql="NULL"
+  [[ -n "$score" ]] && score_sql="$score"
+  [[ -n "$baseline_score" ]] && baseline_sql="$baseline_score"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.skill_evaluations (skill_version_id, verdict, score, baseline_score)
+    VALUES ('$(_ctl__sqlq "$skill_version_id")', '$(_ctl__sqlq "$verdict")', $score_sql, $baseline_sql)
+    RETURNING skill_evaluation_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "skill_evaluation の記録に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ctl__skill_promote --skill-version-id id --from-status s --to-status s
+#   --promoted-by u [--db d] [--approval-id id] [--pr-ref owner/repo#N] [--rationale r]
+#
+#   to-status が promoted の場合、--approval-id が control.v_actionable_approvals
+#   に存在する (期限内・承認済み・改変検出なし・承認数充足) ことを事前に検証する。
+#   検証できなければ DB へは一切書き込まず rc=1 で拒否する (アプリ側の防御)。
+#   DB 側にも同じ制約 (ck_skill_promotions_needs_approval) があるため二重に守られる。
+ctl__skill_promote() {
+  local db="$CTL_DB" skill_version_id="" from_status="" to_status="" promoted_by="" approval_id="" pr_ref="" rationale=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --skill-version-id) skill_version_id="$2"; shift 2 ;;
+      --from-status) from_status="$2"; shift 2 ;;
+      --to-status) to_status="$2"; shift 2 ;;
+      --promoted-by) promoted_by="$2"; shift 2 ;;
+      --approval-id) approval_id="$2"; shift 2 ;;
+      --pr-ref) pr_ref="$2"; shift 2 ;;
+      --rationale) rationale="$2"; shift 2 ;;
+      *) _ctl__err "ctl__skill_promote: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$skill_version_id" || -z "$from_status" || -z "$to_status" || -z "$promoted_by" ]]; then
+    _ctl__err "ctl__skill_promote: --skill-version-id/--from-status/--to-status/--promoted-by は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+
+  if [[ "$to_status" == "promoted" ]]; then
+    if [[ -z "$approval_id" ]]; then
+      _ctl__err "promoted への昇格には --approval-id (実行可能な承認) が必須です (組織方針: 自己改善結果の main 反映は Approval PR 対象)"
+      return 1
+    fi
+    local actionable
+    actionable="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
+      SELECT approval_id FROM control.v_actionable_approvals WHERE approval_id = '$(_ctl__sqlq "$approval_id")';
+    " 2>/dev/null || true)"
+    if [[ -z "$actionable" ]]; then
+      _ctl__err "承認 $approval_id は実行可能ではありません (未承認・期限切れ・改ざん検出・承認数不足のいずれか)。昇格を拒否します。"
+      return 1
+    fi
+  fi
+
+  local approval_id_sql="NULL" pr_ref_sql="NULL" rationale_sql="''"
+  [[ -n "$approval_id" ]] && approval_id_sql="'$(_ctl__sqlq "$approval_id")'"
+  [[ -n "$pr_ref" ]] && pr_ref_sql="'$(_ctl__sqlq "$pr_ref")'"
+  [[ -n "$rationale" ]] && rationale_sql="'$(_ctl__sqlq "$rationale")'"
+
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    BEGIN;
+    INSERT INTO control.skill_promotions
+      (skill_version_id, from_status, to_status, approval_id, pr_ref, promoted_by, rationale)
+    VALUES (
+      '$(_ctl__sqlq "$skill_version_id")', '$(_ctl__sqlq "$from_status")', '$(_ctl__sqlq "$to_status")',
+      $approval_id_sql, $pr_ref_sql, '$(_ctl__sqlq "$promoted_by")', $rationale_sql
+    );
+    UPDATE control.skill_versions
+       SET status = '$(_ctl__sqlq "$to_status")', updated_at = now()
+     WHERE skill_version_id = '$(_ctl__sqlq "$skill_version_id")';
+    SELECT status FROM control.skill_versions WHERE skill_version_id = '$(_ctl__sqlq "$skill_version_id")';
+    COMMIT;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "skill_promote に失敗しました: ${out:0:400}"
+    return 1
+  fi
+  local final_status; final_status="$(printf '%s\n' "$out" | tail -1)"
+  _ctl__log "skill 昇格: skill_version_id=$skill_version_id ${from_status} → ${final_status} (by=$promoted_by)" >&2
+  printf '%s\n' "$final_status"
+}
+
+# ctl__canary_run_start --skill-version-id id [--db d] [--run-id id] [--baseline-run-id id]
+ctl__canary_run_start() {
+  local db="$CTL_DB" skill_version_id="" run_id="" baseline_run_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --skill-version-id) skill_version_id="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --baseline-run-id) baseline_run_id="$2"; shift 2 ;;
+      *) _ctl__err "ctl__canary_run_start: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$skill_version_id" ]] || { _ctl__err "ctl__canary_run_start: --skill-version-id は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local run_id_sql="NULL" baseline_sql="NULL"
+  [[ -n "$run_id" ]] && run_id_sql="'$(_ctl__sqlq "$run_id")'"
+  [[ -n "$baseline_run_id" ]] && baseline_sql="'$(_ctl__sqlq "$baseline_run_id")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.canary_runs (skill_version_id, run_id, baseline_run_id)
+    VALUES ('$(_ctl__sqlq "$skill_version_id")', $run_id_sql, $baseline_sql)
+    RETURNING canary_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "canary_run の開始に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ctl__canary_run_finish --canary-id id --outcome improved|neutral|regressed|aborted [--db d]
+#   [--sample-size n] [--note n]
+ctl__canary_run_finish() {
+  local db="$CTL_DB" canary_id="" outcome="" sample_size="" note=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --canary-id) canary_id="$2"; shift 2 ;;
+      --outcome) outcome="$2"; shift 2 ;;
+      --sample-size) sample_size="$2"; shift 2 ;;
+      --note) note="$2"; shift 2 ;;
+      *) _ctl__err "ctl__canary_run_finish: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$canary_id" || -z "$outcome" ]]; then
+    _ctl__err "ctl__canary_run_finish: --canary-id/--outcome は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local sample_size_sql="0" note_sql="NULL"
+  [[ -n "$sample_size" ]] && sample_size_sql="$sample_size"
+  [[ -n "$note" ]] && note_sql="'$(_ctl__sqlq "$note")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    UPDATE control.canary_runs
+       SET outcome = '$(_ctl__sqlq "$outcome")', sample_size = $sample_size_sql,
+           note = $note_sql, ended_at = now()
+     WHERE canary_id = '$(_ctl__sqlq "$canary_id")';
+  " || { _ctl__err "canary_run の終了記録に失敗しました"; return 1; }
+}
+
+# ctl__trust_score_record --subject-kind agent|skill|workflow|routing_policy|project
+#   --subject-ref r --score n --window-start t --window-end t [--db d]
+#   [--sample-size n] [--success-count n] [--failure-count n]
+ctl__trust_score_record() {
+  local db="$CTL_DB" subject_kind="" subject_ref="" score="" window_start="" window_end=""
+  local sample_size=0 success_count=0 failure_count=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --subject-kind) subject_kind="$2"; shift 2 ;;
+      --subject-ref) subject_ref="$2"; shift 2 ;;
+      --score) score="$2"; shift 2 ;;
+      --window-start) window_start="$2"; shift 2 ;;
+      --window-end) window_end="$2"; shift 2 ;;
+      --sample-size) sample_size="$2"; shift 2 ;;
+      --success-count) success_count="$2"; shift 2 ;;
+      --failure-count) failure_count="$2"; shift 2 ;;
+      *) _ctl__err "ctl__trust_score_record: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$subject_kind" || -z "$subject_ref" || -z "$score" || -z "$window_start" || -z "$window_end" ]]; then
+    _ctl__err "ctl__trust_score_record: --subject-kind/--subject-ref/--score/--window-start/--window-end は必須です"
+    return 2
+  fi
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.trust_scores
+      (subject_kind, subject_ref, score, sample_size, success_count, failure_count, window_start, window_end)
+    VALUES (
+      '$(_ctl__sqlq "$subject_kind")', '$(_ctl__sqlq "$subject_ref")', $score,
+      $sample_size, $success_count, $failure_count,
+      '$(_ctl__sqlq "$window_start")', '$(_ctl__sqlq "$window_end")'
+    )
+    RETURNING trust_score_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "trust_score の記録に失敗しました: ${out:0:300}"
+    return 1
+  fi
   printf '%s\n' "$out"
 }

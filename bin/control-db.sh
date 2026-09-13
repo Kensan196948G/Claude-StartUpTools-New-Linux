@@ -26,6 +26,15 @@
 #   control-db.sh handoff-accept --handoff-id id
 #   control-db.sh passport-export --run-id id [--issuer-runtime claude-code]
 #   control-db.sh passport-import --file f
+#   control-db.sh failure-pattern-record --signature h --title t --failure-kind k
+#   control-db.sh improvement-proposal-create --target-kind k --target-ref r --title t
+#   control-db.sh skill-candidate-create --key k
+#   control-db.sh skill-version-create --skill-key k --version n --content-sha256 h --source-ref r
+#   control-db.sh skill-evaluation-record --skill-version-id id --verdict PASS|FAIL|BLOCKED|NOT_RUN
+#   control-db.sh skill-promote --skill-version-id id --from-status s --to-status s --promoted-by u [--approval-id id]
+#   control-db.sh canary-run-start --skill-version-id id
+#   control-db.sh canary-run-finish --canary-id id --outcome improved|neutral|regressed|aborted
+#   control-db.sh trust-score-record --subject-kind k --subject-ref r --score n --window-start t --window-end t
 #   control-db.sh dashboard [db]
 #   control-db.sh status
 #   control-db.sh grants [db]
@@ -109,6 +118,15 @@ main() {
     handoff-accept)      ctl__handoff_accept "$@" ;;
     passport-export)     ctl__passport_export "$@" ;;
     passport-import)     ctl__passport_import "$@" ;;
+    failure-pattern-record)     ctl__failure_pattern_record "$@" ;;
+    improvement-proposal-create) ctl__improvement_proposal_create "$@" ;;
+    skill-candidate-create)     ctl__skill_candidate_create "$@" ;;
+    skill-version-create)       ctl__skill_version_create "$@" ;;
+    skill-evaluation-record)    ctl__skill_evaluation_record "$@" ;;
+    skill-promote)               ctl__skill_promote "$@" ;;
+    canary-run-start)            ctl__canary_run_start "$@" ;;
+    canary-run-finish)           ctl__canary_run_finish "$@" ;;
+    trust-score-record)          ctl__trust_score_record "$@" ;;
     dashboard)           ctl__dashboard_json "${1:-}" ;;
     status)              ctl__status_json ;;
     grants)              ctl__grant_matrix "${1:-}" ;;
