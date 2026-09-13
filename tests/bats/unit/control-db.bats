@@ -198,6 +198,68 @@ case "$args" in
       exit 1
     fi
     exit 0 ;;
+  *"INSERT INTO control.failure_patterns"*)
+    if [ "${FORCE_FAILURE_PATTERN_FAIL:-0}" = "1" ]; then
+      echo "stub: forced failure-pattern failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${PATTERN_ID_STUB:-pattern-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.improvement_proposals"*)
+    if [ "${FORCE_PROPOSAL_FAIL:-0}" = "1" ]; then
+      echo "stub: forced proposal failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${PROPOSAL_ID_STUB:-proposal-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.skill_candidates"*)
+    if [ "${FORCE_CANDIDATE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced candidate failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${CANDIDATE_ID_STUB:-candidate-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.skill_versions"*)
+    if [ "${FORCE_SKILL_VERSION_FAIL:-0}" = "1" ]; then
+      echo "stub: forced skill-version failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${SKILL_VERSION_ID_STUB:-skill-version-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.skill_evaluations"*)
+    if [ "${FORCE_SKILL_EVAL_FAIL:-0}" = "1" ]; then
+      echo "stub: forced skill-eval failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${SKILL_EVAL_ID_STUB:-skill-eval-stub-id}"
+    exit 0 ;;
+  *"INSERT INTO control.skill_promotions"*)
+    if [ "${FORCE_PROMOTE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced promote failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${PROMOTE_FINAL_STATUS_STUB:-canary}"
+    exit 0 ;;
+  *"INSERT INTO control.canary_runs"*)
+    if [ "${FORCE_CANARY_START_FAIL:-0}" = "1" ]; then
+      echo "stub: forced canary-start failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${CANARY_ID_STUB:-canary-stub-id}"
+    exit 0 ;;
+  *"UPDATE control.canary_runs"*)
+    if [ "${FORCE_CANARY_FINISH_FAIL:-0}" = "1" ]; then
+      echo "stub: forced canary-finish failure" >&2
+      exit 1
+    fi
+    exit 0 ;;
+  *"INSERT INTO control.trust_scores"*)
+    if [ "${FORCE_TRUST_SCORE_FAIL:-0}" = "1" ]; then
+      echo "stub: forced trust-score failure" >&2
+      exit 1
+    fi
+    printf '%s\n' "${TRUST_SCORE_ID_STUB:-trust-score-stub-id}"
+    exit 0 ;;
   *)
     exit 0 ;;
 esac
@@ -225,6 +287,14 @@ setup() {
   export HANDOFF_ID_STUB="" FORCE_HANDOFF_OFFER_FAIL="0" FORCE_HANDOFF_ACCEPT_FAIL="0"
   export DASHBOARD_STATS_STUB="" FORCE_DASHBOARD_FAIL="0"
   export PASSPORT_EXPORT_BODY_STUB=""
+  export PATTERN_ID_STUB="" FORCE_FAILURE_PATTERN_FAIL="0"
+  export PROPOSAL_ID_STUB="" FORCE_PROPOSAL_FAIL="0"
+  export CANDIDATE_ID_STUB="" FORCE_CANDIDATE_FAIL="0"
+  export SKILL_VERSION_ID_STUB="" FORCE_SKILL_VERSION_FAIL="0"
+  export SKILL_EVAL_ID_STUB="" FORCE_SKILL_EVAL_FAIL="0"
+  export PROMOTE_FINAL_STATUS_STUB="" FORCE_PROMOTE_FAIL="0"
+  export CANARY_ID_STUB="" FORCE_CANARY_START_FAIL="0" FORCE_CANARY_FINISH_FAIL="0"
+  export TRUST_SCORE_ID_STUB="" FORCE_TRUST_SCORE_FAIL="0"
   mkdir -p "$CCSU_CONTROL_MIG_DIR"
   : > "$PSQL_LOG"
   make_stub_bin pg_lsclusters 'printf "Ver Cluster Port Status Owner Data\n16  main 5432 online postgres /x\n"'
@@ -786,4 +856,142 @@ _make_valid_passport() {
   # "0.0.0.0 では listen しない" という説明コメント以外に、実際の bind 指定
   # (Environment 等) として 0.0.0.0 が出てこないことを確認する。
   ! grep -E '^[^#]*0\.0\.0\.0' "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-a2a-gateway.service"
+}
+
+# ---- failure_pattern_record ----------------------------------------
+@test "ctl__failure_pattern_record: 必須引数不足は rc=2" {
+  run ctl__failure_pattern_record --signature "$(printf x | sha256sum | cut -d' ' -f1)"
+  [ "$status" -eq 2 ]
+}
+@test "ctl__failure_pattern_record: signature が64桁hexでなければ rc=2" {
+  run ctl__failure_pattern_record --signature "bad" --title t --failure-kind test
+  [ "$status" -eq 2 ]
+}
+@test "ctl__failure_pattern_record: 正常系は pattern_id を返す" {
+  export PATTERN_ID_STUB="patt0000-0000-0000-0000-000000000000"
+  run ctl__failure_pattern_record --signature "$(printf x | sha256sum | cut -d' ' -f1)" --title t --failure-kind test
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"patt0000"* ]]
+  grep -q "ON CONFLICT (signature) DO UPDATE" "$PSQL_LOG"
+}
+
+# ---- improvement_proposal_create ------------------------------------
+@test "ctl__improvement_proposal_create: 必須引数不足は rc=2" {
+  run ctl__improvement_proposal_create --target-kind skill
+  [ "$status" -eq 2 ]
+}
+@test "ctl__improvement_proposal_create: 正常系は proposal_id を返す" {
+  export PROPOSAL_ID_STUB="prop0000-0000-0000-0000-000000000000"
+  run ctl__improvement_proposal_create --target-kind skill --target-ref "x" --title t
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"prop0000"* ]]
+}
+
+# ---- skill_candidate_create / skill_version_create -------------------
+@test "ctl__skill_candidate_create: --key 必須" {
+  run ctl__skill_candidate_create --origin manual
+  [ "$status" -eq 2 ]
+}
+@test "ctl__skill_candidate_create: 正常系は candidate_id を返す" {
+  export CANDIDATE_ID_STUB="cand0000-0000-0000-0000-000000000000"
+  run ctl__skill_candidate_create --key "demo-skill"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cand0000"* ]]
+}
+@test "ctl__skill_version_create: 必須引数不足は rc=2" {
+  run ctl__skill_version_create --skill-key k
+  [ "$status" -eq 2 ]
+}
+@test "ctl__skill_version_create: content-sha256 が64桁hexでなければ rc=2" {
+  run ctl__skill_version_create --skill-key k --version 1 --content-sha256 bad --source-ref r
+  [ "$status" -eq 2 ]
+}
+@test "ctl__skill_version_create: 正常系は skill_version_id を返す" {
+  export SKILL_VERSION_ID_STUB="sver0000-0000-0000-0000-000000000000"
+  run ctl__skill_version_create --skill-key k --version 1 --content-sha256 "$(printf x | sha256sum | cut -d' ' -f1)" --source-ref r
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sver0000"* ]]
+}
+
+# ---- skill_evaluation_record ------------------------------------------
+@test "ctl__skill_evaluation_record: 必須引数不足は rc=2" {
+  run ctl__skill_evaluation_record --skill-version-id id
+  [ "$status" -eq 2 ]
+}
+@test "ctl__skill_evaluation_record: 正常系は skill_evaluation_id を返す" {
+  export SKILL_EVAL_ID_STUB="seval000-0000-0000-0000-000000000000"
+  run ctl__skill_evaluation_record --skill-version-id id --verdict PASS --score 0.9
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"seval000"* ]]
+}
+
+# ---- skill_promote (Human Approval Gate の中核) ------------------------
+@test "ctl__skill_promote: 必須引数不足は rc=2" {
+  run ctl__skill_promote --skill-version-id id --from-status draft
+  [ "$status" -eq 2 ]
+}
+@test "ctl__skill_promote: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__skill_promote --skill-version-id id --from-status draft --to-status canary --promoted-by u
+  [ "$status" -eq 3 ]
+}
+@test "ctl__skill_promote: draft→canary は承認不要で成功する (v_actionable_approvals を問い合わせない)" {
+  export PROMOTE_FINAL_STATUS_STUB="canary"
+  run ctl__skill_promote --skill-version-id id --from-status draft --to-status canary --promoted-by u
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"canary"* ]]
+  ! grep -q "v_actionable_approvals" "$PSQL_LOG"
+}
+@test "ctl__skill_promote: to-status=promoted は --approval-id 無しだと DB へ一切書き込まず rc=1 で拒否する" {
+  run ctl__skill_promote --skill-version-id id --from-status canary --to-status promoted --promoted-by u
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Approval PR 対象"* ]]
+  ! grep -q "INSERT INTO control.skill_promotions" "$PSQL_LOG"
+}
+@test "ctl__skill_promote: --approval-id が実行可能でなければ (v_actionable_approvals に無ければ) rc=1 で拒否する" {
+  export APPROVAL_ACTIONABLE_STUB=""
+  run ctl__skill_promote --skill-version-id id --from-status canary --to-status promoted --promoted-by u --approval-id "notactionable"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"実行可能ではありません"* ]]
+  ! grep -q "INSERT INTO control.skill_promotions" "$PSQL_LOG"
+}
+@test "ctl__skill_promote: --approval-id が実行可能なら promoted へ昇格できる" {
+  export APPROVAL_ACTIONABLE_STUB="1" PROMOTE_FINAL_STATUS_STUB="promoted"
+  run ctl__skill_promote --skill-version-id id --from-status canary --to-status promoted --promoted-by u --approval-id "approval-1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"promoted"* ]]
+  grep -q "INSERT INTO control.skill_promotions" "$PSQL_LOG"
+}
+
+# ---- canary_run_start / canary_run_finish -----------------------------
+@test "ctl__canary_run_start: --skill-version-id 必須" {
+  run ctl__canary_run_start
+  [ "$status" -eq 2 ]
+}
+@test "ctl__canary_run_start: 正常系は canary_id を返す" {
+  export CANARY_ID_STUB="cana0000-0000-0000-0000-000000000000"
+  run ctl__canary_run_start --skill-version-id id
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cana0000"* ]]
+}
+@test "ctl__canary_run_finish: --canary-id/--outcome 必須" {
+  run ctl__canary_run_finish --canary-id id
+  [ "$status" -eq 2 ]
+}
+@test "ctl__canary_run_finish: 正常系は rc=0" {
+  run ctl__canary_run_finish --canary-id id --outcome improved
+  [ "$status" -eq 0 ]
+  grep -q "'improved'" "$PSQL_LOG"
+}
+
+# ---- trust_score_record ------------------------------------------------
+@test "ctl__trust_score_record: 必須引数不足は rc=2" {
+  run ctl__trust_score_record --subject-kind skill --subject-ref r
+  [ "$status" -eq 2 ]
+}
+@test "ctl__trust_score_record: 正常系は trust_score_id を返す" {
+  export TRUST_SCORE_ID_STUB="tscr0000-0000-0000-0000-000000000000"
+  run ctl__trust_score_record --subject-kind skill --subject-ref r --score 0.9 --window-start "2026-01-01T00:00:00Z" --window-end "2026-01-02T00:00:00Z"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tscr0000"* ]]
 }
