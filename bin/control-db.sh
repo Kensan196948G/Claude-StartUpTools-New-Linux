@@ -24,6 +24,7 @@
 #   control-db.sh agent-release --assignment-id id
 #   control-db.sh handoff-offer --run-id id --to-agent-name n --summary s
 #   control-db.sh handoff-accept --handoff-id id
+#   control-db.sh dashboard [db]
 #   control-db.sh status
 #   control-db.sh grants [db]
 #   control-db.sh units <project> <db> [--install]   systemd projection/reconcile unit を生成
@@ -93,6 +94,7 @@ main() {
     agent-release)       ctl__agent_release "$@" ;;
     handoff-offer)       ctl__handoff_offer "$@" ;;
     handoff-accept)      ctl__handoff_accept "$@" ;;
+    dashboard)           ctl__dashboard_json "${1:-}" ;;
     status)              ctl__status_json ;;
     grants)              ctl__grant_matrix "${1:-}" ;;
     units)               [[ -n "${1:-}" && -n "${2:-}" ]] || die "units <project> <db> [--install] が必要です"

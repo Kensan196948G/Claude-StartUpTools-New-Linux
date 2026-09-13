@@ -2643,6 +2643,7 @@ const V10Panel = () => {
   const th = { textAlign:'left', padding:'4px 8px', color:MC.textDim, fontSize:11, borderBottom:`1px solid ${MC.border}` };
   const td = { padding:'4px 8px', fontSize:12, fontFamily:MC.mono, borderBottom:`1px solid ${MC.border}22` };
   const pg = Array.isArray(d?.postgres) ? d.postgres : [];
+  const cp = d?.control_plane || null;
   const caps = d?.compat?.capabilities || {};
   const capCount = Object.values(caps).reduce((a, v) => { a[v] = (a[v] || 0) + 1; return a; }, {});
   const agents = Array.isArray(d?.claude_agents) ? d.claude_agents : [];
@@ -2695,6 +2696,15 @@ const V10Panel = () => {
             {(d?.routing_log || []).length ? d.routing_log.slice(-6).reverse().map((r, i) => (
               <div key={i}>{(r.at || '').slice(5, 16)} <b>{r.execution}</b>{r.worktree ? ' +worktree' : ''} · {r.task_type} — {(r.reasons || [])[0]}</div>
             )) : '記録なし (/agent-router --record)'}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize:12, color:MC.textDim, marginBottom:6 }}>🕹️ Control Plane (claudeos_control)</div>
+          <div style={{ fontFamily:MC.mono, fontSize:12, lineHeight:1.7 }}>
+            <Tag ok={cp?.health} text={cp?.health ? 'OK' : 'NG'} />
+            {' '}runs {cp?.stats?.runs_total ?? '—'} (実行中 {cp?.stats?.runs_running ?? '—'} · stale未処理 {cp?.stats?.runs_stale_pending_reconcile ?? '—'})<br />
+            承認待ち {cp?.stats?.approvals_pending ?? '—'} (実行可 {cp?.stats?.approvals_actionable ?? '—'}) · eval fail/blocked(24h) {cp?.stats?.eval_results_24h_fail ?? '—'}<br />
+            cost(24h) ${((cp?.stats?.cost_micro_usd_24h ?? 0) / 1e6).toFixed(4)} · 登録 agent {cp?.stats?.agents_registered ?? '—'}
           </div>
         </div>
       </div>
