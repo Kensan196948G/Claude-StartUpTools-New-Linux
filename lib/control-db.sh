@@ -30,6 +30,7 @@
 #   ctl__agent_register   ... → agent の冪等登録
 #   ctl__agent_assign / ctl__agent_release → 排他 path_scope 付き割当
 #   ctl__handoff_offer / ctl__handoff_accept → Agent 間引き継ぎ
+#   ctl__dashboard_json   ... → Mission Control 用の集計 JSON (常に rc=0)
 #
 # migration runner の規約:
 #   - ファイル名は NNNN_name.sql (4 桁通し番号)。違反は rc=2。
@@ -1098,4 +1099,41 @@ ctl__handoff_accept() {
        SET state = 'accepted', accepted_at = now()
      WHERE handoff_id = '$(_ctl__sqlq "$handoff_id")' AND state = 'offered';
   " || { _ctl__err "handoff 受諾に失敗しました"; return 1; }
+}
+
+# ------------------------------------------------------------
+# Mission Control 向け集計
+# ------------------------------------------------------------
+
+# ctl__dashboard_json [db] — run 状況・承認待ち・直近 eval・コスト・agent 登録数を
+#   1 回のクエリで集計する。DB 障害時も常に妥当な JSON を rc=0 で返す
+#   (ctl__status_json と同じ fail-soft 規約)。
+ctl__dashboard_json() {
+  local db="${1:-$CTL_DB}"
+
+  local psql; psql="$(pg__cmd psql)"
+  local stats
+  stats="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
+    SELECT jsonb_build_object(
+      'runs_total', (SELECT count(*) FROM control.runs),
+      'runs_running', (SELECT count(*) FROM control.runs WHERE status IN ('leased','running')),
+      'runs_stale_pending_reconcile', (SELECT count(*) FROM control.v_stale_runs),
+      'runs_succeeded_24h', (SELECT count(*) FROM control.runs WHERE status='succeeded' AND ended_at > now() - interval '24 hours'),
+      'runs_failed_24h', (SELECT count(*) FROM control.runs WHERE status='failed' AND ended_at > now() - interval '24 hours'),
+      'approvals_pending', (SELECT count(*) FROM control.approvals WHERE status='pending'),
+      'approvals_actionable', (SELECT count(*) FROM control.v_actionable_approvals),
+      'eval_results_24h_fail', (SELECT count(*) FROM control.eval_results WHERE verdict IN ('FAIL','BLOCKED') AND occurred_at > now() - interval '24 hours'),
+      'cost_micro_usd_24h', (SELECT coalesce(sum(cost_micro_usd),0) FROM control.model_usage WHERE occurred_at > now() - interval '24 hours'),
+      'agents_registered', (SELECT count(*) FROM control.agents WHERE is_active)
+    )::text;
+  " 2>/dev/null || true)"
+
+  # health は pg_isready の単純な疎通確認ではなく、control スキーマへ実際に
+  # クエリが通ったか (stats が空でないか) で判定する。pg_isready は DB の
+  # 存在有無に関わらず「サーバが応答している」ことしか示さないため。
+  local health=false
+  [[ -n "$stats" ]] && health=true
+
+  printf '{"db":"%s","health":%s,"stats":%s}\n' "$db" "$health" "${stats:-null}"
+  return 0
 }

@@ -1296,6 +1296,7 @@ function v10RunJson(cmd, args, timeoutMs) {
 function handleV10(res) {
   const out = { generated: new Date().toISOString() };
   out.postgres = v10RunJson('bash', ['libexec/diag-postgres.sh', '--json'], 20000);
+  out.control_plane = v10RunJson('bash', ['libexec/diag-control-plane.sh', '--json'], 15000);
   out.compat   = v10RunJson('bash', ['libexec/diag-claude-compat.sh', '--json'], 15000);
   const hasAgents = out.compat && out.compat.capabilities && out.compat.capabilities['agents-subcommand'] === 'available';
   out.claude_agents = hasAgents && process.env.CCSU_DISABLE_AGENTS_JSON !== '1'

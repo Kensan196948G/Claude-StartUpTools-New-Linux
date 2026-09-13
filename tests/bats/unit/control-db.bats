@@ -86,6 +86,16 @@ case "$args" in
     fi
     printf '%s\n' "${DECIDE_STATUS_STUB:-pending}"
     exit 0 ;;
+  *"'runs_total'"*)
+    if [ "${FORCE_DASHBOARD_FAIL:-0}" = "1" ]; then
+      exit 0
+    fi
+    # 注意: ${VAR:-{}} は bash が最初の '}' で展開を閉じてしまい末尾に余分な
+    # '}' が残るため使わない (`${DASHBOARD_STATS_STUB:-{}}"` を検証中に発見)。
+    stats_val="${DASHBOARD_STATS_STUB:-}"
+    [ -z "$stats_val" ] && stats_val="{}"
+    printf '%s\n' "$stats_val"
+    exit 0 ;;
   *"jsonb_build_object"*)
     printf '%s\n' "${APPROVAL_CHECK_JSON_STUB:-}"
     exit 0 ;;
@@ -210,6 +220,7 @@ setup() {
   export AGENT_ID_STUB="" AGENT_LOOKUP_STUB="" FORCE_AGENT_REGISTER_FAIL="0"
   export TASK_LOOKUP_STUB="" ASSIGNMENT_ID_STUB="" FORCE_ASSIGN_FAIL="0" FORCE_ASSIGN_CONFLICT="0" FORCE_RELEASE_FAIL="0"
   export HANDOFF_ID_STUB="" FORCE_HANDOFF_OFFER_FAIL="0" FORCE_HANDOFF_ACCEPT_FAIL="0"
+  export DASHBOARD_STATS_STUB="" FORCE_DASHBOARD_FAIL="0"
   mkdir -p "$CCSU_CONTROL_MIG_DIR"
   : > "$PSQL_LOG"
   make_stub_bin pg_lsclusters 'printf "Ver Cluster Port Status Owner Data\n16  main 5432 online postgres /x\n"'
@@ -649,4 +660,24 @@ _mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
   run ctl__handoff_accept --handoff-id h1
   [ "$status" -eq 0 ]
   grep -q "'accepted'" "$PSQL_LOG"
+}
+
+# ---- dashboard_json (Mission Control 向け) ------------------------
+@test "ctl__dashboard_json: 正常系は health=true と stats を返す" {
+  export DASHBOARD_STATS_STUB='{"runs_total":3,"agents_registered":18}'
+  run ctl__dashboard_json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.health == true and .stats.runs_total == 3'
+}
+@test "ctl__dashboard_json: クエリが空を返した場合 (DB/スキーマ不備) は health=false で rc=0" {
+  export FORCE_DASHBOARD_FAIL="1"
+  run ctl__dashboard_json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.health == false and .stats == null'
+}
+@test "diag-control-plane.sh --json: 妥当な JSON を返す" {
+  export DASHBOARD_STATS_STUB='{"runs_total":0}'
+  run bash "$REPO_ROOT/libexec/diag-control-plane.sh" --json
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.db == "ctltest"'
 }
