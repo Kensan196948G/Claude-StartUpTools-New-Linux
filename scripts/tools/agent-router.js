@@ -92,16 +92,24 @@ function route(raw) {
   return { execution, worktree, reasons, guardrails, inputs: i };
 }
 
-function record(decision, stateFile) {
+// record — 決定を追記専用の routing-pending.jsonl へ 1 行足す。
+//   以前は state.json.execution.routing_log を直接 read-modify-write していたが、
+//   複数プロセスからの同時書込みで競合しうるうえ、Control Plane 射影ワーカー
+//   (scripts/tools/control-projection.js) が読める形にするため、audit-trail.js と
+//   同じ「追記専用 JSONL + 別プロセスが後で集約」方式へ統一した。
+//   state.json への反映 (最新20件) は hooks/session-end.js が担う。
+function record(decision, dataDir) {
   try {
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    state.execution = state.execution || {};
-    const log = Array.isArray(state.execution.routing_log) ? state.execution.routing_log : [];
-    log.push({ at: new Date().toISOString(), execution: decision.execution, worktree: decision.worktree, reasons: decision.reasons, task_type: decision.inputs.task_type });
-    state.execution.routing_log = log.slice(-20);
-    const tmp = `${stateFile}.tmp.${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n');
-    fs.renameSync(tmp, stateFile);
+    fs.mkdirSync(dataDir, { recursive: true });
+    const entry = {
+      at: new Date().toISOString(),
+      execution: decision.execution,
+      worktree: decision.worktree,
+      reasons: decision.reasons,
+      task_type: decision.inputs.task_type,
+      project: path.basename(process.cwd()),
+    };
+    fs.appendFileSync(path.join(dataDir, 'routing-pending.jsonl'), JSON.stringify(entry) + '\n', 'utf8');
     return true;
   } catch { return false; }
 }
@@ -117,7 +125,7 @@ function main() {
     input = raw.trim() ? JSON.parse(raw) : {};
   }
   const decision = route(input);
-  if (args.includes('--record')) decision.recorded = record(decision, path.join(process.cwd(), 'state.json'));
+  if (args.includes('--record')) decision.recorded = record(decision, path.join(process.cwd(), '.claude', 'claudeos', 'data'));
   process.stdout.write(JSON.stringify(decision, null, 2) + '\n');
 }
 

@@ -238,6 +238,30 @@ try {
       if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] measure-kpi skipped: ${kpiErr.message}`);
     }
 
+    // routing-pending.jsonl フラッシュ: agent-router.js --record が追記した決定を
+    // execution.routing_log (最新20件) へ集約する。routing_log は実運用でほぼ
+    // 空のままだったため (Control Plane 射影ワーカー導入時の実測)、この flush が
+    // 主な発火点になる。末尾の不完全な行 (書込み中に読んだ場合) は消費せず残す。
+    try {
+      const pendingFile = path.join(process.cwd(), ".claude", "claudeos", "data", "routing-pending.jsonl");
+      const raw = fs.readFileSync(pendingFile, "utf8");
+      const lastNewline = raw.lastIndexOf("\n");
+      const completeRaw = lastNewline >= 0 ? raw.slice(0, lastNewline + 1) : "";
+      const remainderRaw = lastNewline >= 0 ? raw.slice(lastNewline + 1) : raw;
+      const entries = completeRaw
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .filter(Boolean);
+      if (entries.length > 0) {
+        const log = Array.isArray(state.execution.routing_log) ? state.execution.routing_log : [];
+        state.execution.routing_log = log.concat(entries).slice(-20);
+      }
+      if (completeRaw) fs.writeFileSync(pendingFile, remainderRaw, "utf8");
+    } catch (routingErr) {
+      if (process.env.CLAUDEOS_DEBUG) console.error(`[SessionEnd] routing-pending flush skipped: ${routingErr.message}`);
+    }
+
     writeJsonAtomic(STATE_FILE, state);
     console.log("[SessionEnd] state.json updated (last_stop_at + learning recorded)");
 

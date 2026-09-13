@@ -57,6 +57,13 @@ function summarize(toolName, toolInput) {
     if (!BASH_WRITE_RE.test(cmd) && !isGhApiWrite(cmd)) return null;
     return cmd.replace(/\s+/g, " ").trim().slice(0, CMD_MAX_LEN);
   }
+  if (toolName === "Task") {
+    // subagent 起動そのものが「実行形態の決定」の観測点 (routing_log が実運用で
+    // ほぼ記録されないため、この hook が Control Plane 射影の主な発火点になる)。
+    const subagentType = String(toolInput.subagent_type || toolInput.subagentType || "").slice(0, 64);
+    const description = String(toolInput.description || "").replace(/\s+/g, " ").trim().slice(0, CMD_MAX_LEN);
+    return `subagent_type=${subagentType} description=${description}`;
+  }
   if (MCP_WRITE_RE.test(toolName)) {
     // MCP 入力は機微情報 (body 本文等) を含み得るため、キー名だけ残す
     const keys = Object.keys(toolInput || {}).slice(0, 10).join(",");
