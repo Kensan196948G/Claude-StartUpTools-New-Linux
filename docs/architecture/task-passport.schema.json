@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux/blob/main/docs/architecture/task-passport.schema.json",
+  "title": "ClaudeOS Task Passport",
+  "description": "Claude / Codex / DeepSeek Harness の間で 1 つの作業単位 (run) の状態を引き継ぐための移植可能な契約。本リポジトリの claudeos_control データベースの外へ持ち出す唯一の表現であり、秘密情報 (パスワード・トークン・接続文字列) を一切含まない。export/import は bin/control-db.sh passport-export / passport-import が担う。",
+  "type": "object",
+  "required": ["passport_version", "issued_at", "issuer", "project", "run", "content_sha256"],
+  "additionalProperties": false,
+  "properties": {
+    "passport_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601 UTC。export 実行時刻。"
+    },
+    "issuer": {
+      "type": "object",
+      "required": ["runtime", "run_id"],
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "enum": ["claude-code", "codex", "deepseek-harness"],
+          "description": "発行元ランタイム。"
+        },
+        "run_id": {
+          "type": "string",
+          "description": "発行元 claudeos_control.control.runs.run_id (uuid)。"
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": ["project_key"],
+      "additionalProperties": false,
+      "properties": {
+        "project_key": { "type": "string" },
+        "remote_slug": { "type": ["string", "null"], "description": "owner/repo 形式のみ。認証情報付き URL は含めない。" },
+        "default_branch": { "type": "string" }
+      }
+    },
+    "task": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "task_key": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "external_ref": { "type": ["string", "null"], "description": "owner/repo#N 形式 (GitHub Issue/PR)。" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["run_kind", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "run_kind": { "type": "string" },
+        "status": { "type": "string" },
+        "git_head_sha": { "type": ["string", "null"] },
+        "summary": { "type": ["string", "null"] }
+      }
+    },
+    "handoff": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "summary": { "type": "string" },
+        "artifacts": {
+          "type": "array",
+          "description": "成果物の参照 (パス / git SHA / PR 番号)。本文や秘密は含めない。",
+          "items": { "type": "object" }
+        },
+        "failure_evidence": {
+          "type": ["array", "null"],
+          "description": "control.failure_events から抽出した再現条件・根本原因の要約 (メッセージ本文の生ログではなく正規化済み情報)。",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "本フィールドを除いた文書を jq -S -c (キーをソートしたコンパクト JSON) で正規化し sha256 したもの。import 時の改ざん検出に使う。"
+    }
+  }
+}

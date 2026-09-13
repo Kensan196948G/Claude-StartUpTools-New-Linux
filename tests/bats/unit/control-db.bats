@@ -86,6 +86,9 @@ case "$args" in
     fi
     printf '%s\n' "${DECIDE_STATUS_STUB:-pending}"
     exit 0 ;;
+  *"'passport_version'"*)
+    printf '%s\n' "${PASSPORT_EXPORT_BODY_STUB:-}"
+    exit 0 ;;
   *"'runs_total'"*)
     if [ "${FORCE_DASHBOARD_FAIL:-0}" = "1" ]; then
       exit 0
@@ -221,6 +224,7 @@ setup() {
   export TASK_LOOKUP_STUB="" ASSIGNMENT_ID_STUB="" FORCE_ASSIGN_FAIL="0" FORCE_ASSIGN_CONFLICT="0" FORCE_RELEASE_FAIL="0"
   export HANDOFF_ID_STUB="" FORCE_HANDOFF_OFFER_FAIL="0" FORCE_HANDOFF_ACCEPT_FAIL="0"
   export DASHBOARD_STATS_STUB="" FORCE_DASHBOARD_FAIL="0"
+  export PASSPORT_EXPORT_BODY_STUB=""
   mkdir -p "$CCSU_CONTROL_MIG_DIR"
   : > "$PSQL_LOG"
   make_stub_bin pg_lsclusters 'printf "Ver Cluster Port Status Owner Data\n16  main 5432 online postgres /x\n"'
@@ -680,4 +684,82 @@ _mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
   run bash "$REPO_ROOT/libexec/diag-control-plane.sh" --json
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.db == "ctltest"'
+}
+
+# ---- passport_export -----------------------------------------------
+@test "ctl__passport_export: --run-id 必須" {
+  run ctl__passport_export
+  [ "$status" -eq 2 ]
+}
+@test "ctl__passport_export: DB 接続不可は rc=3" {
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__passport_export --run-id r1
+  [ "$status" -eq 3 ]
+}
+@test "ctl__passport_export: run が見つからなければ rc=1" {
+  export PASSPORT_EXPORT_BODY_STUB=""
+  run ctl__passport_export --run-id nope
+  [ "$status" -eq 1 ]
+}
+@test "ctl__passport_export: 正常系は content_sha256 付きの妥当な JSON を返す" {
+  export PASSPORT_EXPORT_BODY_STUB='{"passport_version":"1.0","issued_at":"2026-01-01T00:00:00Z","issuer":{"runtime":"claude-code","run_id":"r1"},"project":{"project_key":"demo","remote_slug":null,"default_branch":"main"},"task":null,"run":{"run_kind":"interactive","status":"succeeded","git_head_sha":null,"summary":"x"},"handoff":{"summary":"x","artifacts":[]}}'
+  run ctl__passport_export --run-id r1
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e 'has("content_sha256") and (.content_sha256 | test("^[0-9a-f]{64}$"))'
+}
+
+# ---- passport_import -------------------------------------------------
+_make_valid_passport() {
+  local file="$1" body="$2"
+  local canon hash
+  canon="$(jq -S -c '.' <<<"$body")"
+  hash="$(printf '%s' "$canon" | sha256sum | cut -d' ' -f1)"
+  jq -c --arg h "$hash" '. + {content_sha256: $h}' <<<"$body" > "$file"
+}
+
+@test "ctl__passport_import: --file 必須" {
+  run ctl__passport_import
+  [ "$status" -eq 2 ]
+}
+@test "ctl__passport_import: 存在しないファイルは rc=2" {
+  run ctl__passport_import --file "$TEST_TEMP/nope.json"
+  [ "$status" -eq 2 ]
+}
+@test "ctl__passport_import: 必須キー欠落は rc=2" {
+  echo '{"passport_version":"1.0"}' > "$TEST_TEMP/bad.json"
+  run ctl__passport_import --file "$TEST_TEMP/bad.json"
+  [ "$status" -eq 2 ]
+}
+@test "ctl__passport_import: content_sha256 不一致 (改ざん) は rc=1" {
+  _make_valid_passport "$TEST_TEMP/p.json" '{"passport_version":"1.0","issued_at":"t","issuer":{"runtime":"codex","run_id":"r1"},"project":{"project_key":"demo"},"run":{"run_kind":"headless","status":"succeeded"}}'
+  jq '.run.status = "tampered"' "$TEST_TEMP/p.json" > "$TEST_TEMP/p2.json"
+  run ctl__passport_import --file "$TEST_TEMP/p2.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"一致しません"* ]]
+}
+@test "ctl__passport_import: DB 接続不可は rc=3" {
+  _make_valid_passport "$TEST_TEMP/p.json" '{"passport_version":"1.0","issued_at":"t","issuer":{"runtime":"codex","run_id":"r1"},"project":{"project_key":"demo"},"run":{"run_kind":"headless","status":"succeeded"}}'
+  make_stub_bin pg_isready 'exit 1'
+  run ctl__passport_import --file "$TEST_TEMP/p.json"
+  [ "$status" -eq 3 ]
+}
+@test "ctl__passport_import: 正常系は run_id を返す" {
+  export PROJECT_ID_STUB="pppp" RUN_ID_STUB="rrrr9999-0000-0000-0000-000000000000"
+  _make_valid_passport "$TEST_TEMP/p.json" '{"passport_version":"1.0","issued_at":"t","issuer":{"runtime":"codex","run_id":"r1"},"project":{"project_key":"demo"},"run":{"run_kind":"headless","status":"succeeded","git_head_sha":"abc","summary":"done"}}'
+  run ctl__passport_import --file "$TEST_TEMP/p.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rrrr9999"* ]]
+  grep -q "'headless'" "$PSQL_LOG"
+}
+@test "ctl__passport_import: 未知の run_kind は manual へ丸められる" {
+  export PROJECT_ID_STUB="pppp" RUN_ID_STUB="rrrr0000-0000-0000-0000-000000000000"
+  _make_valid_passport "$TEST_TEMP/p.json" '{"passport_version":"1.0","issued_at":"t","issuer":{"runtime":"codex","run_id":"r1"},"project":{"project_key":"demo"},"run":{"run_kind":"codex-native","status":"succeeded"}}'
+  run ctl__passport_import --file "$TEST_TEMP/p.json"
+  [ "$status" -eq 0 ]
+  grep -q "'manual'" "$PSQL_LOG"
+  ! grep -q "'codex-native'" "$PSQL_LOG"
+}
+@test "task-passport.schema.json は妥当な JSON Schema (JSON として parse できる)" {
+  run jq -e '.["$schema"] and .required and .properties' "$REPO_ROOT/docs/architecture/task-passport.schema.json"
+  [ "$status" -eq 0 ]
 }
