@@ -33,15 +33,35 @@ test('router: parallel writes always require a worktree', () => {
   assert.strictEqual(d.worktree, true);
 });
 
-test('router CLI: --json prints a decision and --record appends to state.json routing_log (max 20)', () => {
+test('router CLI: --json prints a decision and --record appends to routing-pending.jsonl (追記専用、state.json は直接触らない)', () => {
   const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'router-'));
-  const state = path.join(tmp, 'state.json');
-  fs.writeFileSync(state, JSON.stringify({ goal: {}, execution: { routing_log: Array.from({ length: 20 }, (_, i) => ({ at: `t${i}` })) } }));
+  const pending = path.join(tmp, '.claude', 'claudeos', 'data', 'routing-pending.jsonl');
   const out = execFileSync(process.execPath, [path.join(__dirname, 'tools', 'agent-router.js'), '--json', JSON.stringify({ task_type: 'docs', complexity: 'low' }), '--record'], { cwd: tmp, encoding: 'utf8' });
   const d = JSON.parse(out);
   assert.strictEqual(d.execution, 'Main');
   assert.strictEqual(d.recorded, true);
-  const s = JSON.parse(fs.readFileSync(state, 'utf8'));
-  assert.strictEqual(s.execution.routing_log.length, 20);
-  assert.strictEqual(s.execution.routing_log[19].execution, 'Main');
+  assert.ok(!fs.existsSync(path.join(tmp, 'state.json')), 'state.json を新規作成・変更してはならない');
+  const lines = fs.readFileSync(pending, 'utf8').trim().split('\n');
+  assert.strictEqual(lines.length, 1);
+  const entry = JSON.parse(lines[0]);
+  assert.strictEqual(entry.execution, 'Main');
+  assert.strictEqual(entry.task_type, 'docs');
+});
+
+test('router CLI: --record を2回呼ぶと routing-pending.jsonl に2行追記される (追記専用、上書きしない)', () => {
+  const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'router-'));
+  const pending = path.join(tmp, '.claude', 'claudeos', 'data', 'routing-pending.jsonl');
+  for (let i = 0; i < 2; i++) {
+    execFileSync(process.execPath, [path.join(__dirname, 'tools', 'agent-router.js'), '--json', JSON.stringify({ task_type: 'docs', complexity: 'low' }), '--record'], { cwd: tmp, encoding: 'utf8' });
+  }
+  const lines = fs.readFileSync(pending, 'utf8').trim().split('\n');
+  assert.strictEqual(lines.length, 2);
+});
+
+test('agent-router.js: 正本 (scripts/tools) と2つの配布コピーは同一内容', () => {
+  const canonical = fs.readFileSync(path.join(__dirname, 'tools', 'agent-router.js'), 'utf8');
+  const deployed = fs.readFileSync(path.join(__dirname, '..', '.claude', 'claudeos', 'scripts', 'tools', 'agent-router.js'), 'utf8');
+  const template = fs.readFileSync(path.join(__dirname, '..', 'Claude', 'templates', 'claudeos', 'scripts', 'tools', 'agent-router.js'), 'utf8');
+  assert.strictEqual(canonical, deployed);
+  assert.strictEqual(canonical, template);
 });

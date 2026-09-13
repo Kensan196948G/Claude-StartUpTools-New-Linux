@@ -12,7 +12,7 @@
     "start:watch": "node scripts/dashboards/watch-and-run.js",
     "test": "npm run test:bats && npm run test:node",
     "test:bats": "bats tests/bats/unit/",
-    "test:node": "node --test scripts/**/*.test.js 2>/dev/null || echo 'No Node test files found'",
+    "test:node": "files=$(find scripts -name '*.test.js'); if [ -n \"$files\" ]; then node --test $files; else echo 'No Node test files found'; fi",
     "test:dry-run": "node scripts/test/dry-run-execution-matrix.js",
     "lint": "shellcheck -S error start.sh lib/*.sh bin/*.sh libexec/*.sh Claude/templates/linux/*.sh scripts/setup/*.sh scripts/tools/*.sh",
     "audit:scan": "node scripts/tools/run-audit-scan.js",
