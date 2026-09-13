@@ -763,3 +763,27 @@ _make_valid_passport() {
   run jq -e '.["$schema"] and .required and .properties' "$REPO_ROOT/docs/architecture/task-passport.schema.json"
   [ "$status" -eq 0 ]
 }
+
+# ---- units (systemd unit 生成、A2A Gateway 含む) --------------------
+@test "control-db.sh units: 引数不足は non-zero" {
+  run bash "$REPO_ROOT/bin/control-db.sh" units onlyproject
+  [ "$status" -ne 0 ]
+}
+@test "control-db.sh units: --with-a2a-gateway 無しでは a2a-gateway.service を生成しない" {
+  export CCSU_CONTROL_UNITS_DIR="$TEST_TEMP/units1"
+  run bash "$REPO_ROOT/bin/control-db.sh" units demoproj ctltest
+  [ "$status" -eq 0 ]
+  [ -f "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-projection.service" ]
+  [ ! -f "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-a2a-gateway.service" ]
+}
+@test "control-db.sh units --with-a2a-gateway: 127.0.0.1 限定の service を生成する" {
+  export CCSU_CONTROL_UNITS_DIR="$TEST_TEMP/units2"
+  run bash "$REPO_ROOT/bin/control-db.sh" units demoproj ctltest --with-a2a-gateway
+  [ "$status" -eq 0 ]
+  [ -f "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-a2a-gateway.service" ]
+  grep -q "IPAddressAllow=localhost" "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-a2a-gateway.service"
+  grep -q "IPAddressDeny=any" "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-a2a-gateway.service"
+  # "0.0.0.0 では listen しない" という説明コメント以外に、実際の bind 指定
+  # (Environment 等) として 0.0.0.0 が出てこないことを確認する。
+  ! grep -E '^[^#]*0\.0\.0\.0' "$CCSU_CONTROL_UNITS_DIR/claudeos-demoproj-control-a2a-gateway.service"
+}
