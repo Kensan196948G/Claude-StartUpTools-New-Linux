@@ -31,6 +31,7 @@
 #   ctl__agent_assign / ctl__agent_release → 排他 path_scope 付き割当
 #   ctl__handoff_offer / ctl__handoff_accept → Agent 間引き継ぎ
 #   ctl__dashboard_json   ... → Mission Control 用の集計 JSON (常に rc=0)
+#   ctl__passport_export / ctl__passport_import → Task Passport (他ランタイムへの引き継ぎ)
 #
 # migration runner の規約:
 #   - ファイル名は NNNN_name.sql (4 桁通し番号)。違反は rc=2。
@@ -1136,4 +1137,143 @@ ctl__dashboard_json() {
 
   printf '{"db":"%s","health":%s,"stats":%s}\n' "$db" "$health" "${stats:-null}"
   return 0
+}
+
+# ------------------------------------------------------------
+# Task Passport (docs/architecture/task-passport.schema.json)
+#   Claude / Codex / DeepSeek Harness 間で 1 run の状態を引き継ぐための
+#   移植可能な文書。本リポジトリ内で完結し、他リポジトリへは触れない。
+# ------------------------------------------------------------
+
+# ctl__passport_export --run-id id [--db d] [--issuer-runtime claude-code]
+#   run (+ project + task) から Task Passport JSON を組み立てて stdout へ出す。
+#   content_sha256 は本文 (このフィールド自身を除く) を jq -S -c で正規化して
+#   sha256 したもの。jq が必須。
+ctl__passport_export() {
+  local db="$CTL_DB" run_id="" issuer_runtime="claude-code"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --issuer-runtime) issuer_runtime="$2"; shift 2 ;;
+      *) _ctl__err "ctl__passport_export: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$run_id" ]] || { _ctl__err "ctl__passport_export: --run-id は必須です"; return 2; }
+  has_cmd jq || { _ctl__err "jq が必要です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  local body
+  body="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
+    SELECT jsonb_build_object(
+      'passport_version', '1.0',
+      'issued_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      'issuer', jsonb_build_object('runtime', '$(_ctl__sqlq "$issuer_runtime")', 'run_id', r.run_id),
+      'project', jsonb_build_object('project_key', p.project_key, 'remote_slug', p.remote_slug, 'default_branch', p.default_branch),
+      'task', CASE WHEN t.task_id IS NULL THEN NULL ELSE
+                jsonb_build_object('task_key', t.task_key, 'title', t.title, 'external_ref', t.external_ref)
+              END,
+      'run', jsonb_build_object('run_kind', r.run_kind, 'status', r.status, 'git_head_sha', r.git_head_sha, 'summary', r.summary),
+      'handoff', jsonb_build_object('summary', coalesce(r.summary, ''), 'artifacts', '[]'::jsonb)
+    )::text
+      FROM control.runs r
+      JOIN control.projects p ON p.project_id = r.project_id
+      LEFT JOIN control.tasks t ON t.task_id = r.task_id
+     WHERE r.run_id = '$(_ctl__sqlq "$run_id")';
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "passport export に失敗しました: ${body:0:300}"
+    return 1
+  fi
+  if [[ -z "$body" ]]; then
+    _ctl__err "run が見つかりません: $run_id"
+    return 1
+  fi
+
+  local canon hash
+  canon="$(jq -S -c '.' <<<"$body")" || { _ctl__err "passport の正規化に失敗しました"; return 1; }
+  hash="$(printf '%s' "$canon" | sha256sum | cut -d' ' -f1)"
+  jq -c --arg h "$hash" '. + {content_sha256: $h}' <<<"$body"
+}
+
+# ctl__passport_import --file f [--db d]
+#   Task Passport を検証 (必須キー + content_sha256 の再計算一致) してから
+#   project を冪等登録し、引き継ぎ先の run を queued で作成する
+#   (metadata に passport 全体を保持し、追跡可能性を残す)。作成した run_id を返す。
+ctl__passport_import() {
+  local db="$CTL_DB" file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --file) file="$2"; shift 2 ;;
+      *) _ctl__err "ctl__passport_import: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$file" ]] || { _ctl__err "ctl__passport_import: --file は必須です"; return 2; }
+  [[ -f "$file" ]] || { _ctl__err "ファイルがありません: $file"; return 2; }
+  has_cmd jq || { _ctl__err "jq が必要です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local doc; doc="$(cat "$file")"
+  jq -e 'has("passport_version") and has("issued_at") and has("issuer") and has("project") and has("run") and has("content_sha256")' >/dev/null 2>&1 <<<"$doc" \
+    || { _ctl__err "Task Passport の必須キーが不足しています: $file"; return 2; }
+  [[ "$(jq -r .passport_version <<<"$doc")" == "1.0" ]] \
+    || { _ctl__err "対応していない passport_version です: $(jq -r .passport_version <<<"$doc")"; return 2; }
+
+  # 注意: jq の出力をパイプへ直接流すと末尾に改行が残り、変数へ代入してから
+  # printf '%s' で渡す (改行が自動的に取り除かれる) export 側の計算と
+  # sha256 が食い違う。両者を必ず同じ手順 (変数代入 → printf '%s') に揃える。
+  local claimed_hash canon_for_import recomputed_hash
+  claimed_hash="$(jq -r .content_sha256 <<<"$doc")"
+  canon_for_import="$(jq -S -c 'del(.content_sha256)' <<<"$doc")"
+  recomputed_hash="$(printf '%s' "$canon_for_import" | sha256sum | cut -d' ' -f1)"
+  if [[ "$claimed_hash" != "$recomputed_hash" ]]; then
+    _ctl__err "content_sha256 が一致しません (改ざんまたは破損の可能性): claimed=$claimed_hash recomputed=$recomputed_hash"
+    return 1
+  fi
+
+  local project_key; project_key="$(jq -r '.project.project_key' <<<"$doc")"
+  [[ -n "$project_key" && "$project_key" != "null" ]] || { _ctl__err "project.project_key がありません"; return 2; }
+  local project_id
+  project_id="$(ctl__project_register --db "$db" --key "$project_key" \
+    --remote-slug "$(jq -r '.project.remote_slug // ""' <<<"$doc")" \
+    --default-branch "$(jq -r '.project.default_branch // "main"' <<<"$doc")" 2>/dev/null)"
+  [[ -n "$project_id" ]] || { _ctl__err "project の登録に失敗しました: $project_key"; return 1; }
+
+  local run_kind goal_type git_head_sha summary
+  run_kind="$(jq -r '.run.run_kind // "manual"' <<<"$doc")"
+  # control.runs.run_kind の CHECK 制約は固定語彙。他ランタイムが独自の値
+  # (例: "codex-native") を送ってきても INSERT が失敗しないよう、既知の
+  # 語彙に無ければ安全側の既定値 (manual) へ丸める。元の値は metadata に残る。
+  case "$run_kind" in
+    interactive|cron|supervisor|headless|team|worktree|manual) ;;
+    *) run_kind="manual" ;;
+  esac
+  goal_type="passport:$(jq -r '.issuer.runtime // "unknown"' <<<"$doc")"
+  git_head_sha="$(jq -r '.run.git_head_sha // ""' <<<"$doc")"
+  summary="$(jq -r '.handoff.summary // .run.summary // ""' <<<"$doc")"
+
+  local git_head_sha_sql="NULL" summary_sql="NULL"
+  [[ -n "$git_head_sha" ]] && git_head_sha_sql="'$(_ctl__sqlq "$git_head_sha")'"
+  [[ -n "$summary" ]] && summary_sql="'$(_ctl__sqlq "$summary")'"
+  local metadata_json; metadata_json="$(jq -c '{imported_passport: .}' <<<"$doc")"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.runs
+      (project_id, run_kind, goal_type, status, git_head_sha, summary, metadata)
+    VALUES (
+      '$(_ctl__sqlq "$project_id")', '$(_ctl__sqlq "$run_kind")', '$(_ctl__sqlq "$goal_type")',
+      'queued', $git_head_sha_sql, $summary_sql, '$(_ctl__sqlq "$metadata_json")'::jsonb
+    )
+    RETURNING run_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "passport import (run 作成) に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  _ctl__log "passport 取り込み完了: run_id=$out (project=$project_key, issuer=$(jq -r .issuer.runtime <<<"$doc"))" >&2
+  printf '%s\n' "$out"
 }

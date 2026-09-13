@@ -24,6 +24,8 @@
 #   control-db.sh agent-release --assignment-id id
 #   control-db.sh handoff-offer --run-id id --to-agent-name n --summary s
 #   control-db.sh handoff-accept --handoff-id id
+#   control-db.sh passport-export --run-id id [--issuer-runtime claude-code]
+#   control-db.sh passport-import --file f
 #   control-db.sh dashboard [db]
 #   control-db.sh status
 #   control-db.sh grants [db]
@@ -94,6 +96,8 @@ main() {
     agent-release)       ctl__agent_release "$@" ;;
     handoff-offer)       ctl__handoff_offer "$@" ;;
     handoff-accept)      ctl__handoff_accept "$@" ;;
+    passport-export)     ctl__passport_export "$@" ;;
+    passport-import)     ctl__passport_import "$@" ;;
     dashboard)           ctl__dashboard_json "${1:-}" ;;
     status)              ctl__status_json ;;
     grants)              ctl__grant_matrix "${1:-}" ;;
