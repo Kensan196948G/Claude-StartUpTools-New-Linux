@@ -20,6 +20,11 @@
 #   ctl__status_json                         → Mission Control 用 (常に rc=0)
 #   ctl__grant_matrix [db]                   → 権限一覧 (TSV, 監査用 read-only)
 #   ctl__reconcile [--db d] [--reason r] [--dry-run] → 放棄された run を stale へ遷移
+#   ctl__approval_request ... → Human Approval Gate の申請を作成 (承認待ち)
+#   ctl__approval_decide  ... → Y/N を記録し、閾値到達で approved/rejected へ遷移
+#   ctl__approval_check   ... → 実行可能な承認か判定 (改変検出・期限・承認数を確認)
+#   ctl__eval_define / ctl__eval_record → 評価定義の登録 / 結果の記録
+#   ctl__usage_record     ... → モデル利用量 (token/cost) の記録
 #
 # migration runner の規約:
 #   - ファイル名は NNNN_name.sql (4 桁通し番号)。違反は rc=2。
@@ -55,6 +60,10 @@ _ctl__err()  { if declare -F log_error >/dev/null 2>&1; then log_error "$@"; els
 
 # _ctl__ident <name> — DB/role 識別子の妥当性 (小文字英数と _ のみ、先頭英字)
 _ctl__ident() { [[ "$1" =~ ^[a-z][a-z0-9_]{0,62}$ ]]; }
+
+# _ctl__sqlq <value> — SQL 文字列リテラルへ埋め込む前のエスケープ (単一引用符を二重化)。
+#   数値・列挙値は CHECK 制約側で検証させ、ここでは全て文字列として安全側で扱う。
+_ctl__sqlq() { printf '%s' "${1//\'/\'\'}"; }
 
 # _ctl__json_array — 標準入力の JSON オブジェクト (1 行 1 個) を配列へ束ねる。jq が無ければ手組み。
 _ctl__json_array() {
@@ -373,4 +382,334 @@ ctl__reconcile() {
   fi
   local n; n="$(printf '%s\n' "$out" | sed '/^$/d' | wc -l | tr -d ' ')"
   _ctl__log "reconcile 完了: ${n} 件を stale へ遷移 (db=$db, reason=$reason)"
+}
+
+# ------------------------------------------------------------
+# Human Approval Gate (control.approvals / control.approval_decisions)
+# ------------------------------------------------------------
+
+# ctl__approval_request --category c --subject-kind k --subject-ref r
+#   --object-sha256 h --requested-by u [--db d] [--required-approvals 1|2]
+#   [--required-role role] [--ttl-hours N] [--head-sha sha] [--project-id id]
+#   [--run-id id] [--question text]
+#   承認申請を pending として作成し、approval_id を stdout へ出す。
+#   risk_category / subject_kind / required_approver_role の値検証は
+#   DB 側の CHECK / FK 制約に委ねる (二重定義を避けるため)。
+ctl__approval_request() {
+  local db="$CTL_DB" category="" subject_kind="" subject_ref="" object_sha256=""
+  local requested_by="" required_approvals=1 required_role="owner" ttl_hours=""
+  local head_sha="" project_id="" run_id="" question="マージ判定：Y / N"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --category) category="$2"; shift 2 ;;
+      --subject-kind) subject_kind="$2"; shift 2 ;;
+      --subject-ref) subject_ref="$2"; shift 2 ;;
+      --object-sha256) object_sha256="$2"; shift 2 ;;
+      --requested-by) requested_by="$2"; shift 2 ;;
+      --required-approvals) required_approvals="$2"; shift 2 ;;
+      --required-role) required_role="$2"; shift 2 ;;
+      --ttl-hours) ttl_hours="$2"; shift 2 ;;
+      --head-sha) head_sha="$2"; shift 2 ;;
+      --project-id) project_id="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --question) question="$2"; shift 2 ;;
+      *) _ctl__err "ctl__approval_request: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$category" || -z "$subject_kind" || -z "$subject_ref" || -z "$object_sha256" || -z "$requested_by" ]]; then
+    _ctl__err "ctl__approval_request: --category/--subject-kind/--subject-ref/--object-sha256/--requested-by は必須です"
+    return 2
+  fi
+  [[ "$object_sha256" =~ ^[0-9a-f]{64}$ ]] || { _ctl__err "--object-sha256 は sha256 hex (64桁) が必要です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  # VALUES 句では同じ行の他列 (requested_at) を参照できないため now() を直接使う
+  # (requested_at の既定値も now() であり、実質的に同一時刻になる)。
+  local ttl_clause="now() + coalesce((select default_ttl from control.risk_categories where category = '$(_ctl__sqlq "$category")'), interval '24 hours')"
+  [[ -n "$ttl_hours" ]] && ttl_clause="now() + interval '${ttl_hours} hours'"
+
+  # NULL 許容の値は先に SQL 断片 (リテラルまたは NULL) へ組み立ててから埋め込む。
+  # 二重引用符のネストで printf のフォーマット文字列が壊れるのを避けるため。
+  local project_id_sql="NULL" run_id_sql="NULL" head_sha_sql="NULL"
+  [[ -n "$project_id" ]] && project_id_sql="'$(_ctl__sqlq "$project_id")'"
+  [[ -n "$run_id" ]] && run_id_sql="'$(_ctl__sqlq "$run_id")'"
+  [[ -n "$head_sha" ]] && head_sha_sql="'$(_ctl__sqlq "$head_sha")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.approvals
+      (project_id, run_id, risk_category, required_approver_role, required_approvals,
+       subject_kind, subject_ref, approved_object_sha256, head_sha, requested_by,
+       expires_at, question_text)
+    VALUES (
+      $project_id_sql,
+      $run_id_sql,
+      '$(_ctl__sqlq "$category")', '$(_ctl__sqlq "$required_role")', $required_approvals,
+      '$(_ctl__sqlq "$subject_kind")', '$(_ctl__sqlq "$subject_ref")', '$(_ctl__sqlq "$object_sha256")',
+      $head_sha_sql,
+      '$(_ctl__sqlq "$requested_by")',
+      (select $ttl_clause),
+      '$(_ctl__sqlq "$question")'
+    )
+    RETURNING approval_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "承認申請の作成に失敗しました: ${out:0:400}"
+    return 1
+  fi
+  _ctl__log "承認申請を作成しました: approval_id=$out (db=$db, category=$category)" >&2
+  printf '%s\n' "$out"
+}
+
+# ctl__approval_decide --approval-id id --approver a --approver-role role
+#   --decision Y|N --object-sha256 h [--db d] [--note text]
+#   Y/N を記録する。N は即座に rejected。Y は required_approvals に達した
+#   時点で approved へ遷移する (二名承認は 2 人目の Y で初めて approved)。
+#   申請者自身の承認・役割不一致・対象ハッシュ不一致の決定は集計対象外。
+ctl__approval_decide() {
+  local db="$CTL_DB" approval_id="" approver="" approver_role="" decision="" object_sha256="" note=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --approval-id) approval_id="$2"; shift 2 ;;
+      --approver) approver="$2"; shift 2 ;;
+      --approver-role) approver_role="$2"; shift 2 ;;
+      --decision) decision="$2"; shift 2 ;;
+      --object-sha256) object_sha256="$2"; shift 2 ;;
+      --note) note="$2"; shift 2 ;;
+      *) _ctl__err "ctl__approval_decide: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  if [[ -z "$approval_id" || -z "$approver" || -z "$approver_role" || -z "$decision" || -z "$object_sha256" ]]; then
+    _ctl__err "ctl__approval_decide: --approval-id/--approver/--approver-role/--decision/--object-sha256 は必須です"
+    return 2
+  fi
+  [[ "$decision" == "Y" || "$decision" == "N" ]] || { _ctl__err "--decision は Y か N です"; return 2; }
+  [[ "$object_sha256" =~ ^[0-9a-f]{64}$ ]] || { _ctl__err "--object-sha256 は sha256 hex (64桁) が必要です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local note_sql="NULL"
+  [[ -n "$note" ]] && note_sql="'$(_ctl__sqlq "$note")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    BEGIN;
+    INSERT INTO control.approval_decisions
+      (approval_id, approver, approver_role, decision, decided_object_sha256, note)
+    VALUES (
+      '$(_ctl__sqlq "$approval_id")', '$(_ctl__sqlq "$approver")', '$(_ctl__sqlq "$approver_role")',
+      '$(_ctl__sqlq "$decision")', '$(_ctl__sqlq "$object_sha256")',
+      $note_sql
+    );
+
+    UPDATE control.approvals
+       SET status = 'rejected', decided_at = now()
+     WHERE approval_id = '$(_ctl__sqlq "$approval_id")'
+       AND status = 'pending'
+       AND EXISTS (
+         SELECT 1 FROM control.approval_decisions
+          WHERE approval_id = '$(_ctl__sqlq "$approval_id")' AND decision = 'N'
+       );
+
+    UPDATE control.approvals a
+       SET status = 'approved', decided_at = now()
+     WHERE a.approval_id = '$(_ctl__sqlq "$approval_id")'
+       AND a.status = 'pending'
+       AND (
+         SELECT count(*) FROM control.approval_decisions d
+          WHERE d.approval_id = a.approval_id
+            AND d.decision = 'Y'
+            AND d.approver <> a.requested_by
+            AND d.approver_role = a.required_approver_role
+            AND d.decided_object_sha256 = a.approved_object_sha256
+       ) >= a.required_approvals;
+
+    SELECT status FROM control.approvals WHERE approval_id = '$(_ctl__sqlq "$approval_id")';
+    COMMIT;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "承認決定の記録に失敗しました: ${out:0:400}"
+    return 1
+  fi
+  local status; status="$(printf '%s\n' "$out" | tail -1)"
+  _ctl__log "決定を記録しました: approval_id=$approval_id decision=$decision → status=$status" >&2
+  printf '%s\n' "$status"
+}
+
+# ctl__approval_check --approval-id id [--db d] [--observed-sha256 h]
+#   実行可能な承認かを判定する (期限内・承認済み・改変検出なし・承認数充足)。
+#   --observed-sha256 を渡すと実行直前の対象再ハッシュを記録し、承認時と
+#   食い違えば tamper_detected が true になり実行不可となる。
+#   実行可能なら rc=0 で JSON を出力、そうでなければ rc=1。
+ctl__approval_check() {
+  local db="$CTL_DB" approval_id="" observed_sha256=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --approval-id) approval_id="$2"; shift 2 ;;
+      --observed-sha256) observed_sha256="$2"; shift 2 ;;
+      *) _ctl__err "ctl__approval_check: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$approval_id" ]] || { _ctl__err "ctl__approval_check: --approval-id は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  if [[ -n "$observed_sha256" ]]; then
+    [[ "$observed_sha256" =~ ^[0-9a-f]{64}$ ]] || { _ctl__err "--observed-sha256 は sha256 hex (64桁) が必要です"; return 2; }
+    "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+      UPDATE control.approvals
+         SET observed_object_sha256 = '$(_ctl__sqlq "$observed_sha256")', observed_at = now()
+       WHERE approval_id = '$(_ctl__sqlq "$approval_id")';
+    " >/dev/null 2>&1
+  fi
+
+  # jsonb_build_object で PostgreSQL 自身に JSON を組み立てさせる (文字列連結による
+  # エスケープ漏れを避ける)。actionable は v_actionable_approvals への EXISTS で判定する。
+  local detail
+  detail="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
+    SELECT jsonb_build_object(
+        'approval_id', a.approval_id,
+        'status', a.status,
+        'expires_at', a.expires_at,
+        'tamper_detected', a.tamper_detected,
+        'actionable', EXISTS (SELECT 1 FROM control.v_actionable_approvals va WHERE va.approval_id = a.approval_id)
+      )::text
+      FROM control.approvals a WHERE a.approval_id = '$(_ctl__sqlq "$approval_id")';
+  " 2>/dev/null || true)"
+
+  if [[ -z "$detail" ]]; then
+    printf '{"approval_id":"%s","actionable":false,"error":"not_found"}\n' "$(_ctl__sqlq "$approval_id")"
+    return 1
+  fi
+  printf '%s\n' "$detail"
+
+  local actionable
+  actionable="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
+    SELECT 1 FROM control.v_actionable_approvals WHERE approval_id = '$(_ctl__sqlq "$approval_id")';
+  " 2>/dev/null || true)"
+  [[ -n "$actionable" ]]
+}
+
+# ------------------------------------------------------------
+# Evals (control.eval_definitions / control.eval_results)
+# ------------------------------------------------------------
+
+# ctl__eval_define --key k --kind golden|regression|security|outcome|performance|smoke
+#   --title t [--db d] [--required]
+#   評価定義を冪等に登録する (既存なら変更しない)。
+ctl__eval_define() {
+  local db="$CTL_DB" key="" kind="" title="" required=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --kind) kind="$2"; shift 2 ;;
+      --title) title="$2"; shift 2 ;;
+      --required) required=1; shift ;;
+      *) _ctl__err "ctl__eval_define: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$key" && -n "$kind" && -n "$title" ]] || { _ctl__err "ctl__eval_define: --key/--kind/--title は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    INSERT INTO control.eval_definitions (eval_key, eval_kind, title, is_required)
+    VALUES ('$(_ctl__sqlq "$key")', '$(_ctl__sqlq "$kind")', '$(_ctl__sqlq "$title")', $( (( required )) && echo true || echo false ))
+    ON CONFLICT (eval_key) DO NOTHING;
+  " || { _ctl__err "eval 定義の登録に失敗しました: $key"; return 1; }
+  _ctl__log "eval 定義を登録しました (冪等): $key"
+}
+
+# ctl__eval_record --key k --verdict PASS|FAIL|BLOCKED|NOT_RUN [--db d]
+#   [--score n] [--head-sha sha] [--run-id id] [--message m]
+ctl__eval_record() {
+  local db="$CTL_DB" key="" verdict="" score="" head_sha="" run_id="" message=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --key) key="$2"; shift 2 ;;
+      --verdict) verdict="$2"; shift 2 ;;
+      --score) score="$2"; shift 2 ;;
+      --head-sha) head_sha="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --message) message="$2"; shift 2 ;;
+      *) _ctl__err "ctl__eval_record: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$key" && -n "$verdict" ]] || { _ctl__err "ctl__eval_record: --key/--verdict は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local run_id_sql="NULL" score_sql="NULL" head_sha_sql="NULL" message_sql="NULL"
+  [[ -n "$run_id" ]] && run_id_sql="'$(_ctl__sqlq "$run_id")'"
+  [[ -n "$score" ]] && score_sql="$score"
+  [[ -n "$head_sha" ]] && head_sha_sql="'$(_ctl__sqlq "$head_sha")'"
+  [[ -n "$message" ]] && message_sql="'$(_ctl__sqlq "$message")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  local out
+  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+    INSERT INTO control.eval_results (eval_id, run_id, verdict, score, head_sha, message)
+    SELECT eval_id, $run_id_sql, '$(_ctl__sqlq "$verdict")', $score_sql, $head_sha_sql, $message_sql
+      FROM control.eval_definitions WHERE eval_key = '$(_ctl__sqlq "$key")'
+    RETURNING result_id;
+  " 2>&1)"
+  if [[ $? -ne 0 ]]; then
+    _ctl__err "eval 結果の記録に失敗しました: ${out:0:300}"
+    return 1
+  fi
+  if [[ -z "$out" ]]; then
+    _ctl__err "eval 定義が見つかりません (先に ctl__eval_define で登録してください): $key"
+    return 1
+  fi
+  _ctl__log "eval 結果を記録しました: key=$key verdict=$verdict result_id=$out" >&2
+  printf '%s\n' "$out"
+}
+
+# ------------------------------------------------------------
+# Model usage (control.model_usage)
+# ------------------------------------------------------------
+
+# ctl__usage_record --model-id id [--db d] [--run-id id] [--request-kind k]
+#   [--input-tokens n] [--output-tokens n] [--cache-read-tokens n]
+#   [--cache-creation-tokens n] [--cost-micro-usd n]
+ctl__usage_record() {
+  local db="$CTL_DB" model_id="" run_id="" request_kind="message"
+  local input_tokens=0 output_tokens=0 cache_read_tokens=0 cache_creation_tokens=0 cost_micro_usd=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --db) db="$2"; shift 2 ;;
+      --model-id) model_id="$2"; shift 2 ;;
+      --run-id) run_id="$2"; shift 2 ;;
+      --request-kind) request_kind="$2"; shift 2 ;;
+      --input-tokens) input_tokens="$2"; shift 2 ;;
+      --output-tokens) output_tokens="$2"; shift 2 ;;
+      --cache-read-tokens) cache_read_tokens="$2"; shift 2 ;;
+      --cache-creation-tokens) cache_creation_tokens="$2"; shift 2 ;;
+      --cost-micro-usd) cost_micro_usd="$2"; shift 2 ;;
+      *) _ctl__err "ctl__usage_record: 不明な引数 $1"; return 2 ;;
+    esac
+  done
+  [[ -n "$model_id" ]] || { _ctl__err "ctl__usage_record: --model-id は必須です"; return 2; }
+  pg__health "$db" >/dev/null 2>&1 || { _ctl__err "$db に接続できません"; return 3; }
+
+  local run_id_sql="NULL"
+  [[ -n "$run_id" ]] && run_id_sql="'$(_ctl__sqlq "$run_id")'"
+
+  local psql; psql="$(pg__cmd psql)"
+  "$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -qc "
+    INSERT INTO control.model_usage
+      (run_id, model_id, request_kind, input_tokens, output_tokens,
+       cache_read_tokens, cache_creation_tokens, cost_micro_usd)
+    VALUES (
+      $run_id_sql,
+      '$(_ctl__sqlq "$model_id")', '$(_ctl__sqlq "$request_kind")',
+      $input_tokens, $output_tokens, $cache_read_tokens, $cache_creation_tokens, $cost_micro_usd
+    );
+  " || { _ctl__err "利用量の記録に失敗しました"; return 1; }
+  _ctl__log "利用量を記録しました: model=$model_id input=$input_tokens output=$output_tokens cost_micro_usd=$cost_micro_usd"
 }

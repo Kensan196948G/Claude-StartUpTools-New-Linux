@@ -8,6 +8,13 @@
 #   control-db.sh migrate [--db d] [--dir path] [--dry-run] [--allow-destructive v1,v2]
 #   control-db.sh migration-status [--db d] [--dir path] [--json]
 #   control-db.sh reconcile [--db d] [--reason r] [--dry-run]
+#   control-db.sh approval-request --category c --subject-kind k --subject-ref r
+#     --object-sha256 h --requested-by u [--required-approvals 1|2] [--required-role role] [--ttl-hours N]
+#   control-db.sh approval-decide --approval-id id --approver a --approver-role role --decision Y|N --object-sha256 h
+#   control-db.sh approval-check --approval-id id [--observed-sha256 h]
+#   control-db.sh eval-define --key k --kind golden|regression|security|outcome|performance|smoke --title t [--required]
+#   control-db.sh eval-record --key k --verdict PASS|FAIL|BLOCKED|NOT_RUN
+#   control-db.sh usage-record --model-id id [--input-tokens n] [--output-tokens n] [--cost-micro-usd n]
 #   control-db.sh status
 #   control-db.sh grants [db]
 #   control-db.sh units <project> <db> [--install]   systemd projection/reconcile unit を生成
@@ -62,6 +69,12 @@ main() {
     migrate)            ctl__migrate "$@" ;;
     migration-status)    ctl__migration_status "$@" ;;
     reconcile)           ctl__reconcile "$@" ;;
+    approval-request)    ctl__approval_request "$@" ;;
+    approval-decide)     ctl__approval_decide "$@" ;;
+    approval-check)      ctl__approval_check "$@" ;;
+    eval-define)         ctl__eval_define "$@" ;;
+    eval-record)         ctl__eval_record "$@" ;;
+    usage-record)        ctl__usage_record "$@" ;;
     status)              ctl__status_json ;;
     grants)              ctl__grant_matrix "${1:-}" ;;
     units)               [[ -n "${1:-}" && -n "${2:-}" ]] || die "units <project> <db> [--install] が必要です"
