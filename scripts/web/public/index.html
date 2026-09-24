@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🌐 ClaudeOS Web スタートアップコンソール</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>🌐 ClaudeCode スタートアップツール <span class="sub">Web コンソール</span></h1>
+    <div class="hint" id="meta">読み込み中…</div>
+  </div>
+  <div class="badges" id="badges"></div>
+</header>
+
+<main>
+  <!-- 左: プロジェクト -->
+  <div>
+    <section class="panel">
+      <h2>📂 プロジェクト (<span id="proj-count">0</span>)</h2>
+      <div class="row">
+        <input id="filter" class="grow" placeholder="絞り込み (名前 / グループ)">
+        <button class="ghost tiny" id="btn-reload">↻ 再読み込み</button>
+      </div>
+      <div id="projects"></div>
+    </section>
+
+    <section class="panel">
+      <h2>📺 実行中セッション (<span id="sess-count">0</span>)</h2>
+      <div id="sessions"><div class="hint">なし</div></div>
+      <div class="row" style="margin-top:10px">
+        <span class="hint">接続は tmux / claude 側で行います:</span>
+        <span class="mono att" id="attach-hint">tmux attach -t claudeos-&lt;project&gt;</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>🌐 Supervisor 全適用 (全登録候補)</h2>
+      <div class="hint">必ず「計画 (--dry-run)」で対象と skip 理由を確認してから実行します。</div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btn-all-plan">📋 計画を確認 (--dry-run)</button>
+        <button class="go hidden" id="btn-all-apply" disabled>▶️ 全適用を実行 (人間確認済)</button>
+      </div>
+      <pre class="out" id="all-out"></pre>
+    </section>
+  </div>
+
+  <!-- 右: 起動 -->
+  <div>
+    <section class="panel">
+      <h2>🚀 起動</h2>
+      <div class="row">
+        <span class="hint">対象:</span>
+        <strong id="selected-name" class="okmsg">(未選択 — 左の一覧から選択)</strong>
+      </div>
+
+      <label class="field">起動モード</label>
+      <div class="modes" id="modes"></div>
+
+      <div class="row">
+        <div>
+          <label class="field">実行時間 (分) — 0 = 無制限 (foreground/team のみ)</label>
+          <input id="duration" type="number" min="0" step="1" style="width:120px">
+        </div>
+        <div class="grow">
+          <label class="field">🎯 Goal (自動判定が既定)</label>
+          <select id="goal" class="grow" style="width:100%"></select>
+        </div>
+      </div>
+
+      <label class="field">📝 要求 / Request (任意 — Goal Router の Evidence になります)</label>
+      <textarea id="intent" placeholder="例: CI が失敗しているので直して / 全体を評価して"></textarea>
+
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="btn-plan" disabled>📋 計画を確認 (--dry-run)</button>
+        <button class="go" id="btn-launch" disabled>🚀 起動実行</button>
+      </div>
+      <div class="hint" id="gate">※ 起動実行は計画確認後に押せます (Human Gate)。</div>
+      <pre class="out" id="plan-out"></pre>
+      <div id="op-msg" class="hint"></div>
+    </section>
+
+    <section class="panel">
+      <h2>🧪 参考: CLI 等価コマンド</h2>
+      <pre class="out mono" id="cli-equiv"></pre>
+      <div class="hint">この画面は bin/menu.sh と同じ CLI を呼ぶだけです (判定・起動ロジックは CLI 側が正本)。</div>
+    </section>
+  </div>
+</main>
+
+<div class="modal hidden" id="modal">
+  <div class="box">
+    <div class="row">
+      <h2 class="grow" id="modal-title">ログ</h2>
+      <button class="ghost" id="modal-close">✕ 閉じる</button>
+    </div>
+    <pre class="out" id="modal-body" style="max-height:60vh"></pre>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

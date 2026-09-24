@@ -1,0 +1,42 @@
+# Cloudflare Tunnel 設定 (cloudflared) — Web スタートアップコンソール公開用
+#
+# 適用は人間の Y/N 後（docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md §4）。
+# このファイルは repo 管理下のテンプレートで、実機では ~/.cloudflared/config.yml へ
+# コピーして <TUNNEL_ID> を埋める。値はここに書かない (secret/ID を commit しない)。
+#
+# 設計方針 (docs/architecture/Cloudflare公開基盤仕様.md §5):
+#   - コンソールは 127.0.0.1:3740 のまま (LAN へ bind しない)。cloudflared が同一ホストから
+#     loopback へ接続するため、公開面は Cloudflare エッジのみになる。
+#   - 入口制御は Cloudflare Access (認証は Access、アプリ側 Basic は多層防御)。
+#   - DNS / custom domain / Access policy の変更は Approval PR (人間 Y/N)。
+#
+# 手順 (人間が実行):
+#   cloudflared tunnel login
+#   cloudflared tunnel create claudeos-web-startup      # → <TUNNEL_ID> を控える
+#   cp config/cloudflare/web-startup-tunnel.yml ~/.cloudflared/config.yml   # <TUNNEL_ID> を置換
+#   cloudflared tunnel route dns claudeos-web-startup claude-startuptools.mirai-dx-platform.com
+#   cloudflared tunnel run claudeos-web-startup
+
+tunnel: <TUNNEL_ID>
+credentials-file: /home/kensan/.cloudflared/<TUNNEL_ID>.json
+
+# cloudflared 自体のログ (認証情報は含めない)
+loglevel: info
+logfile: /home/kensan/.claudeos/logs/cloudflared-web-startup.log
+
+originRequest:
+  connectTimeout: 10s
+  # ローカル origin は http。TLS 検証の緩和は行わない。
+  noTLSVerify: false
+
+ingress:
+  # Web スタートアップコンソール (bin/web-startup.sh --start が 127.0.0.1:3740 で待ち受ける)。
+  # Access application はこの hostname に対して作成する
+  # (config/cloudflare/web-startup-access-policy.json)。
+  - hostname: claude-startuptools.mirai-dx-platform.com
+    service: http://127.0.0.1:3740
+
+  # 既存の別サービスがある場合はここへ追記する (このテンプレートは単一サービスのみ)。
+
+  # catch-all は必ず最後 (未定義 hostname を 404 で閉じる = fail closed)
+  - service: http_status:404

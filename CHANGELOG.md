@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+### Added — Web スタートアップコンソール（menu.sh の Web 版、2026-09-24）
+
+- 🌐 `scripts/web/startup-server.js` + `scripts/web/public/`: 起動メニュー（L1 / T1 / S1）、セッション停止、
+  Supervisor 全適用、ログ閲覧をブラウザから操作する Web 層。**判定・起動ロジックは再実装せず
+  `bin/start-claude.sh` / `bin/autonomy.sh` をそのまま呼ぶ** 薄いアダプタ（Node 組み込みのみ・依存ゼロ）。
+- 🧭 `libexec/startup-state.sh`: 同コンソール向け read-only 状態スナップショット（プロジェクト / 稼働状態 /
+  Supervisor 情報 / Goal 定義 / limits）。既存 lib（config-loader / launcher-common / goal-router）を再利用。
+- 🛡️ Human Gate: 変更系 API は `confirm:true` が無ければ実体を実行せず `--dry-run` 計画のみ返す。
+  全適用は「dry-run 計画 → 人間確認 → `--yes`」の 2 段階。`--dry-run-only` 起動で実起動を完全抑止。
+  実行対象は config 由来の allowlist 完全一致のみ（シェル非経由 spawn）、intent/mode/goal/duration を全数検証。
+  Basic 認証（非ループバック bind では必須 = fail-closed）、Origin 検証、パス限定（`~/.claudeos` /
+  `scripts/web/public`）、変更系操作は `~/.claudeos/logs/web-startup-audit.log` へ監査記録。
+- 🚀 `bin/web-startup.sh`: コンソールの start / stop / status（PID ファイル + health check、`--dry-run` 対応）。
+  メニューに `WS`（起動）/ `WX`（停止）を追加、`npm run start:web` / `start:web:dry` を追加。
+- 📝 `docs/architecture/WEB_STARTUP_TOOL.md`: 構成 / API / 安全統制 / 制約（foreground はデスクトップ端末必須、
+  アタッチは tmux）。
+- 🧪 テスト: `scripts/web/startup-server.test.js`（node 28: 検証・CLI 引数契約・HTTP 統合・認証・Origin）、
+  `tests/bats/unit/web-startup.bats`（6）、`tests/bats/unit/startup-state.bats`（5: JSON 形状 / read-only 保証）。
+
+### Added — Web スタートアップコンソール 公開設計（Cloudflare Tunnel + Access、設計のみ・2026-09-24）
+
+- 🌐 公開設計: hostname `claude-startuptools.mirai-dx-platform.com`。入口認証は **Cloudflare Access**
+  （Google IdP）で **`kensan1969@gmail.com` のみ許可**、origin は `http://127.0.0.1:3740` のまま
+  （LAN bind なし）。**Cloudflare への適用は NOT RUN**（Approval PR + 人間 Y/N）。
+- 📄 `config/cloudflare/web-startup-tunnel.yml` / `web-startup-access-policy.json`: 適用前の設計値。
+  tunnel ID / IdP ID / account ID は placeholder のみ（secret・実 ID を commit しない）。
+- 📝 `docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md`: 構成 / Human Gate / 適用手順 / 適用後の read-back 検証 /
+  rollback / 運用（利用者識別は Access ログ側）/ 未実施事項 / Approval PR チェックリスト。
+- 🚀 `bin/web-startup-service.sh`: コンソール常駐用 systemd --user unit（`--register/--unregister/--status/--dry-run`）。
+  bind は常に loopback、secret は生成しない（env-file 任意・`EnvironmentFile=-`）。
+- 🧪 `scripts/web/public-access-config.test.js`（node 10）: 設計値が「allow 1 メール + catch-all deny」「LAN/0.0.0.0
+  を含まない」「0.0.0.0 bind なし」「実 ID/secret なし」を満たすことを機械的に固定。
+  `tests/bats/unit/web-startup-service.bats`（6）。
+
 ### Added — Managed Agents 実行基盤 P0（ClaudeOS v11 移行 開始、2026-09-09）
 
 - 🏗️ `config/managed-agents.json.template`: 記録用プレースホルダから**実行可能設定契約**へ昇格
