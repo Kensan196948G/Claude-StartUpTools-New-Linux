@@ -34,6 +34,13 @@
 | `Claude/templates/claudeos/sdlc/` | Source | AI-Native SDLC 成果物テンプレート |
 | `tests/evals/` | Source | golden eval（Self-Improvement の回帰ゲート） |
 | `lib/goal-router.sh`, `Claude/templates/claudeos/goals/*.md` | Source | 統合 Goal Router（判定ロジック唯一の実装）と Primary 5 / Specialized 6 の /goal 本文 |
+| `scripts/web/` | Source | Web スタートアップコンソール（`startup-server.js` + `public/`）。起動・停止・全適用は既存 CLI を呼ぶ薄い層 |
+| `libexec/startup-state.sh` | Source | 同コンソール向け read-only 状態スナップショット（JSON） |
+| `bin/web-startup.sh` | Source | 同コンソールの起動・停止・状態（PID ファイル + health check） |
+| `bin/web-startup-service.sh` | Source | 同コンソール常駐用 systemd --user unit の登録/解除（bind は常に loopback） |
+| `config/cloudflare/web-startup-{tunnel.yml,access-policy.json}` | Source | 公開設計値（適用前・placeholder のみ。適用は人間 Y/N） |
+| `docs/architecture/WEB_STARTUP_TOOL.md` | Source | 同コンソールの API / 安全統制 / 制約 |
+| `docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md` | Source | 公開設計（Tunnel + Access）/ 手順 / read-back 検証 / rollback |
 | `Claude/templates/claude/claudeos/core/00-goal-system.md` | Source | Goal System 文書（`instructions/00-goal-system.md` は同一コピー） |
 | `docs/architecture/*.md` | Source | v10 仕様・設計・移行記録 |
 
