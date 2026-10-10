@@ -12,7 +12,7 @@ Local Claude Code が主系で、Managed Agents は低リスク・読取専用�
 |---|---|
 | adapter・Budget Guard・台帳・Router 統合 | 実装済み。モックによる自動テストで検証 |
 | dry-run（request の生成と判定） | 利用可能。ネットワークへ出ない |
-| live（実 API 呼び出し） | **BLOCKED** — Console の残高・利用権限の確認と、課金の人間承認が前提（§4） |
+| live（実 API 呼び出し） | 初回の接続テストは**成功**（2026-10-10、$0.05。記録は §9）。異常系（予算到達・タイムアウト・中断・API 障害）は実 API では未検証 |
 | 過去の GitHub MCP 実行クラッシュ | 修正状況は**未確認**。PoC は MCP を使わない構成で回避（§3） |
 
 ## 2. 既存 PoC と現行 API 仕様の差分
@@ -73,7 +73,7 @@ GitHub への書込み（PR 作成など）は MCP が必要になるため、Po
 
 費用上限: 1 回 $0.50、再検証全体で $1.00。超える場合は中止します。
 
-## 4. live 実行の前提（現在は BLOCKED）
+## 4. live 実行の前提
 
 実クレジットを使う操作は、次をすべて人間が確認した後に限ります。
 
@@ -177,3 +177,44 @@ bin/managed-agents.sh budget reconcile --console-usd 0.12 --note "Console 確認
 | 判定・実行の履歴 | `~/.claudeos/managed-agents/decisions.jsonl` | 管理外 |
 
 状態ディレクトリは `CLAUDEOS_MA_STATE_DIR`、設定パスは `CLAUDEOS_MANAGED_AGENTS_CONFIG` で変更できます。
+
+## 9. live 接続テストの記録
+
+### 2026-10-10 — 初回接続テスト（成功）
+
+利用者本人が自分のターミナルで実行した（API キーと GitHub トークンは環境変数で渡し、Claude Code のセッションには渡していない）。
+
+| 手順 | 結果 |
+|---|---|
+| `status --probe` | 成功（Agent 一覧の取得 1 回） |
+| `env ensure` | 作成。`env_01NhvPZS5w9UsM6mn1VWQKLY`（limited networking） |
+| `agents sync` | 3 Agent を作成（いずれも version 1）。`repository-review` = `agent_01XHvyzG1Lgpb6NrY8Ub46uY`、`quality-assurance` = `agent_01Jo32pGN8y88B4k4edYVsHz`、`documentation` = `agent_019EyznGYz985y7LJcBFywEm` |
+| `session run --task-id connect-1 --role repository-review --task-type check` | 完了（`outcome: completed`）。`sesn_01SmHV3otYhFVt42Lbtz2iz9` |
+
+| 項目 | 値 |
+|---|---|
+| 予算上限 | 50 セント（`budget.max_list_cost.amount: "50"`） |
+| 使用額（list 価格） | **5 セント**（`usage.list_cost.amount: "5"`） |
+| 稼働時間 | 11.8 秒（`active_seconds`） |
+| トークン | 入力 12、出力 719、キャッシュ書込み 14,948、キャッシュ読取り 11,838 |
+| セッション内エラー | なし |
+| 台帳 | 5 セントで確定。未確定セッション 0 |
+
+確認できたこと:
+
+- 予算つきのセッション作成（`budget.max_list_cost`）が受理され、`usage.list_cost.amount` を整数セントの文字列として読めた。
+- `github_repository` リソースで `main` を read-only マウントし、Agent が `read` で README を行番号つきで引用できた（T08 の実 API での確認）。
+- セッション作成前の検証（Agent が読取専用、Environment が limited networking）が、adapter 自身の作成した定義に対して通った。
+- `initial_events` で作成と同時に開始し、`session.status_idle`（`stop_reason: end_turn`）で完了を判定できた。
+- 完了後、停止を確認した上で使用量を台帳へ確定できた。
+
+確認していないこと:
+
+- 予算到達（`budget_reached`）、監視のタイムアウト、`user.interrupt`、API 障害、認証・権限エラーの実挙動（自動テストのみ）。
+- Console などで変更された Agent / Environment を拒否する動作（自動テストのみ）。
+- `quality-assurance` と `documentation` の Agent でのセッション実行。
+- 過去の GitHub MCP 実行クラッシュ（この構成は MCP を使わないため、再現するかどうかは分からない。§3 のまま未確認）。
+- Console の表示額との一致（`budget reconcile` は未実施）。
+- 請求サイクル開始日（`budgetPolicy.cycle.anchorDay`）は未設定のため、台帳は暦月集計の参考値。
+
+このテスト時点の設定: 月間 $20、単一セッション $2、確認処理 $0.50。GitHub トークンの権限と、Console の自動チャージ設定は利用者の判断事項として未決（自動チャージが有効な場合、クレジットを使い切っても API は止まらず、歯止めはこの台帳の予算ガードだけになる）。

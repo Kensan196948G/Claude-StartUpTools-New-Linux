@@ -161,7 +161,7 @@ Local へ戻すのは予算不足・API 障害・未設定の場合だけであ�
 
 セッション作成の直前に、使う Agent と Environment を API から取得して実体を検証する（課金の発生しない GET 2 回）。Agent は最新 version が固定 version と一致し、有効なツールが `read` / `glob` / `grep` のみで MCP・skills・multiagent を持たないこと、Environment は `limited` networking で MCP・パッケージマネージャ・許可ホストが無いことを確認する。registry や設定の ID、metadata の一致だけでは信用しない。`agents sync` も、metadata が一致していて実体が読取専用でない Agent は定義で上書きする。
 
-> 未検証: Agent 取得応答の `tools` の形（`default_config` と各 `configs` の `enabled` が返ること）は公式ドキュメントの記述に基づく想定で、実 API では確認していない。想定と違う形の場合は検証が通らず、セッションを作らない側に倒れる。
+> 実 API での確認（2026-10-10）: `agents sync` で作成した Agent と `env ensure` で作成した Environment に対し、この検証が通ってセッションを作成できた（`docs/claude/21` §9）。確認できたのは「adapter 自身が作成した定義は検証を通る」ことまでで、応答の全フィールドの形を記録したわけではない。Console などで変更された定義を拒否する動作は、実 API では未検証（自動テストのみ）。応答の形が想定と違う場合は検証が通らず、セッションを作らない側に倒れる。
 
 ### 設定で緩められない上限
 
@@ -204,7 +204,7 @@ Local へ戻すのは予算不足・API 障害・未設定の場合だけであ�
 | T05 | 予算 70% / 85% / 95% / 100% の段階制御 | 同 T05 |
 | T06 | 重複セッション起動の防止 | 両テストの T06 |
 | T07 | API タイムアウト時の安全な停止 | `managed-agents.test.js` T07 |
-| T08 | GitHub への読取専用アクセス | 同 T08（定義の構造検証。実 API では未検証） |
+| T08 | GitHub への読取専用アクセス | 同 T08（定義の構造検証）。実 API でも読み取りを確認（2026-10-10、`docs/claude/21` §9） |
 | T09 | main への直接 push 拒否 | 同 T09（書込み手段が無いことの構造検証） |
 | T10 | 本番環境への無承認アクセス拒否 | 同 T10、`agent-router.test.js` |
 | T11 | Secret・Credential の非表示 | 同 T11、`managed-agents.bats` |
