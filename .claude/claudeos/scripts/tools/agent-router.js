@@ -32,7 +32,9 @@ const fs = require('fs');
 const path = require('path');
 
 const LEVELS = { low: 1, medium: 2, high: 3, critical: 4 };
-function lvl(v, def = 'medium') { return LEVELS[String(v || def).toLowerCase()] || LEVELS[def]; }
+// 自身のキーだけを引く ("constructor" / "__proto__" などの継承プロパティをレベルとして扱わない)
+function levelOf(key) { return Object.prototype.hasOwnProperty.call(LEVELS, key) ? LEVELS[key] : undefined; }
+function lvl(v, def = 'medium') { return levelOf(String(v || def).toLowerCase()) || LEVELS[def]; }
 function num(v, def = 0) { const n = Number(v); return Number.isFinite(n) ? n : def; }
 function bool(v) { return v === true || v === 'true' || v === 1 || v === '1'; }
 
@@ -50,7 +52,14 @@ const MANAGED_MAX_DURATION_MIN = 30;
 // 厳格なレベル解釈: 省略は def、未知の文字列は critical 扱い。
 function strictLevel(v, def) {
   if (v === undefined || v === null || v === '') return LEVELS[def];
-  return LEVELS[String(v).trim().toLowerCase()] || LEVELS.critical;
+  return (typeof v === 'string' && levelOf(v.trim().toLowerCase())) || LEVELS.critical;
+}
+// 所要時間は数値型か 10 進表記の文字列だけを受け付ける ("" / true / [] / "0x10" などは解釈しない)。
+function strictDuration(v, def) {
+  if (v === undefined) return def;
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v.trim())) return Number(v.trim());
+  return NaN;
 }
 // 明示的な false だけを「該当なし」と認める (省略・"yes"・"no" などは未確認として拒否)。
 function explicitlyFalse(v) { return v === false || v === 'false' || v === 0 || v === '0'; }
@@ -63,12 +72,13 @@ function managedEligibility(i, m, raw) {
   // 呼び出し側の許可リストは既定リストを狭めることだけできる (広げられない)。
   const requested = Array.isArray(m.allowed_task_types) ? m.allowed_task_types.map((t) => String(t).trim().toLowerCase()) : null;
   const allowedTypes = requested ? MANAGED_TASK_TYPES.filter((t) => requested.includes(t)) : MANAGED_TASK_TYPES;
-  const sensitivity = String(m.data_sensitivity === undefined ? 'internal' : m.data_sensitivity).trim().toLowerCase();
+  // データ機密性も他の確認項目と同じく明示必須 (省略は未確認として拒否)
+  const sensitivity = typeof m.data_sensitivity === 'string' ? m.data_sensitivity.trim().toLowerCase() : 'unspecified';
   const budget = String(m.budget_state || 'unknown').toLowerCase();
   const reqMax = Number(m.max_duration_min);
   const maxDuration = Number.isFinite(reqMax) && reqMax > 0 ? Math.min(reqMax, MANAGED_MAX_DURATION_MIN) : MANAGED_MAX_DURATION_MIN;
   const rawDuration = r.expected_duration_min;
-  const duration = rawDuration === undefined || rawDuration === null || rawDuration === '' ? i.duration : Number(rawDuration);
+  const duration = strictDuration(rawDuration, i.duration);
 
   if (!explicitlyFalse(m.human_gate)) deny('policy', 'human-gate', '人間承認が不要であることを明示していない (human_gate=false が必須)');
   if (!explicitlyTrue(r.read_only)) deny('policy', 'not-read-only', '初期 PoC は読取専用タスクのみ (read_only=true が必須)');

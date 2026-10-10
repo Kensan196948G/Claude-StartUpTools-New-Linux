@@ -24,7 +24,7 @@ Worktree: 並列書込み、Background Agent の書込み、Agent View は常に
 
 | 区分 | 条件 |
 |---|---|
-| 安全条件（policy） | `read_only=true`、`risk=low`（省略不可）、security / database / deployment が low、`managed.human_gate=false`・`managed.requires_secrets=false`・`managed.requires_external_network=false` を**明示**、データ機密性が public / internal、Agent 間通信なし、task_type が許可リスト内（review / code-review / diff-analysis / qa-analysis / test-generation / triage / docs / research / check）、所要時間が 30 分以内 |
+| 安全条件（policy） | `read_only=true`、`risk=low`（省略不可）、security / database / deployment が low、`managed.human_gate=false`・`managed.requires_secrets=false`・`managed.requires_external_network=false` と `managed.data_sensitivity`（public / internal）を**明示**、Agent 間通信なし、task_type が許可リスト内（review / code-review / diff-analysis / qa-analysis / test-generation / triage / docs / research / check）、所要時間が 30 分以内 |
 | 容量条件（capacity） | Managed Agents が利用可能（設定・認証）、予算状態が ok / warn（verify-only は `check` のみ）、同一タスク ID が未実行 |
 | 選択条件 | 明示要求（`managed.requested=true`）がある、または Local が利用できない（`managed.local_available=false`）。**Local が稼働中というだけでは並列起動しない** |
 

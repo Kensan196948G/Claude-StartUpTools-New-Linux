@@ -205,9 +205,14 @@ function foldTasks(entries) {
     if (!e.task_id) continue;
     let t = tasks.get(e.task_id);
     if (e.type === 'reserve') {
-      t = { task_id: e.task_id, ts: e.ts, reservedCents: Number(e.cents) || 0, actualCents: 0, final: false, released: false, session_id: null, role: e.role || null, task_class: e.task_class || null, status: 'reserved' };
+      // 同じ task_id の再予約 (解除後のやり直し) では、以前に記録された実績を引き継ぐ。
+      const carried = t ? (t.carriedCents || 0) + t.actualCents : 0;
+      t = { carriedCents: carried, task_id: e.task_id, ts: e.ts, reservedCents: Number(e.cents) || 0, actualCents: 0, final: false, released: false, session_id: null, role: e.role || null, task_class: e.task_class || null, status: 'reserved' };
       tasks.set(e.task_id, t);
     } else if (t && e.type === 'usage') {
+      // 解除済みのタスクに使用量が届いた = セッションは実在した。解除を取り消し、予約として数え直す
+      // (解除と作成成功が行き違っても、費用と並列枠が台帳から消えない)。
+      if (t.released) { t.released = false; t.revived = true; }
       t.actualCents = Math.max(t.actualCents, Number(e.list_cost_cents) || 0);
       if (e.session_id) t.session_id = e.session_id;
       if (e.status) t.status = e.status;
@@ -223,8 +228,9 @@ function foldTasks(entries) {
 // committed: 確定済みは実績、未確定は max(予約, 実績)、解除済みは実績 (通常 0)。
 //   解除後に使用量が記録された場合 (実は作成されていた) も、その実績は消さない。
 function committedCents(t) {
-  if (t.released) return t.actualCents;
-  return t.final ? t.actualCents : Math.max(t.reservedCents, t.actualCents);
+  const carried = t.carriedCents || 0;
+  if (t.released) return carried + t.actualCents;
+  return carried + (t.final ? t.actualCents : Math.max(t.reservedCents, t.actualCents));
 }
 
 function summarize(entries, now, policy) {
@@ -241,7 +247,7 @@ function summarize(entries, now, policy) {
     if (!inPeriod && !open) continue;
     s.taskCount += 1;
     s.committedMonthCents += committedCents(t);
-    s.actualMonthCents += t.actualCents;
+    s.actualMonthCents += (t.carriedCents || 0) + t.actualCents;
     if (t.ts >= today || open) s.committedDayCents += committedCents(t);
   }
   s.stage = stageOf(s.committedMonthCents, policy);

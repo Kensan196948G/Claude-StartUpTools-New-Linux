@@ -47,7 +47,7 @@ node scripts/tools/agent-router.js --record --json '{"task_type":"feature","comp
 
 入力に `managed` ブロックを付けると、低リスク・読取専用タスクに限り `ManagedAgent` が候補になる。ブロックが無ければ判定は従来通り。
 Local が稼働中というだけでは選ばれない (`managed.requested=true` の明示要求か `managed.local_available=false` が必要)。
-安全条件は fail-closed: `risk: "low"`、`read_only: true` に加え、`managed.human_gate` / `requires_secrets` / `requires_external_network` を
+安全条件は fail-closed: `risk: "low"`、`read_only: true` に加え、`managed.data_sensitivity` (public / internal) を指定し、`managed.human_gate` / `requires_secrets` / `requires_external_network` を
 明示的に `false` で渡す。省略・不明値は拒否される。
 `managed.policy_denied=true` は安全上の拒否であり、別経路で回避しない。可用性・予算・重複の証拠収集と記録は
 `scripts/tools/managed-agents.js route --json '<task>'` (ClaudeOS 本体リポジトリ) が行う。

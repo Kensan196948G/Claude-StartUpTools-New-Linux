@@ -192,7 +192,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 }
 
 @test "T12 CLI route: 設定なしでも Local の実行先を返し、Managed は選ばれない" {
-  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":10,"managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":10,"managed":{"requested":true,"data_sensitivity":"internal","human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.execution')" = "Subagent" ]
   [ "$(printf '%s' "$output" | jq -r '.managed.selected')" = "false" ]
@@ -201,7 +201,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 @test "T10 CLI route: dry-run で有効でも本番影響のあるタスクは Managed にしない" {
   _write_cfg true dry-run
-  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"deployment_impact":"high","managed":{"requested":true,"local_available":false,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"deployment_impact":"high","managed":{"requested":true,"local_available":false,"data_sensitivity":"internal","human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.execution')" != "ManagedAgent" ]
   [ "$(printf '%s' "$output" | jq -r '.managed.policy_denied')" = "true" ]
@@ -209,7 +209,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 @test "CLI route: dry-run + 明示要求の低リスク読取専用タスクは ManagedAgent になり、決定が記録される" {
   _write_cfg true dry-run
-  run bash "$BIN" route --task-id bats-route-1 --json '{"task_type":"docs","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
+  run bash "$BIN" route --task-id bats-route-1 --json '{"task_type":"docs","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true,"data_sensitivity":"internal","human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.execution')" = "ManagedAgent" ]
   [ "$(jq -r '.task_id' "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl")" = "bats-route-1" ]
@@ -257,7 +257,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
   _write_cfg true dry-run
   run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"managed":{"requested":true}}'
   [ "$(printf '%s' "$output" | jq -r '.execution')" != "ManagedAgent" ]
-  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"security_impact":"severe","managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"security_impact":"severe","managed":{"requested":true,"data_sensitivity":"internal","human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$(printf '%s' "$output" | jq -r '.execution')" != "ManagedAgent" ]
   [ "$(printf '%s' "$output" | jq -r '.managed.policy_denied')" = "true" ]
 }

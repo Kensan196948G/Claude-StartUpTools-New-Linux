@@ -103,7 +103,7 @@ bin/managed-agents.sh session create --task-id review-20261010-1 --role reposito
 
 # 4) 実行先の判定（Managed へ出してよいかと理由。決定は decisions.jsonl に残る）
 bin/managed-agents.sh route --task-id review-20261010-1 \
-  --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
+  --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true,"data_sensitivity":"internal","human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
 ```
 
 live（§4 を満たした後）:

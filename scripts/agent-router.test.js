@@ -70,7 +70,7 @@ test('agent-router.js: 正本 (scripts/tools) と2つの配布コピーは同一
 const { managedEligibility, MANAGED_TASK_TYPES } = require('./tools/agent-router.js');
 const lowRisk = (over) => Object.assign({ task_type: 'review', complexity: 'medium', risk: 'low', read_only: true, files_affected: 10 }, over);
 // 安全条件は明示的に false を渡す (省略・不明値は fail-closed で拒否される)
-const managedOk = (over) => Object.assign({ available: true, budget_state: 'ok', human_gate: false, requires_secrets: false, requires_external_network: false }, over);
+const managedOk = (over) => Object.assign({ available: true, budget_state: 'ok', data_sensitivity: 'internal', human_gate: false, requires_secrets: false, requires_external_network: false }, over);
 
 test('router managed: managed ブロックが無ければ出力は従来と完全に同一 (配布先の後方互換)', () => {
   for (const c of golden.cases) {
@@ -162,6 +162,33 @@ test('router managed: 安全条件は fail-closed (省略・不明値・呼び�
   assert.strictEqual(pick(lowRisk({ managed: managedOk({ local_available: false }) })).execution, 'ManagedAgent');
   // 許可リストは狭められるが広げられない
   assert.strictEqual(pick(lowRisk({ managed: managedOk({ requested: true, allowed_task_types: ['docs'] }) })).managed.policy_denied, true);
+});
+
+test('router managed: 継承プロパティ名のレベル・曖昧な所要時間・機密性の省略では選ばない', () => {
+  const m = () => managedOk({ requested: true });
+  const denied = [
+    lowRisk({ risk: 'constructor', managed: m() }), lowRisk({ security_impact: '__proto__', managed: m() }),
+    lowRisk({ database_impact: 'toString', managed: m() }), lowRisk({ deployment_impact: 'constructor', managed: m() }),
+    lowRisk({ security_impact: 3, managed: m() }), lowRisk({ risk: ['low'], managed: m() }),
+    lowRisk({ expected_duration_min: ' ', managed: m() }), lowRisk({ expected_duration_min: [], managed: m() }),
+    lowRisk({ expected_duration_min: true, managed: m() }), lowRisk({ expected_duration_min: null, managed: m() }),
+    lowRisk({ expected_duration_min: '0x10', managed: m() }),
+    lowRisk({ managed: managedOk({ requested: true, data_sensitivity: undefined }) }),
+    lowRisk({ managed: managedOk({ requested: true, data_sensitivity: ['internal'] }) }),
+  ];
+  for (const input of denied) {
+    const d = route(input);
+    assert.notStrictEqual(d.execution, 'ManagedAgent', JSON.stringify(input));
+    assert.strictEqual(d.managed.policy_denied, true, JSON.stringify(input));
+  }
+  assert.strictEqual(route(lowRisk({ expected_duration_min: '25', managed: m() })).execution, 'ManagedAgent');
+});
+
+test('router: 継承プロパティ名を影響度に渡しても高影響ガードレールが消えない (Local 側)', () => {
+  // "constructor" は LEVELS の自身のキーではないので既定値として扱う (関数が返って比較が NaN になる不具合の再発防止)
+  const d = route({ task_type: 'feature', security_impact: 'constructor', database_impact: 'high', files_affected: 5 });
+  assert.ok(d.guardrails.some((g) => g.includes('high-impact')));
+  assert.strictEqual(d.inputs.security, 1);
 });
 
 test('router managed: managed が null / 配列 / 文字列 / 数値でも従来の出力と同じ (managed キーを付けない)', () => {

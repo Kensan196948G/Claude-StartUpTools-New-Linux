@@ -167,21 +167,34 @@ function loadRoster(config) {
 }
 
 // PoC の Agent は読取専用であることを構造で保証する (system プロンプト頼みにしない)。
+//   許可リスト方式: 「許可する形」だけを列挙し、それ以外 (非配列、真偽値でない enabled、未知のフィールド値) は拒否する。
+//   ローカルの roster 定義と、API から取得したリモートの実体の両方に使う。
 function assertReadOnlyAgent(def) {
   const violations = [];
-  if (Array.isArray(def.mcp_servers) && def.mcp_servers.length) violations.push('mcp_servers は PoC では宣言不可');
-  if (def.multiagent) violations.push('multiagent は PoC では不可');
-  if (Array.isArray(def.skills) && def.skills.length) violations.push('skills は PoC では不可');
-  const tools = Array.isArray(def.tools) ? def.tools : [];
-  if (tools.length !== 1 || tools[0].type !== 'agent_toolset_20260401') violations.push('tools は agent_toolset_20260401 の 1 件のみ');
-  for (const t of tools) {
-    if (t.type !== 'agent_toolset_20260401') continue;
+  const emptyOrAbsent = (v) => v === undefined || v === null || (Array.isArray(v) && v.length === 0);
+  if (!def || typeof def !== 'object') throw new AdapterError('POLICY', 'READ_ONLY_VIOLATION', '読取専用ポリシー違反: agent 定義がオブジェクトではない', { violations: ['not-an-object'] });
+  // 委任・拡張に関わるフィールドは「未定義 / null / 空配列」だけを許可する
+  for (const k of ['mcp_servers', 'skills', 'callable_agents']) {
+    if (!emptyOrAbsent(def[k])) violations.push(`${k} は PoC では宣言不可`);
+  }
+  if (def.multiagent !== undefined && def.multiagent !== null) violations.push('multiagent は PoC では不可');
+  const tools = Array.isArray(def.tools) ? def.tools : null;
+  if (!tools || tools.length !== 1 || !tools[0] || tools[0].type !== 'agent_toolset_20260401') {
+    violations.push('tools は agent_toolset_20260401 の 1 件のみ');
+  } else {
+    const t = tools[0];
     if (!t.default_config || t.default_config.enabled !== false) violations.push('default_config.enabled は false (opt-in 方式)');
-    for (const c of t.configs || []) {
-      if (c.enabled === true && !READ_ONLY_TOOLS.includes(c.name)) violations.push(`書込み/実行/外部通信ツール ${c.name} は有効化不可`);
+    const policy = t.default_config && t.default_config.permission_policy;
+    if (policy !== undefined && policy !== null && !(typeof policy === 'object' && ['always_allow', 'always_ask', 'auto'].includes(policy.type))) violations.push('permission_policy の形が不明');
+    if (t.configs !== undefined && t.configs !== null && !Array.isArray(t.configs)) violations.push('configs が配列ではない');
+    for (const c of Array.isArray(t.configs) ? t.configs : []) {
+      const name = c && typeof c.name === 'string' ? c.name : '(不明)';
+      // enabled は真偽値のみ。読取専用以外のツールは、明示的に false の場合だけ許可する。
+      if (!c || typeof c.enabled !== 'boolean') violations.push(`ツール ${name} の enabled が真偽値ではない`);
+      else if (c.enabled && !READ_ONLY_TOOLS.includes(c.name)) violations.push(`書込み/実行/外部通信ツール ${name} は有効化不可`);
+      const cp = c && c.permission_policy;
+      if (cp !== undefined && cp !== null && !(typeof cp === 'object' && ['always_allow', 'always_ask', 'auto'].includes(cp.type))) violations.push(`ツール ${name} の permission_policy の形が不明`);
     }
-    const policy = t.default_config && t.default_config.permission_policy && t.default_config.permission_policy.type;
-    if (policy && policy !== 'always_allow' && policy !== 'always_ask' && policy !== 'auto') violations.push(`permission_policy ${policy} は不明`);
   }
   if (violations.length) throw new AdapterError('POLICY', 'READ_ONLY_VIOLATION', `読取専用ポリシー違反: ${violations.join(' / ')}`, { violations });
   return true;
@@ -357,10 +370,16 @@ async function listAll(ctx, urlPath, maxPages) {
   for (let n = 0; n < (maxPages || 10); n += 1) {
     const sep = urlPath.includes('?') ? '&' : '?';
     const res = await apiRequest(ctx, 'GET', page ? `${urlPath}${sep}page=${encodeURIComponent(page)}` : urlPath);
-    for (const item of (res && res.data) || []) out.push(item);
-    page = res && res.next_page;
+    if (!res || typeof res !== 'object' || (res.data !== undefined && !Array.isArray(res.data))) {
+      throw new AdapterError('INVALID_REQUEST', 'LIST_RESPONSE_INVALID', '一覧応答の形が想定と異なる (data が配列ではない)');
+    }
+    // オブジェクト以外の要素は捨てる (後段が null のプロパティを読んで落ちないようにする)
+    for (const item of res.data || []) if (item && typeof item === 'object') out.push(item);
+    page = typeof res.next_page === 'string' && res.next_page ? res.next_page : null;
     if (!page) break;
   }
+  // ページ上限で打ち切った場合は印を付ける。呼び出し側は「見つからなかった」と断定してはならない。
+  out.truncated = !!page;
   return out;
 }
 
@@ -419,16 +438,22 @@ function isRemoteReadOnly(agent) {
 //   - Agent: 固定する version が最新版と一致し、tools が read / glob / grep のみ・MCP なし
 //   - Environment: limited networking で、MCP・パッケージマネージャを許可していない
 // registry や config の ID を信用せず、ここで構造を確認できなければセッションを作らない。
-async function verifyRemoteResources(ctx, agentRef, environmentId) {
+async function verifyRemoteResources(ctx, agentRef, environmentId, expected) {
   assertId('agent', agentRef.id);
   assertId('environment', environmentId);
   const agent = await apiRequest(ctx, 'GET', `/v1/agents/${agentRef.id}`);
-  if (!agent || agent.archived_at) throw new AdapterError('POLICY', 'AGENT_ARCHIVED', 'agent が archive 済み、または取得できない');
-  if (!Number.isInteger(agent.version)) throw new AdapterError('POLICY', 'AGENT_VERSION_UNKNOWN', 'agent の version を確認できない');
+  if (!agent || typeof agent !== 'object' || agent.archived_at) throw new AdapterError('POLICY', 'AGENT_ARCHIVED', 'agent が archive 済み、または取得できない');
+  if (!Number.isInteger(agent.version) || agent.version < 1) throw new AdapterError('POLICY', 'AGENT_VERSION_UNKNOWN', 'agent の version を確認できない');
   if (agentRef.version != null && agent.version !== agentRef.version) {
     throw new AdapterError('POLICY', 'AGENT_VERSION_DRIFT', `agent の最新 version (${agent.version}) が固定 version (${agentRef.version}) と異なる。agents sync で再同期する`);
   }
   assertReadOnlyAgent(agent);
+  // 指示文 (system) とモデルも roster の定義と一致することを確認する (Console 等での書き換えを検出)。
+  if (expected) {
+    const modelId = (m) => (m && typeof m === 'object' ? m.id : m);
+    if (agent.system !== expected.system) throw new AdapterError('POLICY', 'AGENT_DEFINITION_DRIFT', 'agent の system が roster の定義と異なる。agents sync で再同期する');
+    if (modelId(agent.model) !== modelId(expected.model)) throw new AdapterError('POLICY', 'AGENT_DEFINITION_DRIFT', 'agent の model が roster の定義と異なる。agents sync で再同期する');
+  }
   const environment = await apiRequest(ctx, 'GET', `/v1/environments/${environmentId}`);
   assertLimitedEnvironment(environment);
   return { agentVersion: agent.version };
@@ -437,11 +462,14 @@ async function verifyRemoteResources(ctx, agentRef, environmentId) {
 function assertLimitedEnvironment(environment) {
   const net = environment && environment.config && environment.config.networking;
   const violations = [];
-  if (!environment || environment.archived_at) violations.push('environment が archive 済み、または取得できない');
-  if (!net || net.type !== 'limited') violations.push('networking.type が limited ではない');
-  if (net && net.allow_mcp_servers === true) violations.push('allow_mcp_servers が有効');
-  if (net && net.allow_package_managers === true) violations.push('allow_package_managers が有効');
-  if (net && Array.isArray(net.allowed_hosts) && net.allowed_hosts.length) violations.push('allowed_hosts が空ではない');
+  // 許可リスト方式: allow_* は「未定義 / null / false」だけ、allowed_hosts は「未定義 / null / 空配列」だけを許可する。
+  const off = (v) => v === undefined || v === null || v === false;
+  const noHosts = (v) => v === undefined || v === null || (Array.isArray(v) && v.length === 0);
+  if (!environment || typeof environment !== 'object' || environment.archived_at) violations.push('environment が archive 済み、または取得できない');
+  if (!net || typeof net !== 'object' || net.type !== 'limited') violations.push('networking.type が limited ではない');
+  if (net && !off(net.allow_mcp_servers)) violations.push('allow_mcp_servers が無効と確認できない');
+  if (net && !off(net.allow_package_managers)) violations.push('allow_package_managers が無効と確認できない');
+  if (net && !noHosts(net.allowed_hosts)) violations.push('allowed_hosts が空と確認できない');
   if (violations.length) throw new AdapterError('POLICY', 'ENVIRONMENT_NOT_LIMITED', `Environment が PoC の条件を満たさない: ${violations.join(' / ')}`, { violations });
   return true;
 }
@@ -629,7 +657,7 @@ async function sessionCreate(ctx, args) {
   const environmentId = resolveEnvironmentId(ctx);
   if (!environmentId) throw new AdapterError('CONFIG', 'ENVIRONMENT_NOT_SYNCED', 'environment が未作成 (env ensure を先に実行)');
   // 使う Agent / Environment の実体を検証し、検証した version に固定する (課金の発生しない GET 2 回)。
-  const verified = await verifyRemoteResources(ctx, agentRef, environmentId);
+  const verified = await verifyRemoteResources(ctx, agentRef, environmentId, req.def.body);
   agentRef.version = verified.agentVersion;
   const payload = buildSessionPayload(ctx, args, req, agentRef, environmentId, true);
   if ('vault_ids' in payload) throw new AdapterError('POLICY', 'VAULT_NOT_ALLOWED', 'PoC では vault_ids を送信しない');
@@ -656,14 +684,21 @@ async function sessionCreate(ctx, args) {
     // タイムアウト・接続断・5xx / 529 は「作成されたか不明」なので予約を残す。解除すると同じ task_id で
     // 二重に作成でき、Local へのフォールバックと合わせて二重実行になる。
     // 成否は `session close --task-id <id>` (セッション一覧から突き合わせ) で確定する。
-    const definite = e instanceof AdapterError && ['AUTH', 'PERMISSION', 'BILLING', 'RATE_LIMIT', 'INVALID_REQUEST', 'NOT_FOUND', 'CONFLICT'].includes(e.cls);
-    if (definite) budget.release(ctx.ledgerPath, ctx.now(), args.taskId, `create-rejected:${e.cls}`);
-    if (e instanceof AdapterError) {
-      e.extra.reservation = definite ? 'released' : 'kept-session-state-unknown';
-      // 成否不明のまま Local で同じタスクを実行すると二重実行になるため、この場合は自動で戻さない。
-      if (!definite) e.noFallback = true;
+    //   「明確な拒否」は HTTP ステータスが 4xx の場合だけ。本文の error.type が rate_limit_error 等でも、
+    //   ステータスが 5xx ならゲートウェイ由来で作成済みかもしれないので、成否不明として扱う。
+    const status = e instanceof AdapterError ? Number(e.extra.status) : NaN;
+    const definite = e instanceof AdapterError && status >= 400 && status < 500
+      && ['AUTH', 'PERMISSION', 'BILLING', 'RATE_LIMIT', 'INVALID_REQUEST', 'NOT_FOUND', 'CONFLICT'].includes(e.cls);
+    if (definite) {
+      budget.release(ctx.ledgerPath, ctx.now(), args.taskId, `create-rejected:${e.cls}`);
+      e.extra.reservation = 'released';
+      throw e;
     }
-    throw e;
+    // 成否不明: 予約を残し、Local へ自動で戻さない (同じタスクの二重実行を防ぐ)。想定外の例外も同じ扱い。
+    const err = e instanceof AdapterError ? e : new AdapterError('NETWORK', 'CREATE_OUTCOME_UNKNOWN', `セッション作成の結果を確認できない (${redact(e && e.message, secretsOf(ctx))})`);
+    err.extra.reservation = 'kept-session-state-unknown';
+    err.noFallback = true;
+    throw err;
   }
   if (!session || typeof session.id !== 'string' || !ID_PATTERNS.session.test(session.id)) {
     const err = new AdapterError('CONFLICT', 'SESSION_ID_MISSING', 'セッション作成の応答に有効な ID が無い (予約は残す。Console で確認する)', { reservation: 'kept-session-state-unknown' });
@@ -770,7 +805,7 @@ async function sendInterrupt(ctx, sessionId) {
   return apiRequest(ctx, 'POST', `/v1/sessions/${sessionId}/events`, { events: [{ type: 'user.interrupt' }] }, { operation: 'interrupt' });
 }
 
-async function sessionWait(ctx, args) {
+async function sessionWaitInner(ctx, args) {
   requireLive(ctx);
   // task_id が無いと使用量を記録できず、予約が未確定のまま残る。
   if (!args.taskId) throw new AdapterError('CONFIG', 'TASK_ID_REQUIRED', '--task-id は必須 (使用量の記録先)');
@@ -778,6 +813,9 @@ async function sessionWait(ctx, args) {
   const known = budget.foldTasks(budget.readLedger(ctx.ledgerPath).entries).get(args.taskId);
   if (!known || known.released) throw new AdapterError('POLICY', 'TASK_UNKNOWN', `task_id=${args.taskId} の有効な予約が台帳に無い`);
   if (known.session_id && known.session_id !== args.sessionId) throw new AdapterError('POLICY', 'TASK_SESSION_MISMATCH', 'task_id に記録済みのセッションと異なるセッションが指定された');
+  // 監視や中断を始める前に、指定されたセッションが本当にこのタスクのものかを確認する
+  // (無関係なセッションへ user.interrupt を送らない)。
+  assertTaskSessionBinding(ctx, args.taskId, await apiRequest(ctx, 'GET', `/v1/sessions/${args.sessionId}`));
   const cfgWait = ctx.config.sessionLifecycle && ctx.config.sessionLifecycle.maxWaitSeconds;
   const maxWaitMs = clampNumber(args.maxWaitSeconds, clampNumber(cfgWait, 900, 10, MAX_WAIT_SECONDS), 10, MAX_WAIT_SECONDS) * 1000;
   const pollMs = clampNumber(args.pollMs, 5000, ctx.minPollMs, 60000);
@@ -850,11 +888,35 @@ async function sessionWait(ctx, args) {
 async function sessionRun(ctx, args) {
   const created = await sessionCreate(ctx, args);
   if (!created.executed) return created;
-  const waited = await sessionWait(ctx, { sessionId: created.session_id, taskId: args.taskId, maxWaitSeconds: args.maxWaitSeconds, pollMs: args.pollMs });
+  const waited = await afterSessionExists(ctx, sessionWait(ctx, { sessionId: created.session_id, taskId: args.taskId, maxWaitSeconds: args.maxWaitSeconds, pollMs: args.pollMs }), { session_id: created.session_id, task_id: args.taskId });
   return Object.assign({}, created, waited);
 }
 
-async function sessionClose(ctx, args) {
+// 公開する wait / close は必ず afterSessionExists を通す (呼び出し経路によって扱いが変わらないようにする)。
+function sessionWait(ctx, args) {
+  return afterSessionExists(ctx, (async () => sessionWaitInner(ctx, args))(), { session_id: (args && args.sessionId) || null, task_id: (args && args.taskId) || null });
+}
+function sessionClose(ctx, args) {
+  return afterSessionExists(ctx, (async () => sessionCloseInner(ctx, args))(), { session_id: (args && args.sessionId) || null, task_id: (args && args.taskId) || null });
+}
+
+// セッションが既に存在する (または存在し得る) 操作の失敗は、原因に関わらず Local へ自動で戻さない。
+// 既定を「戻さない」にし、戻してよい経路 (セッション作成の送信前の失敗) だけを例外にする。
+// 想定外の例外 (応答の形が違う、台帳ロックを取れない等) も AdapterError に包んで同じ扱いにする。
+async function afterSessionExists(ctx, promise, ids) {
+  try { return await promise; } catch (e) {
+    let err = e;
+    if (!(e instanceof AdapterError)) {
+      const cls = e instanceof budget.BudgetError ? 'BUDGET' : 'INVALID_REQUEST';
+      err = new AdapterError(cls, (e && e.code) || 'UNEXPECTED_AFTER_SESSION', redact(e && e.message, secretsOf(ctx)));
+    }
+    err.extra = Object.assign({}, ids, err.extra);
+    err.noFallback = true;
+    throw err;
+  }
+}
+
+async function sessionCloseInner(ctx, args) {
   requireLive(ctx);
   if (!args.taskId) throw new AdapterError('CONFIG', 'ARGS_REQUIRED', '--task-id は必須');
   const task = budget.foldTasks(budget.readLedger(ctx.ledgerPath).entries).get(args.taskId);
@@ -866,7 +928,17 @@ async function sessionClose(ctx, args) {
     const matches = sessions.filter((s) => s.metadata && s.metadata.claudeos_task_id === args.taskId);
     if (matches.length > 1) throw new AdapterError('CONFLICT', 'TASK_SESSION_AMBIGUOUS', `task_id=${args.taskId} に対応するセッションが複数ある (Console で確認する)`, { session_ids: matches.map((s) => s.id) });
     if (matches.length === 0) {
-      // 一覧の取得上限 (1000 件) の範囲で見つからない。作成されなかったと判断できるのは人間だけなので、明示指定を要求する。
+      // 一覧を最後まで読めていない場合は「見つからない」と断定できないため、解除しない。
+      if (sessions.truncated) {
+        throw new AdapterError('CONFLICT', 'SESSION_LIST_TRUNCATED', 'セッション一覧が取得上限を超えており、未作成と断定できない。Console でセッション ID を確認し --session-id を指定する');
+      }
+      // 作成リクエストの応答待ちと行き違わないよう、予約から一定時間が経つまでは解除しない。
+      const minAgeMs = Math.max(120000, ctx.requestTimeoutMs * 2);
+      const ageMs = ctx.now().getTime() - Date.parse(task.ts);
+      if (!(ageMs >= minAgeMs)) {
+        throw new AdapterError('CONFLICT', 'RESERVATION_TOO_RECENT', `予約から ${Math.round(minAgeMs / 1000)} 秒が経つまでは解除できない (作成リクエストが処理中の可能性がある)`);
+      }
+      // 作成されなかったと判断できるのは人間だけなので、明示指定を要求する。
       if (!args.confirmNotCreated) {
         throw new AdapterError('CONFLICT', 'TASK_SESSION_NOT_FOUND', '対応するセッションが見つからない。Console で作成されていないことを確認してから --confirm-not-created を付けて予約を解除する');
       }
@@ -877,8 +949,17 @@ async function sessionClose(ctx, args) {
   }
   assertId('session', sessionId);
   const session = await apiRequest(ctx, 'GET', `/v1/sessions/${sessionId}`);
-  if (session.status !== 'idle' && session.status !== 'terminated') {
-    throw new AdapterError('CONFLICT', 'SESSION_STILL_RUNNING', `セッションが ${session.status} のため確定できない (先に interrupt)`);
+  if (!session || typeof session !== 'object' || (session.status !== 'idle' && session.status !== 'terminated')) {
+    throw new AdapterError('CONFLICT', 'SESSION_STILL_RUNNING', `セッションが ${session && session.status} のため確定できない (先に interrupt)`);
+  }
+  assertTaskSessionBinding(ctx, args.taskId, session);
+  if (session.status === 'idle') {
+    // idle は「まだ開始していない」状態でも返り得る。停止を示すイベント (stop_reason つきの idle) がある場合だけ確定する。
+    const events = await listAll(ctx, `/v1/sessions/${sessionId}/events?limit=1000`, 20);
+    const outcome = outcomeOf(latestStatusEvent(events));
+    if (!outcome || outcome === 'requires_action') {
+      throw new AdapterError('CONFLICT', 'SESSION_NOT_SETTLED', 'セッションが停止したことをイベントで確認できないため確定しない (interrupt の後に再実行する)');
+    }
   }
   if (usageCents(session) === null) throw new AdapterError('CONFLICT', 'USAGE_UNREADABLE', 'セッションの使用量を解釈できないため確定しない (予約額のまま計上)');
   recordSessionUsage(ctx, args.taskId, session, `closed:${session.status}`);
@@ -1017,11 +1098,19 @@ async function dispatch(ctx, pos, o) {
     const a = sessionArgs(o);
     if (sub === 'create') return sessionCreate(ctx, a);
     if (sub === 'run') return sessionRun(ctx, a);
-    if (sub === 'wait') return sessionWait(ctx, a);
-    if (sub === 'close') return sessionClose(ctx, a);
-    if (sub === 'get') { requireLive(ctx); return apiRequest(ctx, 'GET', `/v1/sessions/${assertId('session', a.sessionId)}`); }
-    if (sub === 'events') { requireLive(ctx); return { data: await listAll(ctx, `/v1/sessions/${assertId('session', a.sessionId)}/events?limit=1000`, 20) }; }
-    if (sub === 'interrupt') { requireLive(ctx); await sendInterrupt(ctx, a.sessionId); return { session_id: a.sessionId, interrupt_sent: true }; }
+    // 以下は既存セッションに対する操作。失敗しても Local へ自動で戻さない (afterSessionExists)。
+    const ids = { session_id: a.sessionId || null, task_id: a.taskId || null };
+    if (sub === 'wait') return afterSessionExists(ctx, (async () => sessionWait(ctx, a))(), ids);
+    if (sub === 'close') return afterSessionExists(ctx, (async () => sessionClose(ctx, a))(), ids);
+    if (sub === 'get') return afterSessionExists(ctx, (async () => { requireLive(ctx); return apiRequest(ctx, 'GET', `/v1/sessions/${assertId('session', a.sessionId)}`); })(), ids);
+    if (sub === 'events') {
+      return afterSessionExists(ctx, (async () => {
+        requireLive(ctx);
+        const data = await listAll(ctx, `/v1/sessions/${assertId('session', a.sessionId)}/events?limit=1000`, 20);
+        return { data, truncated: data.truncated };
+      })(), ids);
+    }
+    if (sub === 'interrupt') return afterSessionExists(ctx, (async () => { requireLive(ctx); await sendInterrupt(ctx, a.sessionId); return { session_id: a.sessionId, interrupt_sent: true }; })(), ids);
   }
   if (cmd === 'budget') {
     if (sub === 'status' || !sub) return budgetStatus(ctx);

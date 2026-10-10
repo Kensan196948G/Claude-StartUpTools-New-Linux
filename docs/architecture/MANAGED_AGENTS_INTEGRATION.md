@@ -123,7 +123,7 @@ Managed Agents のセッション予算は「次のモデルリクエストの�
 
 | 区分 | 条件 |
 |---|---|
-| 安全条件（policy） | `read_only=true`、`risk=low`（省略不可）、security / database / deployment が low、`human_gate` / `requires_secrets` / `requires_external_network` を明示的に `false`、データ機密性が public / internal、Agent 間通信なし、task_type が許可リスト内、所要時間が 30 分以内 |
+| 安全条件（policy） | `read_only=true`、`risk=low`（省略不可）、security / database / deployment が low、`human_gate` / `requires_secrets` / `requires_external_network` を明示的に `false`、`data_sensitivity` を public / internal で明示、Agent 間通信なし、task_type が許可リスト内、所要時間が 30 分以内 |
 | 容量条件（capacity） | 設定と認証が有効、予算状態が ok / warn（verify-only は `check` のみ）、同一 `task_id` が未実行 |
 | 選択条件 | 明示要求（`managed.requested=true`）がある、または Local が使えない（`managed.local_available=false`） |
 
@@ -148,6 +148,8 @@ Local が稼働中というだけでは Managed Agents を並列起動しない�
 Local へ戻すのは予算不足・API 障害・未設定の場合だけである。認証・権限・ポリシーの拒否と人間承認待ちは BLOCKED とし、別経路で回避しない。Router が `policy_denied=true` を返したタスクは、Managed が使えない場合でも「Managed へ出さない」だけで、Local 側の Human Approval Gate はそのまま適用される。
 
 セッション作成（POST）は自動再試行しない。予約を解除するのはサーバーが明確に拒否した場合（400 / 401 / 402 / 403 / 404 / 409 / 429）だけで、タイムアウト・接続断・5xx / 529・応答本文の読み取り失敗は「作成されたか不明」として予約を残す。この場合と、監視中の API 障害・中断の失敗は、クラウド側でセッションが動いている可能性があるため Local へ自動で戻さない（`fallback.state: NEEDS_OPERATOR`）。`session close --task-id <id>` がセッション一覧から `metadata.claudeos_task_id` で突き合わせて確定し、見つからない場合は人間が Console で確認したうえで `--confirm-not-created` を付けて解除する。
+
+フォールバックの既定は「戻さない」である。Local へ戻してよいのは、セッション作成リクエストを送る前の失敗（未設定・予算ガードの拒否・作成前の API 障害）と、サーバーが HTTP 4xx で明確に拒否した場合だけで、既存セッションに対する操作（`wait` / `close` / `get` / `events` / `interrupt`）の失敗は原因に関わらず `NEEDS_OPERATOR` を返す。予約の解除は、一覧を最後まで読めて、予約から 2 分以上が経ち、人間が `--confirm-not-created` を付けた場合に限る。解除後に使用量が届いた場合は予約として復活させ、費用と並列枠が台帳から消えないようにしている。
 
 ### 確定の条件と対応関係
 

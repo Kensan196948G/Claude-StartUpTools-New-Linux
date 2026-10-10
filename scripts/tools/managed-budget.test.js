@@ -275,6 +275,28 @@ test('解除済みタスクに後から使用量が届いた場合、その実�
   assert.deepEqual([s.committedMonthCents, s.actualMonthCents, s.openSessions], [40, 40, 0]);
 });
 
+test('解除後に使用量が届いたタスクは予約として復活し、同じ task_id を再予約できない', () => {
+  const ledger = tmpLedger();
+  const p = policy();
+  b.reserve(ledger, NOW, p, { taskId: 'race', cents: 100 });
+  b.release(ledger, NOW, 'race', 'confirmed-not-created-by-operator');
+  b.recordUsage(ledger, NOW, { taskId: 'race', sessionId: 'sesn_1', listCostCents: 0, final: false, status: 'created' });
+  const s = b.summarize(b.readLedger(ledger).entries, NOW, p);
+  assert.deepEqual([s.openSessions, s.committedMonthCents], [1, 100]);
+  assert.equal(b.reserve(ledger, NOW, p, { taskId: 'race', cents: 100 }).code, 'DUPLICATE_TASK');
+});
+
+test('解除して再予約したタスクは、以前に記録された実績を引き継ぐ', () => {
+  const entries = [
+    { type: 'reserve', ts: '2026-10-10T01:00:00.000Z', task_id: 'again', cents: 100 },
+    { type: 'usage', ts: '2026-10-10T01:01:00.000Z', task_id: 'again', session_id: 's1', list_cost_cents: 90, final: true },
+    { type: 'release', ts: '2026-10-10T01:02:00.000Z', task_id: 'again', reason: 'manual' },
+    { type: 'reserve', ts: '2026-10-10T02:00:00.000Z', task_id: 'again', cents: 100 },
+  ];
+  const s = b.summarize(entries, NOW, policy());
+  assert.deepEqual([s.committedMonthCents, s.actualMonthCents, s.openSessions], [190, 90, 1]);
+});
+
 test('ロック: 取得できなければ fail-closed。古いロックを自動回収せず、他者のロックを解放しない', () => {
   const ledger = tmpLedger();
   const lockDir = `${ledger}.lock`;
