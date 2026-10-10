@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Added — Managed Agents 統合（read-only PoC、2026-10-10）
+
+- 🔌 `scripts/tools/managed-agents.js` / `bin/managed-agents.sh` / `lib/managed-agents.sh`: Claude Managed Agents の薄い adapter。
+  設定検証、Agent 定義の同期、limited networking の Environment、予算付きセッション作成、状態・イベント取得、中断、
+  完了判定、エラー分類、状態確認。`mode=disabled|dry-run` ではネットワークへ出ない。API キーは環境変数のみ。
+- 💰 `scripts/tools/managed-budget.js`: 整数セントの Budget Guard と追記専用台帳（`~/.claudeos/managed-agents/ledger.jsonl`）。
+  作成前に上限額を予約し、月間 $20 / セッション $2 / 接続テスト $0.50 / 日次 $3 / 並列 1 を既定とする。
+  70 / 85 / 95 / 100% の段階制御、`task_id` による重複防止、Console との照合（`budget reconcile`）。
+  Claude Code / Agent SDK の台帳（`lib/credits.sh`）と `agentSdk.monthlyBudgetUsd` には触れない。
+- 🧭 `scripts/tools/agent-router.js`: `managed` ブロックによる opt-in 判定を追加。低リスク・読取専用で、明示要求があるか
+  Local が使えない場合だけ `ManagedAgent`。ブロックが無い場合の出力は従来と同一（golden 14 ケースは変更なし）。
+- 🤖 `config/managed-agents-roster.json`: Repository Review / Quality Assurance / Documentation の 3 Agent
+  （`read` / `glob` / `grep` のみ、MCP なし）。
+- 📚 `docs/architecture/MANAGED_AGENTS_INTEGRATION.md`、`docs/claude/21_ManagedAgents統合運用手順.md`
+  （現行 API との差分、過去の MCP クラッシュの再検証手順、ロールバック）。
+
+### Changed
+
+- `scripts/tools/managed-session-payload.js`: `inference_geo` をセッション作成 body の最上位から除去（現行仕様では agent の
+  `model` オブジェクト内）。予算は先頭ゼロなしの正の整数文字列のみ受理。version 固定参照・`resources`・`initial_events` に対応。
+- `config/managed-agents.json.template`: `budgetPolicy`・`agents`・read-only の `github.workspace` を追加し、既定予算を $2 に変更。
+  読み手の無いキー（`specialistAgents` / `webhook` / `memoryStoreId` / `inferenceGeo` / `advisorModel` / `permissionPolicy`）を削除。
+- Goal Router の `execution_plane`: adapter 追加後も常に `local`（Managed はタスク単位の補完）。`ma_reason` で補完可否を伝える。
+
+### Known limitations
+
+- 🔴 live API 検証は BLOCKED（Console の残高・利用権限の確認と課金の人間承認が前提）。
+- ❓ 2026-06 / 07 に記録した GitHub MCP 実行クラッシュの修正状況は未確認。PoC は MCP を使わない構成で回避。
+
+### Added — Managed Agents 実行基盤 P0（ClaudeOS v11 移行 開始、2026-09-09）
+
+- 🏗️ `config/managed-agents.json.template`: 記録用プレースホルダから**実行可能設定契約**へ昇格
+  （`enabled` / `mode=disabled|dry-run|live` / budget 契約 / `github`: **Repository Resource 主系 + MCP は PR/Issue 限定**
+  / `permissionPolicy` / `sessionLifecycle` / P1 用 `webhook` プレースホルダ）。
+- 💰 `scripts/tools/managed-session-payload.js`: POST /v1/sessions body 契約（公式仕様準拠: agent は ID 文字列、
+  budget は `{type: "limit", max_list_cost: {amount: セント整数文字列, currency: "USD"}}`）。
+  **budget 無し Session 作成は BUDGET_REQUIRED (exit 3) で拒否**（budget は後付け不可のため）。
+  `user.message` / `user.tool_confirmation` イベント構築も同契約モジュールで提供。
+- 🧭 `lib/goal-router.sh`: 実行 Plane 選択（v11 P0 要件 4/9）を統合 — Evidence に `execution_plane=managed|local`
+  を付与、route 出力 / persist（`state.goal_router.execution_plane`）/ summary へ収録。
+  adapter・契約不成立時は **fail-safe で local**（fallback 動作を含む）。`state.schema.json` に `execution_plane` 追加。
+- 📝 `docs/architecture/audits/2026-09-09-managed-agents-v11-p0.md`: P0 監査（資産棚卸し・PoC crash 前提の再評価・
+  live 検証 Blocker と次の Action）。
+- 🧪 テスト: `managed-session-payload.test.js`（node 13）+ `tests/bats/unit/managed-session-payload.bats`（統合 6）+
+  `goal-router.bats` plane 5 件。全体 bats 779 / node 13 / schema 9 全 PASS。
+- ⏸️ Thin Adapter（`lib/managed-agents.sh`）と Permission Policy Engine は**人間判断待ち（HUMAN REVIEW）** —
+  作成・編集が連続で拒否されたため保留。Goal Router は fail-safe 動作で壊れない。詳細は監査ドキュメント §6。
+- 🔴 live API 検証は NOT RUN（課金人間決裁 + sandbox crash 再現確認が必要）。
+
 ### Added — Goal Router バックログ対応（2026-09-08）
 
 - 🖥️ `bin/menu.sh`: L1 / T1 / S1 の Yes 確認後に「🎯 Goal [自動]」「📝 要求」を対話入力し `--goal` / `--intent` として

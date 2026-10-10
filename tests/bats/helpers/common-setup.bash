@@ -27,6 +27,8 @@ _bats_common_setup() {
   export CCSU_DISABLE_AGENTS_JSON=1
   # Goal Router の外部呼び出し (gh / wrangler / claude -p) はテストでは既定で密閉化 (必要なテストだけ再有効化)
   export CLAUDEOS_GOAL_ROUTER_GH=0 CLAUDEOS_GOAL_ROUTER_CF=0 CLAUDEOS_GOAL_INTENT_LLM=0
+  # Managed Agents: 実機の config/managed-agents.json と ~/.claudeos/managed-agents を読まない・書かない (密閉化)
+  export CLAUDEOS_MANAGED_AGENTS_CONFIG="$TEST_TEMP/.no-managed-agents.json" CLAUDEOS_MA_STATE_DIR="$TEST_TEMP/.ma-state"
 }
 
 # _bats_common_teardown — 各テスト後に実行

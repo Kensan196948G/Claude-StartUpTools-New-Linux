@@ -252,6 +252,34 @@ Human Gate（main 直接 push・本番デプロイ・Secrets・破壊的操作�
 
 設計・移行記録: `docs/architecture/ARCHITECTURE_V10.md` / `MIGRATION_V9_TO_V10.md` / `CURRENT_ARCHITECTURE.md` ほか（`docs/architecture/`）。
 
+## 🚧 ClaudeOS v11 移行（Managed-Agent Native Architecture、進行中）
+
+Claude Managed Agents を **Autonomous Execution Plane** とする移行を P0（実行基盤）から段階的に進めています。
+
+| 領域 | P0 での実装 | 入口 |
+|---|---|---|
+| 🏗️ 実行設定契約 | `config/managed-agents.json.template`（`enabled` / `mode=disabled\|dry-run\|live` / budget 契約 / GitHub Repository Resource 主系 + MCP は PR/Issue 限定） | 同テンプレートを `config/managed-agents.json` へコピーして利用 |
+| 💰 budget 必須化 | `scripts/tools/managed-session-payload.js` — budget 無し Session 作成は `BUDGET_REQUIRED` で拒否（budget は後付け不可） | `node scripts/tools/managed-session-payload.js session-create --config ...` |
+| 🧭 実行 Plane 選択 | Goal Router が `execution_plane=managed\|local` を判定し `state.goal_router.execution_plane` へ記録。契約不成立時は **fail-safe で local** | `lib/goal-router.sh`、`bin/start-claude.sh` 経由で自動適用 |
+| 📝 監査 / 状況 | P0 監査（crash 前提再評価・live 検証 Blocker・rollback 手順） | `docs/architecture/audits/2026-09-09-managed-agents-v11-p0.md` |
+
+### 🤝 Managed Agents 統合（read-only PoC、2026-10-10）
+
+Local Claude Code を主系のまま、Managed Agents を**低リスク・読取専用タスクのクラウド補完先**として使えるようにしました。配布時は `enabled=false` / `mode=disabled` で、設定しない限り既存の動作は変わりません。
+
+| 領域 | 実装 | 入口 |
+|---|---|---|
+| 🔌 Adapter | `scripts/tools/managed-agents.js` — Agent 定義の同期、予算付きセッション作成、状態・イベント取得、中断、エラー分類（依存ゼロ） | `bin/managed-agents.sh status` |
+| 💰 Budget Guard・台帳 | `scripts/tools/managed-budget.js` — 整数セント、作成前の予約、70 / 85 / 95 / 100% の段階制御、重複防止、Console との照合 | `bin/managed-agents.sh budget status` |
+| 🧭 Agent Router 統合 | `managed` ブロックによる opt-in 判定。ブロックが無ければ出力は従来と同一 | `bin/managed-agents.sh route --json '<task>'` |
+| 🤖 初期 Agent | Repository Review / Quality Assurance / Documentation（`read` / `glob` / `grep` のみ、MCP なし） | `config/managed-agents-roster.json` |
+
+- セッション全体の `execution_plane` は `local` のままです。Managed はタスク単位の補完で、Local が稼働中というだけでは並列起動しません。
+- Claude Code / Agent SDK の予算（`agentSdk.monthlyBudgetUsd`）と台帳（`lib/credits.sh`）とは別管理です。
+- live API 検証は **BLOCKED**（Console の残高・利用権限の確認と課金の人間承認が前提）。過去の GitHub MCP 実行クラッシュの修正状況は未確認で、PoC は MCP を使わない構成にしています。
+
+設計: `docs/architecture/MANAGED_AGENTS_INTEGRATION.md`、運用・ロールバック・現行 API との差分: `docs/claude/21_ManagedAgents統合運用手順.md`。
+
 ## 🧪 検証
 
 ```bash
