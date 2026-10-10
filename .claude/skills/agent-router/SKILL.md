@@ -43,6 +43,13 @@ node scripts/tools/agent-router.js --record --json '{"task_type":"feature","comp
    - `DynamicWorkflow`: `/workflows` または `ultracode` で fan-out + 相互検証。`workflowSizeGuideline` でコスト制御
 4. `guardrails` を作業計画に転記する (Human Approval Gate / migration-risk / security-reviewer / 品質ゲート)。
 
+### Managed Agents を補完先に含める場合 (opt-in)
+
+入力に `managed` ブロックを付けると、低リスク・読取専用タスクに限り `ManagedAgent` が候補になる。ブロックが無ければ判定は従来通り。
+Local が稼働中というだけでは選ばれない (`managed.requested=true` の明示要求か `managed.local_available=false` が必要)。
+`managed.policy_denied=true` は安全上の拒否であり、別経路で回避しない。可用性・予算・重複の証拠収集と記録は
+`scripts/tools/managed-agents.js route --json '<task>'` (ClaudeOS 本体リポジトリ) が行う。
+
 ## Validation
 
 - `tests/evals/agent-router.golden.json` の全ケースが PASS (`node --test scripts/agent-router.test.js`)
