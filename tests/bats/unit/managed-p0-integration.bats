@@ -15,7 +15,7 @@ setup() {
   _bats_common_setup
   PAYLOAD="$REPO_ROOT/scripts/tools/managed-session-payload.js"
   PROJ="$TEST_TEMP/proj"; mkdir -p "$PROJ"
-  unset CLAUDEOS_MANAGED_AGENTS_CONFIG CLAUDEOS_EXECUTION_PLANE
+  unset CLAUDEOS_EXECUTION_PLANE
   source "$REPO_ROOT/lib/goal-router.sh"
 }
 
@@ -23,7 +23,7 @@ teardown() { _bats_common_teardown; }
 
 _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
-@test "P0 chain: adapter が無くても evidence→route は fail-safe local を出す" {
+@test "P0 chain: Managed 未設定でも evidence→route は fail-safe local を出す" {
   out="$(goal_router__evidence "$PROJ" '')"
   [ "$(_field "$out" execution_plane)" = "local" ]
   res="$(printf '%s\n' "$out" | goal_router__route --goal development)"

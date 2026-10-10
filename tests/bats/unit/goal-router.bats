@@ -486,10 +486,12 @@ PY
   res="$(printf 'execution_plane=sandbox\n' | goal_router__route --goal development)"
   [ "$(_field "$res" execution_plane)" = "local" ]
 }
-@test "plane: adapter 不在の evidence は execution_plane=local で fail-safe" {
-  out="$(goal_router__evidence "$PROJ" '')"
+@test "plane: Managed 設定が無い evidence は execution_plane=local で fail-safe" {
+  # adapter (lib/managed-agents.sh) は存在する。実機の config/managed-agents.json を拾わないよう密閉化する。
+  out="$(CLAUDEOS_MANAGED_AGENTS_CONFIG="$TEST_TEMP/no-such-managed-agents.json" goal_router__evidence "$PROJ" '')"
   [ "$(_field "$out" execution_plane)" = "local" ]
-  [ "$(_field "$out" ma_reason)" = "adapter-missing" ] || [ "$(_field "$out" ma_reason)" = "config-missing-or-invalid" ]
+  [ "$(_field "$out" ma_mode)" = "missing" ]
+  [ "$(_field "$out" ma_reason)" = "config-missing" ]
 }
 @test "plane: persist は state.goal_router.execution_plane を記録する" {
   _state '{"project":{"phase_mode":"development"}}'

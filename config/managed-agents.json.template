@@ -1,105 +1,80 @@
 {
-  "_comment": "AgentTeams managed-agents 設定テンプレート（ClaudeOS v11 実行設定契約）。コピーして config/managed-agents.json に保存し、各 ID を埋めて使う。API キーは必ず環境変数 ANTHROPIC_API_KEY 経由とし、このファイルには絶対に書かない。",
+  "_comment": "ClaudeOS × Claude Managed Agents 設定テンプレート（実行設定契約）。コピーして config/managed-agents.json に保存して使う。API キーは必ず環境変数 ANTHROPIC_API_KEY、GitHub トークンは github.workspace.tokenEnv が指す環境変数で渡し、このファイルには絶対に書かない（秘密らしきキーがあると adapter は利用不可と判定する）。",
   "_security": "config/managed-agents.json は .gitignore で除外済み。万一コミットしないこと。",
   "_contract": {
-    "_comment": "読み手: lib/managed-agents.sh + scripts/tools/managed-session-payload.js + scripts/tools/managed-permission-policy.js。schema 不成立時は Goal Router が execution_plane=local へフォールバックする。",
-    "enabled": "bool — Managed 実行 Plane の有効化スイッチ。false は常に local。",
-    "mode": "disabled|dry-run|live — live は課金承認(人間決裁)済みのときのみ設定する。dry-run は payload を生成・記録するが API 呼び出ししない。",
-    "apiBaseUrl": "Managed Agents API ベース URL (既定 https://api.anthropic.com)",
-    "betaHeader": "anthropic-beta ヘッダ値 (既定 managed-agents-2026-04-01)",
-    "environmentId": "env_... 必須 (dry-run を含め payload 生成に必要)",
-    "orchestratorId": "agent_... 必須 (Managed Orchestrator)",
-    "vaultIds": ["vlt_..."],
-    "budget": "既定 budget {amountCents(セント整数文字列), currency:'USD'}。Session 作成時 budget は必須(後付け不可)。budget 無し Session の Managed 自律実行は禁止。",
-    "github": "workspace: Repository Resource (主系・ファイル操作)。mcp: PR/Issue 操作のみ (toolset 限定)。MCP によるファイル系操作は禁止 (2026-06 crash 教訓: docs/claude/07 §6-3)。",
-    "permissionPolicy": "scripts/tools/managed-permission-policy.js の分類をオーバーライドする追加リスト(任意)。allow|conditional|human_gate。",
-    "inferenceGeo": "推論実行場所 (global 推奨)。未指定は workspace default_inference_geo。",
-    "advisorModel": "アドバイザーモデル (任意, null 可)。"
+    "_comment": "読み手: scripts/tools/managed-agents.js（adapter）/ scripts/tools/managed-budget.js（Budget Guard・台帳）/ scripts/tools/managed-session-payload.js（payload 契約）/ lib/managed-agents.sh（Goal Router 契約）。契約不成立時は Managed Agents を利用不可とし、Local 実行経路はそのまま動く。",
+    "enabled": "bool — Managed Agents の有効化スイッチ。false は常に利用不可。",
+    "mode": "disabled|dry-run|live — dry-run は送信予定の request を生成・表示するだけで API を呼ばない。live は Console で残高・利用権限を確認し、人間が課金を承認した場合のみ設定する。",
+    "apiBaseUrl": "https://api.anthropic.com 固定（API キーを他ホストへ送らないため adapter が検証する）",
+    "betaHeader": "anthropic-beta ヘッダ値（既定 managed-agents-2026-04-01）",
+    "environmentId": "env_... 任意。未設定なら `managed-agents.sh env ensure` が roster の定義（limited networking）で作成し registry に記録する。",
+    "agents": "role ごとの agent ID と version（任意）。未設定なら `agents sync` が roster から作成・更新し registry に記録する。",
+    "budget": "セッション作成時の既定予算 {amountCents(セント整数の文字列), currency:'USD'}。API の budget.max_list_cost へ必ず反映する。予算未指定のセッション作成は拒否する。",
+    "budgetPolicy": "Managed Agents 専用の月間・日次・セッション上限（整数セント）。config.json の agentSdk.monthlyBudgetUsd（Claude Code / Agent SDK 用）とは別管理で、互いに上書きしない。",
+    "github": "workspace: github_repository リソースとして read-only でマウントする。mcp: 初期 PoC では使用しない（Agent に MCP を宣言しない）。",
+    "sessionLifecycle": "maxWaitSeconds を超えたセッションは user.interrupt で中断し、自動では再開しない。"
   },
   "enabled": false,
   "mode": "disabled",
   "apiBaseUrl": "https://api.anthropic.com",
   "betaHeader": "managed-agents-2026-04-01",
-  "memoryStoreId": "memstore_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "consoleWorkspace": "default",
+  "rosterPath": "config/managed-agents-roster.json",
   "environmentId": "env_xxxxxxxxxxxxxxxxxxxxxxxx",
-  "environment": {
-    "_comment": "Environment Manager 設定。networking は unrestricted 依存を減らすため limited + allowlist を既定とする (P2 で本格移行)。",
-    "networking": "limited",
-    "allowedDomains": ["api.githubcopilot.com", "api.github.com"],
-    "selfHosted": false
+  "agents": {
+    "_comment": "初期 PoC の 3 Agent（定義の正本は config/managed-agents-roster.json）。ID を空のままにすると registry（~/.claudeos/managed-agents/registry.json）を参照する。",
+    "repository-review": { "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx", "version": 1 },
+    "quality-assurance": { "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx", "version": 1 },
+    "documentation": { "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx", "version": 1 }
+  },
+  "orchestratorId": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
+  "vaultIds": [],
+  "budget": {
+    "_comment": "単一セッションの既定予算。amount は US セントの整数を文字列で（\"200\" = $2.00）。budgetPolicy.sessionMaxCents を超える値は拒否される。",
+    "amountCents": "200",
+    "currency": "USD"
+  },
+  "budgetPolicy": {
+    "_comment": "Claude Max 5x の月額 $100 クレジットのうち、Managed Agents PoC に割り当てる枠。実際に使える金額は Console の残高・有効期限・請求周期が正本。70%=警告 / 85%=低コストの確認処理のみ / 95%=新規セッション停止 / 100%=実行禁止。",
+    "monthlyBudgetCents": 2000,
+    "sessionMaxCents": 200,
+    "connectionTestMaxCents": 50,
+    "dailySoftCents": 300,
+    "maxConcurrentSessions": 1,
+    "maxApiRetries": 1,
+    "warnPct": 70,
+    "verifyOnlyPct": 85,
+    "stopPct": 95,
+    "exhaustedPct": 100,
+    "cycle": {
+      "_comment": "anchorDay は Console の請求サイクル開始日（UTC・1〜28）。null の間は暦月集計を『参考値』として扱う。creditsExpireAt は Console のクレジット失効日時（ISO 8601）で、過ぎると新規実行を止める。consoleVerifiedAt は人間が Console で残高を確認した日時。",
+      "anchorDay": null,
+      "creditsExpireAt": null,
+      "consoleVerifiedAt": null
+    }
   },
   "github": {
     "workspace": {
+      "_comment": "read-only マウント。トークンは Contents: Read のみの fine-grained PAT を tokenEnv の環境変数で渡す（Anthropic 側の git proxy が注入し、sandbox 内からは読めない）。",
       "type": "repository_resource",
-      "_comment": "主系: GitHub Repository Resource を workspace mount し、ファイル操作は mount 内の git で行う。",
-      "resource": "repo:ORG/REPO",
-      "mountPath": "/workspace/repo"
+      "repository": "",
+      "ref": "main",
+      "mountPath": "/workspace/repo",
+      "tokenEnv": "CLAUDEOS_MA_GITHUB_TOKEN"
     },
     "mcp": {
+      "_comment": "初期 PoC では未使用。2026-06/07 に Managed Agents 経由の GitHub MCP 実行がクラッシュした記録があり（docs/claude/07 §6-3）、修正状況は未確認のため、read-only PoC は MCP を宣言しない構成にしている。",
       "type": "url",
-      "_comment": "GitHub リモート MCP は PR/Issue 操作専用。ファイル系ツールは blockedTools で禁止。",
       "url": "https://api.githubcopilot.com/mcp",
-      "allowedTools": ["create_pull_request", "add_issue_comment", "create_branch", "list_commits"],
-      "blockedTools": ["get_file_contents", "create_or_update_file", "push_files", "push_files_to_branch", "delete_file", "delete_branch"]
+      "allowedTools": [],
+      "blockedTools": ["get_file_contents", "create_or_update_file", "push_files", "delete_file", "delete_branch", "merge_pull_request"]
     }
-  },
-  "specialistAgents": {
-    "_comment": "First-Class Agent roster (P1 で Outcome Grader 追加)。ID 未設定の Agent は利用しない。",
-    "architect": {
-      "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-      "version": 1,
-      "name": "ClaudeOS-Architect"
-    },
-    "developer": {
-      "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-      "version": 1,
-      "name": "ClaudeOS-Developer"
-    },
-    "qa": {
-      "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-      "version": 1,
-      "name": "ClaudeOS-QA"
-    },
-    "security": {
-      "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-      "version": 1,
-      "name": "ClaudeOS-Security"
-    },
-    "devops": {
-      "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-      "version": 1,
-      "name": "ClaudeOS-DevOps"
-    },
-    "reviewer": {
-      "id": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-      "version": 1,
-      "name": "ClaudeOS-Reviewer"
-    }
-  },
-  "orchestratorId": "agent_xxxxxxxxxxxxxxxxxxxxxxxx",
-  "orchestratorVersion": 1,
-  "lastSessionId": null,
-  "budget": {
-    "_comment": "Session 作成 body の budget.max_list_cost へ渡す既定値。amount は US セント単位の整数を文字列で（例 \"500\" = $5.00・currency は USD のみ）。budget は後付け不可のため budget 無指定の Session 作成は禁止（docs/claude/07 §7-1）。",
-    "amountCents": "500",
-    "currency": "USD"
-  },
-  "permissionPolicy": {
-    "_comment": "既定分類は scripts/tools/managed-permission-policy.js に内蔵。ここには追加 allow / 強化 gate のみ書く（弱体化リストは書かないこと）。",
-    "extraAllow": [],
-    "extraHumanGate": []
   },
   "sessionLifecycle": {
-    "_comment": "2 段階ライフサイクル (POST /v1/sessions → POST /v1/sessions/{id}/events)。version ピン留め・session.error 非ブロッキングは docs/claude/07 §6-2 参照。",
+    "_comment": "セッションは作成時に agent version を固定する。agent を更新したら新しいセッションを作る。",
     "pinAgentVersion": true,
-    "recreateSessionOnAgentUpdate": true,
-    "maxIterations": 12
+    "maxWaitSeconds": 900
   },
-  "webhook": {
-    "_comment": "P1 Webhook Event Gateway 用プレースホルダ。P0 では未使用。",
-    "enabled": false,
-    "endpoint": null
-  },
-  "inferenceGeo": "global",
-  "advisorModel": null
+  "requestTimeoutMs": 30000,
+  "lastSessionId": null
 }

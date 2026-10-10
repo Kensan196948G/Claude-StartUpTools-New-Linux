@@ -66,7 +66,8 @@ test('validate: budget amount の非整数 / 非 USD は拒否', () => {
 
 test('sessionCreate: POST /v1/sessions body の公式形式を構築', () => {
   const { payload, meta } = sessionCreate(fixture());
-  assert.deepEqual(Object.keys(payload).sort(), ['agent', 'budget', 'environment_id', 'inference_geo', 'vault_ids']);
+  // inference_geo は session 最上位では受理されない (現行仕様: agent の model オブジェクト内)。config にあっても載せない。
+  assert.deepEqual(Object.keys(payload).sort(), ['agent', 'budget', 'environment_id', 'vault_ids']);
   assert.equal(payload.agent, 'agent_01ORCHORCHORCHORCH'); // agent_id ではなく ID 文字列 (spec §6-2)
   assert.equal(payload.budget.type, 'limit');
   assert.deepEqual(payload.budget.max_list_cost, { amount: '500', currency: 'USD' });
@@ -100,4 +101,29 @@ test('toolConfirmation: allow/deny のみ許可 (human_gate は呼び出し側�
 
 test('loadConfig: 不正 JSON は CONFIG_UNREADABLE', () => {
   assert.throws(() => loadConfig('/nonexistent/managed-agents.json'), (e) => e.error === 'CONFIG_UNREADABLE');
+});
+
+test('validate: budget は先頭ゼロなしの正の整数文字列のみ ("0" / "0500" は拒否)', () => {
+  assert.throws(() => validate(fixture({ budget: { amountCents: '0', currency: 'USD' } })), (e) => e.error === 'BUDGET_AMOUNT_INVALID');
+  assert.throws(() => validate(fixture({ budget: { amountCents: '0500', currency: 'USD' } })), (e) => e.error === 'BUDGET_AMOUNT_INVALID');
+});
+
+test('validate: maxCents (単一セッション上限) を超える budget は拒否', () => {
+  assert.throws(() => validate(fixture(), { maxCents: 200 }), (e) => e.error === 'BUDGET_SESSION_CAP_EXCEEDED' && e.code === ERR_BUDGET);
+  assert.equal(validate(fixture(), { budgetCents: '200', maxCents: 200 }).amount, '200');
+});
+
+test('sessionCreate: version 固定参照・resources・initial_events・title・metadata を載せられる', () => {
+  const { payload } = sessionCreate(fixture(), {
+    agent: 'agent_01ROLEROLEROLE', agentVersion: 4, environmentId: 'env_01OTHEROTHER', budgetCents: '150',
+    title: 'claudeos:review:t1', metadata: { claudeos_task_id: 't1' },
+    resources: [{ type: 'github_repository', url: 'https://github.com/o/r' }],
+    initialEvents: messageEvent('hello').events,
+  });
+  assert.deepEqual(payload.agent, { type: 'agent', id: 'agent_01ROLEROLEROLE', version: 4 });
+  assert.equal(payload.environment_id, 'env_01OTHEROTHER');
+  assert.deepEqual(payload.budget.max_list_cost, { amount: '150', currency: 'USD' });
+  assert.equal(payload.resources[0].type, 'github_repository');
+  assert.equal(payload.initial_events[0].type, 'user.message');
+  assert.equal(payload.title, 'claudeos:review:t1');
 });

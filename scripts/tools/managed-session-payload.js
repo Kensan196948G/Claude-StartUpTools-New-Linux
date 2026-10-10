@@ -4,8 +4,9 @@
 //
 // POST /v1/sessions の body を設定契約 (config/managed-agents.json) から構築する。
 // docs/claude/07 §6-2 / §7-1 の公式仕様に準拠:
-//   body: { agent, environment_id, vault_ids, budget, inference_geo }
-//   agent は ID 文字列 (agent_id / prompt は受理されない)
+//   body: { agent, environment_id, vault_ids, budget, title, metadata, resources, initial_events }
+//   agent は ID 文字列、または {type:"agent", id, version} (agent_id / prompt は受理されない)
+//   inference_geo は session 最上位ではなく agent の model オブジェクト内に置く (2026-10 現行仕様で確認)
 //   budget: { type: "limit", max_list_cost: { amount: "<セント整数文字列>", currency: "USD" } }
 //   budget は後付け不可 → **budget 無しの Session 作成は例外で拒否する (P0 要件 6)**
 //
@@ -64,7 +65,7 @@ function validate(config, opts) {
   if (!agent.startsWith('agent_') || /xxx/.test(agent)) {
     throw new PayloadError(ERR_CONFIG, 'AGENT_NOT_CONFIGURED', `orchestratorId が未設定/プレースホルダ (${agent || '空'})`);
   }
-  const envId = String(config.environmentId || '');
+  const envId = String(opts_.environmentId || config.environmentId || '');
   if (!envId.startsWith('env_') || /xxx/.test(envId)) {
     throw new PayloadError(ERR_CONFIG, 'ENVIRONMENT_NOT_CONFIGURED', `environmentId が未設定/プレースホルダ (${envId || '空'})`);
   }
@@ -76,8 +77,13 @@ function validate(config, opts) {
   if (amount == null || amount === '' ) {
     throw new PayloadError(ERR_BUDGET, 'BUDGET_REQUIRED', 'budget は Session 作成時に必須 (後付け不可)。budget 無指定の Managed 自律実行は禁止', { field: 'budget.amountCents' });
   }
-  if (!/^[0-9]+$/.test(String(amount))) {
-    throw new PayloadError(ERR_BUDGET, 'BUDGET_AMOUNT_INVALID', `budget.amountCents はセント単位の整数文字列のみ (actual: ${amount})`, { field: 'budget.amountCents' });
+  // 公式仕様: 先頭ゼロなしの正の整数文字列 (> 0)。"0" / "0500" / "25.00" は API 側でも拒否される。
+  if (!/^[1-9][0-9]*$/.test(String(amount))) {
+    throw new PayloadError(ERR_BUDGET, 'BUDGET_AMOUNT_INVALID', `budget.amountCents は先頭ゼロなしの正の整数文字列のみ (actual: ${amount})`, { field: 'budget.amountCents' });
+  }
+  // 単一セッション上限 (Budget Guard から渡される)。上限超過の payload は生成しない。
+  if (opts_.maxCents != null && Number(amount) > Number(opts_.maxCents)) {
+    throw new PayloadError(ERR_BUDGET, 'BUDGET_SESSION_CAP_EXCEEDED', `budget.amountCents ${amount} が単一セッション上限 ${opts_.maxCents} を超える`, { field: 'budget.amountCents' });
   }
   if (currency !== 'USD') {
     throw new PayloadError(ERR_BUDGET, 'BUDGET_CURRENCY_INVALID', `budget.currency は USD のみ (actual: ${currency})`, { field: 'budget.currency' });
@@ -87,13 +93,25 @@ function validate(config, opts) {
 
 function sessionCreate(config, opts) {
   const v = validate(config, opts);
+  const opts_ = opts || {};
+  // agent version を指定した場合はピン留め参照 ({type:"agent", id, version}) にする。
+  const agentRef = Number.isInteger(opts_.agentVersion) && opts_.agentVersion >= 1
+    ? { type: 'agent', id: v.agent, version: opts_.agentVersion }
+    : v.agent;
   const payload = {
-    agent: v.agent,
+    agent: agentRef,
     environment_id: v.envId,
     budget: { type: 'limit', max_list_cost: { amount: v.amount, currency: v.currency } },
   };
   if (v.vaultIds.length) payload.vault_ids = v.vaultIds;
-  if (typeof config.inferenceGeo === 'string' && config.inferenceGeo) payload.inference_geo = config.inferenceGeo;
+  if (typeof opts_.title === 'string' && opts_.title) payload.title = opts_.title.slice(0, 200);
+  if (opts_.metadata && typeof opts_.metadata === 'object') payload.metadata = opts_.metadata;
+  // resources (github_repository 等) と initial_events は呼び出し側 (adapter) が組み立てて渡す。
+  // authorization_token を含み得るため、builder はここで受け取るだけでログ・meta へは出さない。
+  if (Array.isArray(opts_.resources) && opts_.resources.length) payload.resources = opts_.resources;
+  if (Array.isArray(opts_.initialEvents) && opts_.initialEvents.length) payload.initial_events = opts_.initialEvents;
+  // inference_geo は session 最上位では受理されない (現行仕様: agent の model オブジェクト内にのみ置く)。
+  // 地域固定が必要な場合は roster (config/managed-agents-roster.json) の model を {id, inference_geo} で書く。
   // GitHub 主系の制約は payload body には載せない (spec: body は agent/environment/vaults/budget のみ)。
   // Control Plane が user.message で指示するため、builder は制約サマリを meta として返す。
   const github = config.github || {};
