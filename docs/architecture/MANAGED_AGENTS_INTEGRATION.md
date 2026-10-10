@@ -82,6 +82,7 @@ Claude Max 5x の月額 $100 クレジットのうち、Managed Agents PoC に�
 | 初回接続テスト・確認処理の上限 | $0.50 | `connectionTestMaxCents: 50` |
 | 日次ソフト予算 | $3 | `dailySoftCents: 300` |
 | 並列実行数 | 1 | `maxConcurrentSessions: 1` |
+| 1 日あたりのセッション数 | 5（UTC の日付で数える） | `maxSessionsPerDay: 5` |
 | API 失敗時の自動再試行 | 最大 1 回（冪等な GET のみ） | `maxApiRetries: 1` |
 
 `config.json` の `agentSdk.monthlyBudgetUsd`（Claude Code / Agent SDK 用）とは別管理で、互いに読み書きしない。台帳も別ファイルのため、同じ利用分が二重に数えられることはない。
@@ -130,6 +131,19 @@ Managed Agents のセッション予算は「次のモデルリクエストの�
 安全条件は fail-closed で、省略された確認項目・真偽値でない値・未知のレベル文字列は拒否に倒す。呼び出し側は許可リストと時間上限を狭められるが広げられない。`session create` も `--task-type` を必須とし、Router の許可リストとその Agent の担当種別の両方に含まれる場合だけ受け付けるため、Router を通さずに対象外のタスクを作ることはできない。
 
 Local が稼働中というだけでは Managed Agents を並列起動しない。Local 側の決定は `managed.fallback_execution` に常に残り、判定は `~/.claudeos/managed-agents/decisions.jsonl` に記録する。
+
+### 入口（`ask`）
+
+Router を呼び出す実際の入口は `bin/managed-agents.sh ask` の 1 つで、起動メニューの `MA`（人）と `/managed-agents` skill（起動した Claude Code）がこれを使う。`ask` はタスク ID を採番し、role の既定種別で Router の判定を通し、選択された場合だけ `session run` を実行する。入口を 1 つにしているのは、人と Claude のどちらから呼んでも同じ制約がかかるようにするためである。
+
+Claude が自分の判断で課金を伴う実行をする点に対しては、金額の上限に加えて次の歯止めを置く。
+
+- 1 日あたりのセッション数（既定 5、設定での上限 20）。小さな依頼の連発を止める。
+- 依頼文の検査。API キー・トークン・秘密鍵・認証情報つき接続文字列を含む依頼文と、8,000 文字を超える依頼文は送信前に拒否する。形式で判別できない機密（個人情報など）は検出できないため、skill の手順で書かないよう定めている。
+- skill が許可するコマンドは `ask` / `status` / `budget status` / `route` に限る。設定の変更、Agent・Environment の同期、予約の解除は含まない。
+- `--source agent` を履歴に残し、誰の判断で実行したかを追跡できるようにする。
+
+skill はこのリポジトリ専用で、配布テンプレートには入れていない（adapter が ClaudeOS 本体にしか無いため）。
 
 ## 7. エラー分類とフォールバック
 

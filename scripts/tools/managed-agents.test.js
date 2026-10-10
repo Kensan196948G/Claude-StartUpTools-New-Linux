@@ -1066,6 +1066,113 @@ test('status: 設定・予算・Agent 定義を返す。--probe は live 以外�
   assert.equal(st.budget.period.basis, 'calendar-month-reference');
 });
 
+// ---------- 依頼の入口 (ask): メニューと skill の共通経路 ----------
+
+test('ask: タスク ID を採番し、role の既定種別で Router を通してから実行する', async () => {
+  let createdTaskId = null;
+  const { ctx, sessionPosts } = makeCtx({
+    handler: (call) => {
+      if (isSessionCreate(call)) { createdTaskId = call.body.metadata.claudeos_task_id; return jsonResponse(200, { id: 'sesn_01ASKOK', status: 'running' }); }
+      if (/\/events\?/.test(call.url)) return jsonResponse(200, { data: [{ id: 'm', type: 'agent.message', processed_at: '2026-10-10T12:00:03Z', content: [{ type: 'text', text: '確認しました' }] }, idleEvent('end_turn')] });
+      if (/sesn_01ASKOK$/.test(call.url)) return jsonResponse(200, sessionObj('sesn_01ASKOK', createdTaskId, { usage: { list_cost: { amount: '7', currency: 'USD' } } }));
+      return undefined;
+    },
+  });
+  const out = await ma.ask(ctx, { role: 'repository-review', prompt: 'README と設計書の食い違いを確認', source: 'agent' });
+  assert.deepEqual([out.managed, out.executed, out.outcome, out.list_cost_cents, out.source, out.task_type], [true, true, 'completed', 7, 'agent', 'review']);
+  assert.match(out.task_id, /^ask-repository-review-\d{8}T\d{6}Z$/);
+  assert.equal(sessionPosts().length, 1);
+  assert.equal(sessionPosts()[0].body.budget.max_list_cost.amount, '200');
+  // 誰の判断で実行したかが履歴に残る
+  const history = fs.readFileSync(ctx.decisionsPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(history.some((h) => h.kind === 'ask' && h.source === 'agent' && h.execution === 'ManagedAgent'));
+  assert.equal(summary(ctx).openSessions, 0);
+});
+
+test('ask: role ごとの既定種別 (review / qa-analysis / docs)。check は明示した時だけ', async () => {
+  for (const [role, expected] of [['repository-review', 'review'], ['quality-assurance', 'qa-analysis'], ['documentation', 'docs']]) {
+    const { ctx } = makeCtx({ config: baseConfig({ mode: 'dry-run' }) });
+    const out = await ma.ask(ctx, { role, prompt: '確認してください' });
+    assert.equal(out.executed, false);
+    assert.equal(out.request.body.metadata.claudeos_role, role);
+    assert.equal(out.request.body.budget.max_list_cost.amount, '200', `${role} → ${expected}`);
+  }
+  const chk = makeCtx({ config: baseConfig({ mode: 'dry-run' }) });
+  assert.equal((await ma.ask(chk.ctx, { role: 'repository-review', prompt: '確認', taskType: 'check' })).request.body.budget.max_list_cost.amount, '50');
+});
+
+test('ask: Managed へ出せない場合は実行せず、Local 側の実行先を返す (予算・回数・未設定キー)', async () => {
+  // 本日の上限回数に到達
+  const limited = makeCtx();
+  fs.mkdirSync(path.dirname(limited.ctx.ledgerPath), { recursive: true });
+  fs.writeFileSync(limited.ctx.ledgerPath, ['a', 'b', 'c', 'd', 'e'].flatMap((id) => [
+    { type: 'reserve', ts: '2026-10-10T01:00:00.000Z', task_id: id, cents: 10 },
+    { type: 'usage', ts: '2026-10-10T01:01:00.000Z', task_id: id, session_id: `s${id}`, list_cost_cents: 1, final: true },
+  ]).map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const out = await ma.ask(limited.ctx, { role: 'repository-review', prompt: '確認', source: 'agent' });
+  assert.deepEqual([out.managed, out.executed, out.do_locally_with, out.policy_denied], [false, false, 'Subagent', false]);
+  assert.ok(out.denied.includes('budget-daily_session_limit'));
+  assert.equal(limited.sessionPosts().length, 0);
+
+  // API キーなし (live)
+  const nokey = makeCtx({ env: { ANTHROPIC_API_KEY: null } });
+  const o2 = await ma.ask(nokey.ctx, { role: 'documentation', prompt: '確認' });
+  assert.deepEqual([o2.managed, o2.do_locally_with], [false, 'Subagent']);
+  assert.equal(nokey.calls.length, 0);
+
+  // 月間予算を使い切り
+  const full = makeCtx();
+  fs.mkdirSync(path.dirname(full.ctx.ledgerPath), { recursive: true });
+  fs.writeFileSync(full.ctx.ledgerPath, [
+    { type: 'reserve', ts: '2026-10-02T00:00:00.000Z', task_id: 'old', cents: 200 },
+    { type: 'usage', ts: '2026-10-02T00:10:00.000Z', task_id: 'old', session_id: 's', list_cost_cents: 2000, final: true },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const o3 = await ma.ask(full.ctx, { role: 'repository-review', prompt: '確認' });
+  assert.equal(o3.managed, false);
+  assert.equal(full.sessionPosts().length, 0);
+});
+
+test('ask: 設定が無効・role が不明・依頼文が空なら何も送らない', async () => {
+  const off = makeCtx({ config: baseConfig({ mode: 'disabled' }) });
+  await assert.rejects(ma.ask(off.ctx, { role: 'repository-review', prompt: '確認' }), (e) => e.code === 'MANAGED_UNAVAILABLE');
+  const { ctx, calls } = makeCtx();
+  await assert.rejects(ma.ask(ctx, { role: 'constructor', prompt: '確認' }), (e) => e.code === 'ROLE_UNKNOWN');
+  await assert.rejects(ma.ask(ctx, { role: 'repository-review', prompt: '   ' }), (e) => e.code === 'PROMPT_REQUIRED');
+  await assert.rejects(ma.ask(ctx, { prompt: '確認' }), (e) => e.code === 'ROLE_REQUIRED');
+  assert.equal(calls.length + off.calls.length, 0);
+});
+
+test('依頼文の検査: 秘密らしき値・長すぎる依頼文はクラウドへ送らない (ask / session create とも)', async () => {
+  const secrets = [
+    `このキーで確認して ${FAKE_KEY}`,
+    `token: ${FAKE_GH}`,
+    'ghp_ABCDEFGHIJKLMNOPQRSTUVWX を使って',
+    'AKIAABCDEFGHIJKLMNOP',
+    '-----BEGIN OPENSSH PRIVATE KEY-----\nabc',
+    'DB は postgresql://app:s3cretpw@localhost:5432/prod です',
+  ];
+  for (const prompt of secrets) {
+    const { ctx, calls } = makeCtx();
+    await assert.rejects(ma.ask(ctx, { role: 'repository-review', prompt }), (e) => e.cls === 'POLICY' && e.code === 'PROMPT_CONTAINS_SECRET', prompt.slice(0, 20));
+    await assert.rejects(ma.sessionCreate(ctx, sessionArgs({ prompt })), (e) => e.code === 'PROMPT_CONTAINS_SECRET');
+    assert.equal(calls.length, 0);
+    assert.equal(fs.existsSync(ctx.ledgerPath), false, '予約もしない');
+  }
+  const { ctx, calls } = makeCtx();
+  await assert.rejects(ma.ask(ctx, { role: 'repository-review', prompt: 'あ'.repeat(8001) }), (e) => e.code === 'PROMPT_TOO_LONG');
+  assert.equal(calls.length, 0);
+  // 認証情報を含まない URL や普通の文は通る
+  assert.equal(ma.assertPromptSafe('postgresql://localhost:5432/app の接続設定の書き方を README で確認して'), true);
+  assert.equal(ma.assertPromptSafe('token という単語や sk-ant という接頭辞の説明があるか確認して'), true);
+});
+
+test('status: 本日の回数と残り回数を返す', async () => {
+  const { ctx } = makeCtx({ config: baseConfig({ mode: 'dry-run' }) });
+  reserveTask(ctx, 't-today', 'sesn_01T', 10);
+  const st = await ma.status(ctx, {});
+  assert.deepEqual([st.budget.sessions_today, st.budget.remaining_sessions_today, st.budget.policy.maxSessionsPerDay], [1, 4, 5]);
+});
+
 // ---------- CLI ----------
 
 test('parseArgs: 値の無いオプション・不明なオプションはエラー。-- で始まる値も受け取れる', () => {

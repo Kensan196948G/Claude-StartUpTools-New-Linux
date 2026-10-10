@@ -31,6 +31,7 @@
 //   managed-agents.js session get|events|interrupt --session-id S
 //   managed-agents.js session close --task-id T [--session-id S] [--confirm-not-created]
 //   managed-agents.js budget status | budget reconcile --console-usd 1.23 [--note text]
+//   managed-agents.js ask --role R (--prompt P | --prompt-file F) [--task-type T] [--source human|agent]
 //   managed-agents.js route --json '<task json>' [--task-id T] [--budget-cents N]
 //
 // 終了コード: 0 成功 / 2 設定 / 3 予算 / 4 認証・権限 (BLOCKED) / 5 API 障害 / 6 重複 / 7 ポリシー拒否 / 8 タイムアウト
@@ -561,10 +562,22 @@ function buildResources(ctx, args) {
   return { resources: [resource], repo, tokenRequired: true };
 }
 
+// 依頼文はクラウドへ送信される。秘密らしき値を含むもの・長すぎるものは送信前に拒否する
+// (ローカルで見た鍵や接続文字列を、依頼文に書いて外へ出してしまうのを防ぐ)。
+const MAX_PROMPT_CHARS = 8000;
+const PROMPT_SECRET_RE = /(sk-ant-[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}|\bgithub_pat_[A-Za-z0-9_]{16,}|\bAKIA[0-9A-Z]{16}\b|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^\s:@/]+:[^\s@/]+@)/;
+function assertPromptSafe(prompt) {
+  const text = String(prompt);
+  if (text.length > MAX_PROMPT_CHARS) throw new AdapterError('POLICY', 'PROMPT_TOO_LONG', `依頼文が長すぎる (${text.length} 文字、上限 ${MAX_PROMPT_CHARS})`);
+  if (PROMPT_SECRET_RE.test(text)) throw new AdapterError('POLICY', 'PROMPT_CONTAINS_SECRET', '依頼文に秘密らしき値 (API キー・トークン・秘密鍵・認証情報つき接続文字列) が含まれるため送信しない');
+  return true;
+}
+
 function resolveSessionRequest(ctx, args) {
   if (!args.taskId) throw new AdapterError('CONFIG', 'TASK_ID_REQUIRED', '--task-id は必須 (重複実行防止のキー)');
   if (!args.role) throw new AdapterError('CONFIG', 'ROLE_REQUIRED', '--role は必須');
   if (!args.prompt || !String(args.prompt).trim()) throw new AdapterError('CONFIG', 'PROMPT_REQUIRED', '--prompt または --prompt-file は必須');
+  assertPromptSafe(args.prompt);
   const roster = loadRoster(ctx.config);
   const def = agentDefinition(roster, args.role);
   // タスク種別は必須。Router の許可リストと、その Agent が担当する種別の両方に含まれる場合だけ受け付ける
@@ -976,6 +989,7 @@ function budgetStatus(ctx) {
     period: s.period, stage: s.stage, reason: budget.stageReason(s.stage),
     committed_month_cents: s.committedMonthCents, actual_month_cents: s.actualMonthCents,
     committed_day_cents: s.committedDayCents, open_sessions: s.openSessions, task_count: s.taskCount,
+    sessions_today: s.sessionsToday, remaining_sessions_today: Math.max(0, ctx.policy.maxSessionsPerDay - s.sessionsToday),
     remaining_month_cents: Math.max(0, ctx.policy.monthlyBudgetCents - s.committedMonthCents),
     last_reconcile: lastReconcile,
     source_of_truth: 'Anthropic Console (実請求・クレジット残高)。この台帳は list 価格ベースの予測・監査用',
@@ -1044,10 +1058,50 @@ function route(ctx, task, args) {
   return decision;
 }
 
+// --- 依頼の入口 (メニューと skill の共通経路) ---
+// ask: タスク ID の採番、種別の決定、Router による判定、実行までを 1 つにまとめる。
+//   人 (メニュー) と Claude (skill) のどちらから呼んでも同じ制約 (予算・回数・読取専用・依頼文の検査) がかかる。
+//   Router が Managed を選ばなかった場合は実行せず、Local 側の決定を返す。
+function defaultTaskType(def) {
+  return def.taskTypes.find((t) => t !== 'check' && agentRouter.MANAGED_TASK_TYPES.includes(t)) || '';
+}
+
+async function ask(ctx, args) {
+  requireUsable(ctx);
+  if (!args.role) throw new AdapterError('CONFIG', 'ROLE_REQUIRED', '--role は必須');
+  if (!args.prompt || !String(args.prompt).trim()) throw new AdapterError('CONFIG', 'PROMPT_REQUIRED', '--prompt または --prompt-file は必須');
+  assertPromptSafe(args.prompt);
+  const source = args.source === 'agent' ? 'agent' : 'human';
+  const def = agentDefinition(loadRoster(ctx.config), args.role);
+  const taskType = String(args.taskType || defaultTaskType(def)).trim().toLowerCase();
+  const stamp = ctx.now().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const taskId = args.taskId || `ask-${args.role}-${stamp}`;
+
+  // この入口から出せるのは読取専用の Agent だけなので、安全条件は固定値で宣言する。
+  // 可用性・予算・回数・重複は route() が台帳から判定する。
+  const decision = route(ctx, {
+    task_type: taskType, complexity: 'medium', risk: 'low', read_only: true, files_affected: 10, expected_duration_min: 15,
+    managed: { requested: true, data_sensitivity: 'internal', human_gate: false, requires_secrets: false, requires_external_network: false },
+  }, { taskId, budgetCents: args.budgetCents, ackDailySoft: !!args.ackDailySoft });
+  appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'ask', source, task_id: taskId, role: args.role, task_type: taskType, execution: decision.execution });
+
+  if (decision.execution !== 'ManagedAgent') {
+    return {
+      mode: ctx.mode, executed: false, managed: false, source, task_id: taskId, role: args.role, task_type: taskType,
+      denied: decision.managed.denied, policy_denied: decision.managed.policy_denied,
+      budget_code: decision.managed.evidence.budget_code,
+      // Managed へ出せない場合の Local 側の実行先。安全上の拒否 (policy_denied) の場合も、Local の承認手続きはそのまま適用される。
+      do_locally_with: decision.managed.fallback_execution,
+    };
+  }
+  const result = await sessionRun(ctx, Object.assign({}, args, { taskId, taskType, taskClass: taskType === 'check' ? 'check' : 'task' }));
+  return Object.assign({ managed: true, source, task_type: taskType }, result);
+}
+
 // --- CLI ---
 // 値を取るオプションと真偽フラグを明示的に分ける。値が無い・未知のオプションはエラーにする
 // (--budget-cents の値を忘れて既定額で実行される、といった黙った読み替えを防ぐ)。
-const VALUE_OPTIONS = new Set(['config', 'role', 'task-id', 'task-type', 'prompt', 'prompt-file', 'budget-cents', 'class', 'repo', 'ref', 'session-id', 'max-wait-seconds', 'poll-ms', 'console-usd', 'note', 'json']);
+const VALUE_OPTIONS = new Set(['config', 'source', 'role', 'task-id', 'task-type', 'prompt', 'prompt-file', 'budget-cents', 'class', 'repo', 'ref', 'session-id', 'max-wait-seconds', 'poll-ms', 'console-usd', 'note', 'json']);
 const FLAG_OPTIONS = new Set(['probe', 'ack-daily-soft', 'confirm-not-created']);
 function parseArgs(argv) {
   const pos = [];
@@ -1075,6 +1129,7 @@ function sessionArgs(o) {
     taskClass: o.class === 'check' ? 'check' : 'task',
     taskType: typeof o['task-type'] === 'string' ? o['task-type'] : '',
     confirmNotCreated: o['confirm-not-created'] === true,
+    source: o.source === 'agent' ? 'agent' : 'human',
     repo: typeof o.repo === 'string' ? o.repo : '', ref: typeof o.ref === 'string' ? o.ref : '',
     ackDailySoft: o['ack-daily-soft'] === true,
     sessionId: typeof o['session-id'] === 'string' ? o['session-id'] : '',
@@ -1119,6 +1174,7 @@ async function dispatch(ctx, pos, o) {
       return budget.reconcile(ctx.ledgerPath, ctx.now(), ctx.policy, budget.usdToCents(o['console-usd']), typeof o.note === 'string' ? o.note : null);
     }
   }
+  if (cmd === 'ask') return ask(ctx, sessionArgs(o));
   if (cmd === 'route') {
     let task;
     try { task = JSON.parse(typeof o.json === 'string' ? o.json : fs.readFileSync(0, 'utf8')); } catch (e) {
@@ -1164,7 +1220,7 @@ module.exports = {
   ERROR_CLASSES, AdapterError, classifyHttp, fallbackDecision, redact, findSecretKeys, validateConfig,
   isAllowedBaseUrl, assertReadOnlyAgent, agentDefinition, loadRoster, createContext, apiRequest,
   agentsSync, agentsList, envEnsure, sessionCreate, sessionWait, sessionRun, sessionClose,
-  budgetStatus, status, route, latestStatusEvent, outcomeOf, errorPayload, dispatch, parseArgs,
+  budgetStatus, status, route, ask, assertPromptSafe, latestStatusEvent, outcomeOf, errorPayload, dispatch, parseArgs,
 };
 
 if (require.main === module) main();

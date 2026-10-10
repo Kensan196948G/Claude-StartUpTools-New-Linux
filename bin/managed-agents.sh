@@ -9,6 +9,7 @@
 #   managed-agents.sh status [--probe]             設定・予算・Agent 定義の状態 (--probe は live のみ API を 1 回呼ぶ)
 #   managed-agents.sh agents list|plan|sync        Agent 定義の一覧 / 同期計画 / 同期 (sync は mode=live のみ実行)
 #   managed-agents.sh env plan|ensure              Environment (limited networking) の計画 / 作成
+#   managed-agents.sh ask --role R --prompt P      依頼の入口 (採番・判定・実行をまとめて行う。メニュー MA と skill が使う)
 #   managed-agents.sh route --json '<task>'        Agent Router で実行先を判定 (Managed 可否と理由を記録)
 #   managed-agents.sh session create|run --task-id T --role R --task-type review --prompt P [--budget-cents N]
 #   managed-agents.sh session wait|get|events|interrupt --session-id S [--task-id T]
@@ -28,7 +29,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/managed-agents.sh"
 
 if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
