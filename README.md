@@ -263,7 +263,22 @@ Claude Managed Agents を **Autonomous Execution Plane** とする移行を P0�
 | 🧭 実行 Plane 選択 | Goal Router が `execution_plane=managed\|local` を判定し `state.goal_router.execution_plane` へ記録。契約不成立時は **fail-safe で local** | `lib/goal-router.sh`、`bin/start-claude.sh` 経由で自動適用 |
 | 📝 監査 / 状況 | P0 監査（crash 前提再評価・live 検証 Blocker・rollback 手順） | `docs/architecture/audits/2026-09-09-managed-agents-v11-p0.md` |
 
-Thin Adapter（Session/Environment Manager）と Permission Policy Engine は人間判断待ち（HUMAN REVIEW）。live API 検証は NOT RUN（課金人間決裁が必要）。
+### 🤝 Managed Agents 統合（read-only PoC、2026-10-10）
+
+Local Claude Code を主系のまま、Managed Agents を**低リスク・読取専用タスクのクラウド補完先**として使えるようにしました。配布時は `enabled=false` / `mode=disabled` で、設定しない限り既存の動作は変わりません。
+
+| 領域 | 実装 | 入口 |
+|---|---|---|
+| 🔌 Adapter | `scripts/tools/managed-agents.js` — Agent 定義の同期、予算付きセッション作成、状態・イベント取得、中断、エラー分類（依存ゼロ） | `bin/managed-agents.sh status` |
+| 💰 Budget Guard・台帳 | `scripts/tools/managed-budget.js` — 整数セント、作成前の予約、70 / 85 / 95 / 100% の段階制御、重複防止、Console との照合 | `bin/managed-agents.sh budget status` |
+| 🧭 Agent Router 統合 | `managed` ブロックによる opt-in 判定。ブロックが無ければ出力は従来と同一 | `bin/managed-agents.sh route --json '<task>'` |
+| 🤖 初期 Agent | Repository Review / Quality Assurance / Documentation（`read` / `glob` / `grep` のみ、MCP なし） | `config/managed-agents-roster.json` |
+
+- セッション全体の `execution_plane` は `local` のままです。Managed はタスク単位の補完で、Local が稼働中というだけでは並列起動しません。
+- Claude Code / Agent SDK の予算（`agentSdk.monthlyBudgetUsd`）と台帳（`lib/credits.sh`）とは別管理です。
+- live API 検証は **BLOCKED**（Console の残高・利用権限の確認と課金の人間承認が前提）。過去の GitHub MCP 実行クラッシュの修正状況は未確認で、PoC は MCP を使わない構成にしています。
+
+設計: `docs/architecture/MANAGED_AGENTS_INTEGRATION.md`、運用・ロールバック・現行 API との差分: `docs/claude/21_ManagedAgents統合運用手順.md`。
 
 ## 🧪 検証
 

@@ -32,6 +32,7 @@
 | AgentTeams | `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`（in-process / tmux） | 相互通信が必要な協調作業。3〜5 teammate、plan 承認 |
 | DynamicWorkflow | `/workflows`, `ultracode`, `.claude/workflows/*.js` | 大量調査・大規模監査・相互検証 |
 | worktree | `--worktree`, `isolation: worktree`, `.worktreeinclude` | 並列コード編集の分離 |
+| ManagedAgent（opt-in） | Claude Managed Agents（`bin/managed-agents.sh`） | 入力に `managed` ブロックがある場合のみ評価。低リスク・読取専用で、明示要求があるか Local が使えない時の補完。詳細は `MANAGED_AGENTS_INTEGRATION.md` |
 
 ## 4. First-class Agents（`.claude/agents`）
 

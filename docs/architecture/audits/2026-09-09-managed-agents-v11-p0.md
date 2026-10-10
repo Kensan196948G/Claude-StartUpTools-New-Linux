@@ -125,3 +125,24 @@ permission policy の human_gate 分類とし、dry-run でも処理を拒否す
 revert 後ツリーで `goal-router.bats` **70/70 PASS**・`validate-state-example.js` PASS =
 v10 状態への完全復帰を実証（手順 §7 の妥当性確認済み）。
 
+
+## 8. 追記（2026-10-10）— HUMAN REVIEW 項目の解消と方針の更新
+
+§6 で HUMAN REVIEW として保留していた項目は、2026-10-10 のユーザーの明示指示
+（ClaudeOS × Claude Managed Agents 統合開発指示書）を受けて実装した。以後の正本は
+`docs/architecture/MANAGED_AGENTS_INTEGRATION.md` と `docs/claude/21_ManagedAgents統合運用手順.md`。
+
+| §6 の保留項目 | 2026-10-10 時点 |
+|---|---|
+| Thin Adapter `lib/managed-agents.sh` | ✅ 実装。Goal Router 契約のみを持つ薄い層とし、API 呼び出しは `scripts/tools/managed-agents.js` |
+| Permission Policy Engine | 🔄 単独のエンジンは作らず、読取専用を構造で検証する `assertReadOnlyAgent` と Agent Router の `managedEligibility` に統合 |
+| docs/claude/07 §8（adapter 仕様・再検証手順） | 🔄 `docs/claude/21` として新設（07 は 2026-06〜08 時点の記録として保持） |
+| `.gitignore` への `logs/managed-agents/` 追加 | ➖ 不要。状態はリポジトリ外の `~/.claudeos/managed-agents/` に置く |
+| live API 検証 | 🔴 引き続き BLOCKED（Console の残高・利用権限の確認と課金の人間承認が前提） |
+
+本書の方針から変更した点:
+
+- §3 / §4 の「Goal Router が `execution_plane=managed` を選ぶ」設計は採らない。Local Claude Code を主系とし、
+  `execution_plane` は常に `local`。Managed Agents は Agent Router が選ぶタスク単位の補完先とする。
+- §2 の「MCP は PR / Issue 操作用に限定」は、初期 PoC では「MCP を宣言しない（読取専用）」へさらに絞った。
+- P0 payload builder が `inference_geo` をセッション作成 body の最上位に載せていた点は現行仕様と合わないため修正した。

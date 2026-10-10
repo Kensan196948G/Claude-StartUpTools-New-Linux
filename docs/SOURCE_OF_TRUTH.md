@@ -34,6 +34,7 @@
 | `Claude/templates/claudeos/sdlc/` | Source | AI-Native SDLC 成果物テンプレート |
 | `tests/evals/` | Source | golden eval（Self-Improvement の回帰ゲート） |
 | `lib/goal-router.sh`, `Claude/templates/claudeos/goals/*.md` | Source | 統合 Goal Router（判定ロジック唯一の実装）と Primary 5 / Specialized 6 の /goal 本文 |
+| `scripts/tools/managed-agents.js`, `scripts/tools/managed-budget.js`, `config/managed-agents-roster.json` | Source | Managed Agents adapter・Budget Guard・台帳と Agent 定義（read-only PoC）。設定は git 管理外の `config/managed-agents.json`、状態は `~/.claudeos/managed-agents/` |
 | `Claude/templates/claude/claudeos/core/00-goal-system.md` | Source | Goal System 文書（`instructions/00-goal-system.md` は同一コピー） |
 | `docs/architecture/*.md` | Source | v10 仕様・設計・移行記録 |
 
