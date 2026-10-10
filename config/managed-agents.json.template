@@ -41,6 +41,7 @@
     "connectionTestMaxCents": 50,
     "dailySoftCents": 300,
     "maxConcurrentSessions": 1,
+    "maxSessionsPerDay": 5,
     "maxApiRetries": 1,
     "warnPct": 70,
     "verifyOnlyPct": 85,

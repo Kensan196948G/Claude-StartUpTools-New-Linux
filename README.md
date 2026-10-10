@@ -308,6 +308,7 @@ Local Claude Code を主系のまま、Managed Agents を**低リスク・読取
 
 - セッション全体の `execution_plane` は `local` のままです。Managed はタスク単位の補完で、Local が稼働中というだけでは並列起動しません。
 - Claude Code / Agent SDK の予算（`agentSdk.monthlyBudgetUsd`）と台帳（`lib/credits.sh`）とは別管理です。
+- 入口は 2 つあります。起動メニューの `MA`（人が依頼する）と、`/managed-agents` skill（起動した Claude Code が条件を満たす調査を依頼する）。どちらも `bin/managed-agents.sh ask` を通り、1 日 5 回・1 回 $2・月 $20 の歯止めがかかります。
 - live の初回接続テストは**成功**（2026-10-10、$0.05。`docs/claude/21` §9）。異常系は実 API では未検証。過去の GitHub MCP 実行クラッシュの修正状況は未確認で、PoC は MCP を使わない構成にしています。
 
 設計: `docs/architecture/MANAGED_AGENTS_INTEGRATION.md`、運用・ロールバック・現行 API との差分: `docs/claude/21_ManagedAgents統合運用手順.md`。

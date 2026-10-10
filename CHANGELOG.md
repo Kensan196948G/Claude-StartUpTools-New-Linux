@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — Managed Agents の入口（起動メニュー `MA` と `/managed-agents` skill、2026-10-10）
+
+- 🚪 `bin/managed-agents.sh ask`: 依頼の共通入口。タスク ID の採番、role の既定種別、Agent Router の判定、実行をまとめて行う。
+  Managed へ出せない場合は実行せず Local 側の実行先を返す。`--source human|agent` を履歴に記録。
+- 🧭 `bin/menu.sh`: 起動メニューに `MA`（Managed Agents サブメニュー）を追加。状態・予算の表示と 3 種類の依頼。
+  `mode=live` では実行前に必ず確認（y/N）を挟む。
+- 🤖 `.claude/skills/managed-agents/SKILL.md`: 起動した Claude Code が、条件を満たす読取専用の調査を依頼するための skill
+  （このリポジトリ専用。許可コマンドは `ask` / `status` / `budget status` / `route` のみ）。
+- 🛑 歯止めの追加: 1 日あたりのセッション数（`budgetPolicy.maxSessionsPerDay`、既定 5・上限 20）、
+  依頼文の検査（秘密らしき値を含む依頼文・8,000 文字超は送信前に拒否。伏せ字・例示値は通す）、
+  `ask` の引数の制限（`--config` / `--repo` / `--ref` / `--ack-daily-soft` 不可、`--prompt-file` は廃止）、
+  未確定セッションがある間の依頼停止（`OPEN_SESSION_EXISTS`）、Agent 出力からの端末制御文字の除去。
+- ⚠️ skill の `allowed-tools` は強制力のある境界ではない（リポジトリの権限設定が広いため）。`deny` の追加は未実施。
+
 ### Added — Managed Agents 統合（read-only PoC、2026-10-10）
 
 - 🔌 `scripts/tools/managed-agents.js` / `bin/managed-agents.sh` / `lib/managed-agents.sh`: Claude Managed Agents の薄い adapter。

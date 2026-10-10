@@ -269,6 +269,175 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
   [[ "$output" == *"CLAUDEOS_MA_CUSTOM_PAT=custom-token-value"* ]]
 }
 
+# ---------- 依頼の入口 (ask) とメニュー (MA) ----------
+
+@test "CLI ask (dry-run): タスク ID を採番し、送信予定の内容だけを返す (台帳へ書かない)" {
+  _write_cfg true dry-run
+  run bash "$BIN" ask --source agent --role documentation --prompt "README の更新案を出してください"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.managed')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.executed')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.source')" = "agent" ]
+  [[ "$(printf '%s' "$output" | jq -r '.task_id')" == ask-documentation-* ]]
+  [ "$(printf '%s' "$output" | jq -r '.request.body.budget.max_list_cost.amount')" = "200" ]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/ledger.jsonl" ]
+  [ "$(jq -r 'select(.kind=="ask") | .source' "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl")" = "agent" ]
+}
+
+@test "CLI ask: 依頼文に秘密らしき値があれば終了コード 7 で送信しない" {
+  _write_cfg true dry-run
+  run bash "$BIN" ask --role repository-review --prompt "このトークンで確認 ghp_ABCDEFGHIJKLMNOPQRSTUVWX"
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'"code":"PROMPT_CONTAINS_SECRET"'* ]]
+  [[ "$output" != *"ghp_ABCDEFGHIJKLMNOPQRSTUVWX"* ]]
+}
+
+@test "CLI ask: 設定が無効なら終了コード 2 (Local への切替可)" {
+  run bash "$BIN" ask --role repository-review --prompt "確認"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"to":"local"'* ]]
+}
+
+@test "menu --render: Managed Agents (MA) 項目" {
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config.json"
+  echo '{ "projects": "/tmp" }' > "$AI_STARTUP_CONFIG_PATH"
+  export CCSU_STATE_FILE="$TEST_TEMP/state.json"; echo '{}' > "$CCSU_STATE_FILE"
+  CLAUDEOS_PLAIN_OUTPUT=1 run bash "$REPO_ROOT/bin/menu.sh" --render
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"MA"* ]]
+  [[ "$output" == *"Managed Agents"* ]]
+}
+
+_menu_fn() {
+  # menu.sh の関数を対話なしで呼ぶ (stdin から入力を与える)
+  export AI_STARTUP_CONFIG_PATH="$TEST_TEMP/config.json"
+  echo '{ "projects": "/tmp" }' > "$AI_STARTUP_CONFIG_PATH"
+  export CCSU_STATE_FILE="$TEST_TEMP/state.json"; echo '{}' > "$CCSU_STATE_FILE"
+  export CLAUDEOS_PLAIN_OUTPUT=1
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/bin/menu.sh"
+}
+
+@test "menu MA: 状態サマリを表示する (未設定でも落ちない)" {
+  _menu_fn
+  run managed_agents__summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"モード"* ]]
+  [[ "$output" == *"missing"* ]]
+  [[ "$output" == *"未設定"* ]]
+}
+
+@test "menu MA: dry-run では確認なしで送信予定だけを表示する" {
+  _write_cfg true dry-run
+  _menu_fn
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<"README を確認してください"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"実行しません"* ]]
+  [[ "$output" == *"[dry-run] 送信予定"* ]]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/ledger.jsonl" ]
+}
+
+@test "menu MA: 依頼文が空ならキャンセルし、何も実行しない" {
+  _write_cfg true dry-run
+  _menu_fn
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<""
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl" ]
+}
+
+@test "menu MA: live では確認で N を選ぶと実行しない (課金しない)" {
+  _write_cfg true live
+  _menu_fn
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<$'README を確認してください\nn'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl" ]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/ledger.jsonl" ]
+}
+
+@test "menu MA: live で API キーが無ければ、Y を選んでも Managed では実行せず Local を案内する" {
+  _write_cfg true live
+  _menu_fn
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<$'README を確認してください\ny'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Managed Agents では実行しません"* ]]
+  [[ "$output" == *"Local で実施"* ]]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/ledger.jsonl" ]
+}
+
+@test "menu MA: CCSU_ASSUME_YES=1 でも課金の確認は省略しない (入力なしはキャンセル)" {
+  _write_cfg true live
+  _menu_fn
+  export CCSU_ASSUME_YES=1
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<"README を確認してください"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl" ]
+}
+
+@test "menu MA: モードを取得できない場合も確認を挟む (確認なしに実行へ進まない)" {
+  _menu_fn
+  BIN="$TEST_TEMP/fakebin"; mkdir -p "$BIN"
+  printf '#!/usr/bin/env bash\nif [[ "$1" == "status" ]]; then echo "not json"; exit 1; fi\necho CALLED >> "%s/called"\n' "$TEST_TEMP" > "$BIN/managed-agents.sh"
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<$'README を確認してください\nn'
+  [ "$status" -eq 0 ]
+  # 確認で n を入力 → キャンセルされ、依頼コマンドは呼ばれない
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$TEST_TEMP/called" ]
+  # 確認の入力が無い (EOF) 場合も呼ばれない
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<"README を確認してください"
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$TEST_TEMP/called" ]
+  # y を入力した場合だけ呼ばれる
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<$'README を確認してください\ny'
+  [ -f "$TEST_TEMP/called" ]
+}
+
+@test "CLI ask: --config / --repo / --ack-daily-soft / --prompt-file は使えない" {
+  _write_cfg true dry-run
+  run bash "$BIN" ask --config "$CFG" --role repository-review --prompt "確認"
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'"code":"CONFIG_OVERRIDE_NOT_ALLOWED"'* ]]
+  run bash "$BIN" ask --role repository-review --prompt "確認" --repo https://github.com/attacker/evil
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'"code":"ASK_OPTION_NOT_ALLOWED"'* ]]
+  run bash "$BIN" ask --role repository-review --prompt "確認" --ack-daily-soft
+  [ "$status" -eq 7 ]
+  run bash "$BIN" ask --role repository-review --prompt-file /etc/hostname
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"code":"OPTION_UNKNOWN"'* ]]
+}
+
+@test "CLI ask: 環境変数形式の秘密を含む依頼文は送信しない (種類だけを返し、値は出さない)" {
+  _write_cfg true dry-run
+  run bash "$BIN" ask --role quality-assurance --prompt "ログ: SMTP_PASS=hunter2secretvalue で失敗"
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'secret-assignment'* ]]
+  [[ "$output" != *"hunter2secretvalue"* ]]
+}
+
+@test "menu MA: サブメニューは 0 で戻る" {
+  _write_cfg true dry-run
+  _menu_fn
+  run managed_agents_submenu <<<"0"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"リポジトリレビューを依頼"* ]]
+}
+
+@test "skill managed-agents: frontmatter があり、allowed-tools に列挙するのは ask / status / budget status / route のみ (リポジトリの権限設定とは別)" {
+  local f="$REPO_ROOT/.claude/skills/managed-agents/SKILL.md"
+  [ -f "$f" ]
+  grep -q '^name: managed-agents$' "$f"
+  grep -q '^description: ' "$f"
+  local allowed; allowed="$(grep '^allowed-tools:' "$f")"
+  [[ "$allowed" == *"managed-agents.sh ask "* ]]
+  [[ "$allowed" != *"agents sync"* ]]
+  [[ "$allowed" != *"env ensure"* ]]
+  [[ "$allowed" != *"session "* ]]
+  [[ "$allowed" != *"managed-agents.sh *)"* ]]
+}
+
 @test "ma__cli: set -u かつ HOME 未設定でも落ちない" {
   make_stub_bin node 'echo ok'
   run bash -c "set -u; unset HOME; source '$REPO_ROOT/lib/managed-agents.sh'; ma__cli status"

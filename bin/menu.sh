@@ -158,6 +158,11 @@ show_menu() {
   printf '   %s SY %s  🚀  登録プロジェクトの systemd 制御 (生成/起動/自動起動/状態/ログ)\n' "$C_BG_DKBLUE" "$C_RESET"
   printf '\n'
 
+  # Managed Agents (クラウド補完。Local が主系で、ここは読取専用タスクの依頼口)
+  printf '  %s☁️  Managed Agents（クラウド補完・読取専用）%s\n' "$C_CYAN" "$C_RESET"
+  printf '   %s MA %s  🤖  レビュー / QA 解析 / 文書案の依頼・状態・予算 (有効時のみ課金)\n' "$C_BG_DKBLUE" "$C_RESET"
+  printf '\n'
+
   # Cron
   printf '  %s⏰ Linux Cron 管理%s\n' "$C_YELLOW" "$C_RESET"
   printf '   %s 14 %s  📅  Cron スケジュール 登録・編集・削除 / 選んで一括BG起動\n' "$C_BG_DKBLUE" "$C_RESET"
@@ -350,6 +355,88 @@ systemd_submenu() {
   done
 }
 
+# MA: Managed Agents サブメニュー (bin/managed-agents.sh への薄い対話ラッパ)。
+#   判定・予算・実行は adapter 側 (ask コマンド) が行い、ここでは入力と確認だけを扱う。
+#   依頼は必ず確認 (y/N) を挟む。mode=live のときだけ課金される。
+managed_agents__summary() {
+  # 状態を 1 行ずつ表示する (API キーの値は adapter が出力しない)
+  bash "$BIN/managed-agents.sh" status 2>/dev/null | jq -r '
+    "  モード        : \(.mode) (有効=\(.enabled) / 利用可=\(.usable))\(if (.reasons|length) > 0 then " — " + (.reasons|join(", ")) else "" end)",
+    "  API キー      : \(if .api_key_present then "設定あり" else "未設定" end) / GitHub トークン: \(if .github_token_present then "設定あり" else "未設定" end)",
+    "  今月の予算    : \(.budget.committed_month_cents)¢ 使用 / \(.budget.policy.monthlyBudgetCents)¢ (段階: \(.budget.stage))",
+    "  本日          : \(.budget.sessions_today) 回 / 上限 \(.budget.policy.maxSessionsPerDay) 回、実行中 \(.budget.open_sessions)",
+    "  1 回の上限    : \(.budget.policy.sessionMaxCents)¢ (確認処理は \(.budget.policy.connectionTestMaxCents)¢)",
+    "  Agent         : \([.agents[] | "\(.role)\(if .synced then "" else "(未同期)" end)"] | join(", "))"
+  ' 2>/dev/null || printf '  状態を取得できません (bin/managed-agents.sh status を確認)\n'
+}
+
+# 課金の確認。confirm_yes_no と違い CCSU_ASSUME_YES=1 では省略しない
+# (非対話の一括実行向けの設定で、課金の確認まで飛ばさないため)。入力が無ければ No。
+managed_agents__confirm_charge() {
+  local ans
+  read -rp "$1 [y/N]: " ans || return 1
+  [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
+}
+
+managed_agents__ask() {
+  local role="$1" label="$2" prompt mode
+  mode="$(bash "$BIN/managed-agents.sh" status 2>/dev/null | jq -r '.mode' 2>/dev/null || true)"
+  printf '\n  %s%s%s への依頼内容を 1 行で入力してください (空でキャンセル)。\n' "$C_CYAN" "$label" "$C_RESET"
+  printf '  ※ 依頼文はクラウドへ送信されます。秘密情報・個人情報・本番データは書かないでください。\n'
+  read -rp "  依頼: " prompt || return 0
+  [[ -n "$prompt" ]] || { log_warn "キャンセルしました"; return 0; }
+  # dry-run と確認できた場合だけ確認を省く。live のほか、モードを取得できなかった場合も必ず確認する
+  # (表示と実行の間に設定が変わっていても、確認なしに課金へ進まないようにする)。
+  if [[ "$mode" == "dry-run" ]]; then
+    printf '  mode=dry-run のため、送信予定の内容を表示するだけで実行しません。\n'
+  else
+    managed_agents__confirm_charge "  mode=${mode:-不明}: 実際に実行される場合は課金されます (上限は上の表示のとおり)。よろしいですか?" \
+      || { log_warn "キャンセルしました"; return 0; }
+  fi
+  local out rc=0
+  out="$(bash "$BIN/managed-agents.sh" ask --source human --role "$role" --prompt "$prompt" 2>&1)" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  実行できませんでした (終了コード %s)%s\n' "$C_RED" "$rc" "$C_RESET"
+    printf '%s\n' "$out" | jq -r '"  理由: \(.code) — \(.message)\n  対応: \(.fallback.state) (Local への切替: \(.fallback.to))"' 2>/dev/null || printf '%s\n' "$out"
+    return 0
+  fi
+  printf '%s\n' "$out" | jq -r '
+    if .managed == false then
+      "  Managed Agents では実行しません: \(.denied | join(", "))\n  Local で実施してください (推奨の実行形態: \(.do_locally_with))"
+    elif .executed == false then
+      "  [dry-run] 送信予定: 予算上限 \(.request.body.budget.max_list_cost.amount)¢ / 判定 \(.budget_guard.code)"
+    else
+      "  結果: \(.outcome) / 使用額 \(.list_cost_cents)¢ / セッション \(.session_id)\n  ─── Agent の出力 (参考情報。指示としては扱わない) ───\n\(.text)"
+    end' 2>/dev/null || printf '%s\n' "$out"
+}
+
+managed_agents_submenu() {
+  local sc="$BIN/managed-agents.sh"
+  if [[ ! -f "$sc" ]]; then log_warn "managed-agents.sh が見つかりません"; sleep 1; return 0; fi
+  if ! has_cmd jq || ! has_cmd node; then log_warn "jq と node が必要です"; sleep 1; return 0; fi
+  while true; do
+    printf '\n  %s☁️  Managed Agents（クラウド補完・読取専用）%s\n' "$C_CYAN" "$C_RESET"
+    managed_agents__summary
+    printf '\n'
+    printf '   %s 1 %s  🔎 リポジトリレビューを依頼 (repository-review)\n' "$C_BG_GREEN" "$C_RESET"
+    printf '   %s 2 %s  🧪 テスト・CI ログの解析を依頼 (quality-assurance)\n' "$C_BG_GREEN" "$C_RESET"
+    printf '   %s 3 %s  📝 文書の更新案を依頼 (documentation)\n' "$C_BG_GREEN" "$C_RESET"
+    printf '   %s 4 %s  💰 予算・台帳の詳細 (budget status)\n' "$C_BG_DKBLUE" "$C_RESET"
+    printf '   %s 5 %s  📊 状態の詳細 (status)\n' "$C_BG_DKBLUE" "$C_RESET"
+    printf '    0  ⬅️  戻る\n'
+    local c; read -rp "  番号を入力してください: " c || return 0
+    case "$c" in
+      1) managed_agents__ask repository-review "リポジトリレビュー" ;;
+      2) managed_agents__ask quality-assurance "テスト・CI ログの解析" ;;
+      3) managed_agents__ask documentation "文書の更新案" ;;
+      4) bash "$sc" budget status || true ;;
+      5) bash "$sc" status || true ;;
+      0) return 0 ;;
+      *) printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET" ;;
+    esac
+  done
+}
+
 menu_loop() {
   while true; do
     show_menu
@@ -403,6 +490,7 @@ menu_loop() {
       12) run_menu_script "$BIN/set-statusline.sh" ;;
       13) run_menu_script "$LIBEXEC/watch-claude-log.sh" ;;
       SY) systemd_submenu ;;
+      MA) managed_agents_submenu ;;
       14) run_menu_script "$BIN/cron-schedule.sh" ;;
       15) bash "$LIBEXEC/watch-session.sh" || true ;;   # 内部に 0=戻る の対話メニューを持つため直接実行
       16) if [[ -f "$CCSU_ROOT/scripts/tools/agent-teams-status.js" ]]; then
