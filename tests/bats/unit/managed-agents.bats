@@ -147,7 +147,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 @test "T02 CLI: API キー未設定の live セッション作成は終了コード 2 で安全に停止し、台帳を作らない" {
   _write_cfg true live
-  run bash "$BIN" session create --task-id bats-1 --role repository-review --prompt "check"
+  run bash "$BIN" session create --task-id bats-1 --role repository-review --task-type review --prompt "check"
   [ "$status" -eq 2 ]
   [[ "$output" == *'"code":"API_KEY_MISSING"'* ]]
   [[ "$output" == *'"to":"local"'* ]]
@@ -156,7 +156,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 @test "T02 CLI: mode=disabled ではセッション作成を拒否 (終了コード 2)" {
   _write_cfg true disabled
-  run bash "$BIN" session create --task-id bats-2 --role repository-review --prompt "check"
+  run bash "$BIN" session create --task-id bats-2 --role repository-review --task-type review --prompt "check"
   [ "$status" -eq 2 ]
   [[ "$output" == *'"code":"MANAGED_UNAVAILABLE"'* ]]
 }
@@ -164,7 +164,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 @test "T03 CLI dry-run: 送信予定の request に budget.max_list_cost が入り、API キーは値ではなく参照で表示される" {
   _write_cfg true dry-run
   export ANTHROPIC_API_KEY="sk-ant-api03-BATSKEYBATSKEYBATSKEY00"
-  run bash "$BIN" session create --task-id bats-3 --role repository-review --prompt "README を確認" --budget-cents 150
+  run bash "$BIN" session create --task-id bats-3 --role repository-review --task-type review --prompt "README を確認" --budget-cents 150
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.executed')" = "false" ]
   [ "$(printf '%s' "$output" | jq -r '.request.body.budget.max_list_cost.amount')" = "150" ]
@@ -174,9 +174,9 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
   [ ! -f "$CLAUDEOS_MA_STATE_DIR/ledger.jsonl" ]
 }
 
-@test "T03 CLI: セッション上限 ($2) を超える予算は終了コード 3 で拒否" {
+@test "T03 CLI: セッション上限 (2 USD) を超える予算は終了コード 3 で拒否" {
   _write_cfg true dry-run
-  run bash "$BIN" session create --task-id bats-4 --role repository-review --prompt "x" --budget-cents 500
+  run bash "$BIN" session create --task-id bats-4 --role repository-review --task-type review --prompt "x" --budget-cents 500
   [ "$status" -eq 3 ]
   [[ "$output" == *'"code":"BUDGET_SESSION_CAP_EXCEEDED"'* ]]
 }
@@ -192,7 +192,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 }
 
 @test "T12 CLI route: 設定なしでも Local の実行先を返し、Managed は選ばれない" {
-  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":10,"managed":{"requested":true}}'
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":10,"managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.execution')" = "Subagent" ]
   [ "$(printf '%s' "$output" | jq -r '.managed.selected')" = "false" ]
@@ -201,7 +201,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 @test "T10 CLI route: dry-run で有効でも本番影響のあるタスクは Managed にしない" {
   _write_cfg true dry-run
-  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"deployment_impact":"high","managed":{"requested":true,"local_available":false}}'
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"deployment_impact":"high","managed":{"requested":true,"local_available":false,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.execution')" != "ManagedAgent" ]
   [ "$(printf '%s' "$output" | jq -r '.managed.policy_denied')" = "true" ]
@@ -209,7 +209,7 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 @test "CLI route: dry-run + 明示要求の低リスク読取専用タスクは ManagedAgent になり、決定が記録される" {
   _write_cfg true dry-run
-  run bash "$BIN" route --task-id bats-route-1 --json '{"task_type":"docs","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true}}'
+  run bash "$BIN" route --task-id bats-route-1 --json '{"task_type":"docs","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | jq -r '.execution')" = "ManagedAgent" ]
   [ "$(jq -r '.task_id' "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl")" = "bats-route-1" ]
@@ -226,8 +226,54 @@ _field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 @test "既存設定を上書きしない: config.json.template の agentSdk.monthlyBudgetUsd は Managed 用予算と独立" {
   [ "$(jq -r '.agentSdk.monthlyBudgetUsd' "$REPO_ROOT/config/config.json.template")" = "300" ]
   [ "$(jq -r '.budgetPolicy.monthlyBudgetCents' "$REPO_ROOT/config/managed-agents.json.template")" = "2000" ]
-  run grep -c 'agentSdk' "$REPO_ROOT/scripts/tools/managed-agents.js" "$REPO_ROOT/lib/managed-agents.sh"
-  [[ "$output" == *":0"* ]]
+  # adapter・予算ガード・lib のどれも agentSdk 設定と Agent SDK 台帳 (credits) を参照しない
+  #   (コメント行は説明のため除外し、実行されるコード行だけを見る)
+  local f
+  for f in scripts/tools/managed-agents.js scripts/tools/managed-budget.js lib/managed-agents.sh bin/managed-agents.sh; do
+    run bash -c "grep -v -E '^[[:space:]]*(//|#)' '$REPO_ROOT/$f' | grep -E 'agentSdk|credits/ledger|credits__'"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "CLI: 値の無いオプション・不明なオプションは終了コード 2 (既定値で実行しない)" {
+  _write_cfg true dry-run
+  run bash "$BIN" session create --task-id bats-5 --role repository-review --task-type review --prompt x --budget-cents
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"code":"OPTION_VALUE_REQUIRED"'* ]]
+  run bash "$BIN" status --no-such-option
+  [ "$status" -eq 2 ]
+}
+
+@test "T09 CLI: 対象外のタスク種別・種別なしのセッション作成は終了コード 7 (ポリシー拒否)" {
+  _write_cfg true dry-run
+  run bash "$BIN" session create --task-id bats-6 --role repository-review --task-type deploy --prompt x
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'"code":"TASK_TYPE_NOT_ALLOWED"'* ]]
+  run bash "$BIN" session create --task-id bats-7 --role repository-review --prompt x
+  [ "$status" -eq 7 ]
+}
+
+@test "T10 CLI route: 安全条件を明示しない要求・不明値は Managed にしない (fail-closed)" {
+  _write_cfg true dry-run
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"managed":{"requested":true}}'
+  [ "$(printf '%s' "$output" | jq -r '.execution')" != "ManagedAgent" ]
+  run bash "$BIN" route --json '{"task_type":"review","risk":"low","read_only":true,"security_impact":"severe","managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
+  [ "$(printf '%s' "$output" | jq -r '.execution')" != "ManagedAgent" ]
+  [ "$(printf '%s' "$output" | jq -r '.managed.policy_denied')" = "true" ]
+}
+
+@test "T11 設定の tokenEnv は CLAUDEOS_MA_ 接頭辞のみ。ma__cli はその接頭辞の変数を node へ渡す" {
+  export CLAUDEOS_MA_CUSTOM_PAT="custom-token-value"
+  make_stub_bin node 'env'
+  run ma__cli status
+  [[ "$output" == *"CLAUDEOS_MA_CUSTOM_PAT=custom-token-value"* ]]
+}
+
+@test "ma__cli: set -u かつ HOME 未設定でも落ちない" {
+  make_stub_bin node 'echo ok'
+  run bash -c "set -u; unset HOME; source '$REPO_ROOT/lib/managed-agents.sh'; ma__cli status"
+  [ "$status" -eq 0 ]
+  [ "$output" = "ok" ]
 }
 
 @test "Linux 専用: adapter / lib / bin に SSH・PowerShell・Windows 起動経路が無い" {

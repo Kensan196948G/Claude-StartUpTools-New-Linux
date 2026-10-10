@@ -67,7 +67,7 @@ REST を直接呼ぶ理由: 本リポジトリは依存ゼロ（`package.json` �
 | `dry-run` | 出ない | 送信予定の request を秘密なしで表示し、判定と payload を確認する。台帳へも書かない |
 | `live` | `api.anthropic.com` のみ | Console で残高・利用権限を確認し、人間が課金を承認した場合だけ設定する |
 
-adapter は次の場合に API を呼ばずに停止する: 設定契約の不成立、API キー未設定、設定ファイル内の秘密らしき値、`apiBaseUrl` が `api.anthropic.com`（とテスト用 loopback）以外、予算ガードの拒否、同一 `task_id` の重複、読取専用ポリシー違反。
+adapter は次の場合に API を呼ばずに停止する: 設定契約の不成立、API キー未設定、設定ファイル内の秘密らしき値、`apiBaseUrl` が `https://api.anthropic.com` 以外（loopback はテスト用の環境変数 `CLAUDEOS_MA_ALLOW_LOOPBACK=1` がある場合のみ）、`vaultIds` の指定、予算ガードの拒否、同一 `task_id` の重複、対象外のタスク種別、読取専用ポリシー違反。リダイレクトは追わない。
 
 ## 5. 予算制御
 
@@ -123,9 +123,11 @@ Managed Agents のセッション予算は「次のモデルリクエストの�
 
 | 区分 | 条件 |
 |---|---|
-| 安全条件（policy） | `read_only=true`、risk / security / database / deployment が low、Secret 不要、外部通信不要、データ機密性が public / internal、Agent 間通信なし、人間承認待ちでない、task_type が許可リスト内、所要時間が上限内 |
+| 安全条件（policy） | `read_only=true`、`risk=low`（省略不可）、security / database / deployment が low、`human_gate` / `requires_secrets` / `requires_external_network` を明示的に `false`、データ機密性が public / internal、Agent 間通信なし、task_type が許可リスト内、所要時間が 30 分以内 |
 | 容量条件（capacity） | 設定と認証が有効、予算状態が ok / warn（verify-only は `check` のみ）、同一 `task_id` が未実行 |
 | 選択条件 | 明示要求（`managed.requested=true`）がある、または Local が使えない（`managed.local_available=false`） |
+
+安全条件は fail-closed で、省略された確認項目・真偽値でない値・未知のレベル文字列は拒否に倒す。呼び出し側は許可リストと時間上限を狭められるが広げられない。`session create` も `--task-type` を必須とし、Router の許可リストとその Agent の担当種別の両方に含まれる場合だけ受け付けるため、Router を通さずに対象外のタスクを作ることはできない。
 
 Local が稼働中というだけでは Managed Agents を並列起動しない。Local 側の決定は `managed.fallback_execution` に常に残り、判定は `~/.claudeos/managed-agents/decisions.jsonl` に記録する。
 
@@ -145,7 +147,23 @@ Local が稼働中というだけでは Managed Agents を並列起動しない�
 
 Local へ戻すのは予算不足・API 障害・未設定の場合だけである。認証・権限・ポリシーの拒否と人間承認待ちは BLOCKED とし、別経路で回避しない。Router が `policy_denied=true` を返したタスクは、Managed が使えない場合でも「Managed へ出さない」だけで、Local 側の Human Approval Gate はそのまま適用される。
 
-セッション作成（POST）は自動再試行しない。タイムアウトや接続断で作成の成否が分からない場合は予約を残し、人間が Console で確認してから `session close` で確定する。
+セッション作成（POST）は自動再試行しない。予約を解除するのはサーバーが明確に拒否した場合（400 / 401 / 402 / 403 / 404 / 409 / 429）だけで、タイムアウト・接続断・5xx / 529・応答本文の読み取り失敗は「作成されたか不明」として予約を残す。この場合と、監視中の API 障害・中断の失敗は、クラウド側でセッションが動いている可能性があるため Local へ自動で戻さない（`fallback.state: NEEDS_OPERATOR`）。`session close --task-id <id>` がセッション一覧から `metadata.claudeos_task_id` で突き合わせて確定し、見つからない場合は人間が Console で確認したうえで `--confirm-not-created` を付けて解除する。
+
+### 確定の条件と対応関係
+
+- 使用量を確定（`final`）にするのは、セッションが `idle` / `terminated` で、かつ `usage.list_cost.amount` を整数セントとして解釈できた場合だけ。動作中、または使用量が欠落・小数・指数表記の場合は未確定のまま予約額で計上し、並列枠も解放しない。
+- `session wait` / `session close` は、台帳に記録済みのセッション ID および `metadata.claudeos_task_id` と一致するセッションだけを受け付ける。別のセッションの使用量でタスクを確定することはできない。
+- 未確定のセッションは、開始した請求期間に関わらず並列数と当期の予約に数える（期間の境界で枠が空かない）。
+
+### リモート定義の検証
+
+セッション作成の直前に、使う Agent と Environment を API から取得して実体を検証する（課金の発生しない GET 2 回）。Agent は最新 version が固定 version と一致し、有効なツールが `read` / `glob` / `grep` のみで MCP・skills・multiagent を持たないこと、Environment は `limited` networking で MCP・パッケージマネージャ・許可ホストが無いことを確認する。registry や設定の ID、metadata の一致だけでは信用しない。`agents sync` も、metadata が一致していて実体が読取専用でない Agent は定義で上書きする。
+
+> 未検証: Agent 取得応答の `tools` の形（`default_config` と各 `configs` の `enabled` が返ること）は公式ドキュメントの記述に基づく想定で、実 API では確認していない。想定と違う形の場合は検証が通らず、セッションを作らない側に倒れる。
+
+### 設定で緩められない上限
+
+`budgetPolicy` にはコード内のハード上限がある（並列 1、単一セッション $5、月額 $100、接続テスト $1、再試行 1 回）。これを超える値は設定検証で拒否される。台帳のロックは取得できなければ fail-closed で、古いロックを自動回収しない（回収の競合で並列 1 が破れるため）。
 
 ## 8. 初期 Agent
 

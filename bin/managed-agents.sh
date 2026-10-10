@@ -10,8 +10,9 @@
 #   managed-agents.sh agents list|plan|sync        Agent 定義の一覧 / 同期計画 / 同期 (sync は mode=live のみ実行)
 #   managed-agents.sh env plan|ensure              Environment (limited networking) の計画 / 作成
 #   managed-agents.sh route --json '<task>'        Agent Router で実行先を判定 (Managed 可否と理由を記録)
-#   managed-agents.sh session create|run ...       予算付きセッション作成 / 完了まで監視
-#   managed-agents.sh session wait|get|events|interrupt|close --session-id S
+#   managed-agents.sh session create|run --task-id T --role R --task-type review --prompt P [--budget-cents N]
+#   managed-agents.sh session wait|get|events|interrupt --session-id S [--task-id T]
+#   managed-agents.sh session close --task-id T    使用量の確定 (セッションは task_id で突き合わせ)
 #   managed-agents.sh budget status                Managed Agents 用台帳の集計
 #   managed-agents.sh budget reconcile --console-usd N   Console の実績と照合
 #
@@ -27,7 +28,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/managed-agents.sh"
 
 if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 

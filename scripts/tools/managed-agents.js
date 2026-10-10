@@ -23,11 +23,13 @@
 //   managed-agents.js status [--probe]
 //   managed-agents.js agents list|plan|sync [--role r]
 //   managed-agents.js env plan|ensure
-//   managed-agents.js session create --task-id T --role R (--prompt P | --prompt-file F) [--budget-cents N]
-//                                    [--class check] [--repo https://github.com/o/r] [--ref main] [--ack-daily-soft]
+//   managed-agents.js session create --task-id T --role R --task-type review (--prompt P | --prompt-file F)
+//                                    [--budget-cents N] [--repo https://github.com/o/r] [--ref main] [--ack-daily-soft]
+//                                    (--task-type check は確認処理: 上限 $0.50)
 //   managed-agents.js session run    (create と同じ引数) [--max-wait-seconds N]
 //   managed-agents.js session wait --task-id T --session-id S [--max-wait-seconds N]
-//   managed-agents.js session get|events|interrupt|close --session-id S [--task-id T]
+//   managed-agents.js session get|events|interrupt --session-id S
+//   managed-agents.js session close --task-id T [--session-id S] [--confirm-not-created]
 //   managed-agents.js budget status | budget reconcile --console-usd 1.23 [--note text]
 //   managed-agents.js route --json '<task json>' [--task-id T] [--budget-cents N]
 //
@@ -113,20 +115,33 @@ function redact(text, secrets) {
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1<redacted>');
 }
 
-const SECRET_KEY_RE = /(api[_-]?key|secret|password|passwd|token|authorization|credential)/i;
+const SECRET_KEY_RE = /(api[_-]?key|secret|password|passwd|token|authorization|credential|\bpat\b)/i;
+const SECRET_VALUE_RE = /(sk-ant-[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}|\bgithub_pat_[A-Za-z0-9_]{16,})/;
+// 設定内の秘密らしき値を、キー名と値のパターンの両方で探す (コメント用の _ キーや配列の中も見る)。
 function findSecretKeys(obj, trail) {
   const hits = [];
   if (!obj || typeof obj !== 'object') return hits;
   for (const [k, v] of Object.entries(obj)) {
     const here = trail ? `${trail}.${k}` : k;
-    if (k.startsWith('_')) continue;
     if (v && typeof v === 'object') { hits.push(...findSecretKeys(v, here)); continue; }
-    // 「環境変数名」を持つキー (tokenEnv 等) と ID 参照は秘密ではない
-    if (/Env$/.test(k) || /Ids?$/.test(k)) continue;
-    if (SECRET_KEY_RE.test(k) && typeof v === 'string' && v.trim() !== '') hits.push(here);
+    if (typeof v !== 'string' || v.trim() === '') continue;
+    if (SECRET_VALUE_RE.test(v)) { hits.push(here); continue; }
+    // 説明用キー (_comment 等)、「環境変数名」を持つキー (tokenEnv 等)、ID 参照はキー名では判定しない
+    if (k.startsWith('_') || /Env$/.test(k) || /Ids?$/.test(k) || Array.isArray(obj)) continue;
+    if (SECRET_KEY_RE.test(k)) hits.push(here);
   }
   return hits;
 }
+
+// Anthropic 側リソース ID の形式検証 (URL パスへ埋め込む前に必ず通す)。
+const ID_PATTERNS = { session: /^sesn_[A-Za-z0-9]+$/, agent: /^agent_[A-Za-z0-9]+$/, environment: /^env_[A-Za-z0-9]+$/ };
+function assertId(kind, id) {
+  if (typeof id !== 'string' || !ID_PATTERNS[kind].test(id)) {
+    throw new AdapterError('CONFIG', 'ID_INVALID', `${kind} ID の形式が不正`);
+  }
+  return id;
+}
+const TOKEN_ENV_RE = /^CLAUDEOS_MA_[A-Z0-9_]+$/;
 
 // --- 設定 ---
 function resolveConfigPath(explicit, env) {
@@ -173,8 +188,8 @@ function assertReadOnlyAgent(def) {
 }
 
 function agentDefinition(roster, role) {
-  const a = roster.agents[role];
-  if (!a) throw new AdapterError('CONFIG', 'ROLE_UNKNOWN', `roster に role=${role} が無い (候補: ${Object.keys(roster.agents).join(', ')})`);
+  const a = Object.prototype.hasOwnProperty.call(roster.agents, role) ? roster.agents[role] : null;
+  if (!a || typeof a !== 'object') throw new AdapterError('CONFIG', 'ROLE_UNKNOWN', `roster に role=${role} が無い (候補: ${Object.keys(roster.agents).join(', ')})`);
   const body = {
     name: a.name,
     description: a.description,
@@ -189,9 +204,10 @@ function agentDefinition(roster, role) {
 }
 
 // 設定契約の検証 (ネットワークなし)。Goal Router / status / route から使う。
-function validateConfig(config) {
+function validateConfig(config, env) {
   const reasons = [];
   if (!config) return { ok: false, mode: 'missing', reasons: ['config-missing'] };
+  if (typeof config !== 'object' || Array.isArray(config)) return { ok: false, mode: 'invalid', reasons: ['config-not-object'] };
   const mode = String(config.mode || 'disabled');
   if (config.enabled !== true) reasons.push('not-enabled');
   if (mode === 'disabled') reasons.push('mode-disabled');
@@ -202,7 +218,11 @@ function validateConfig(config) {
   try { policy = budget.normalizePolicy(config.budgetPolicy); } catch (e) { reasons.push(`budget-policy-invalid:${e.message}`); }
   if (policy && policy.monthlyBudgetCents <= 0) reasons.push('monthly-budget-not-configured');
   const base = String(config.apiBaseUrl || DEFAULT_BASE_URL);
-  if (!isAllowedBaseUrl(base)) reasons.push('api-base-url-not-allowed');
+  if (!isAllowedBaseUrl(base, env)) reasons.push('api-base-url-not-allowed');
+  // 初期 PoC は MCP を使わないため、MCP 認証用の vault は付けられない。
+  if (Array.isArray(config.vaultIds) && config.vaultIds.length) reasons.push('vault-ids-not-allowed-in-poc');
+  const tokenEnv = config.github && config.github.workspace && config.github.workspace.tokenEnv;
+  if (tokenEnv !== undefined && !(typeof tokenEnv === 'string' && TOKEN_ENV_RE.test(tokenEnv))) reasons.push('github-token-env-invalid');
   try {
     const roster = loadRoster(config);
     for (const role of Object.keys(roster.agents)) agentDefinition(roster, role);
@@ -210,12 +230,16 @@ function validateConfig(config) {
   return { ok: reasons.length === 0, mode, reasons, policy };
 }
 
-// API キーを任意ホストへ送らないため、送信先は api.anthropic.com (とテスト用 loopback) に固定する。
-function isAllowedBaseUrl(base) {
+// API キーを任意ホストへ送らないため、送信先は https://api.anthropic.com に固定する。
+// loopback はテスト用の環境変数 CLAUDEOS_MA_ALLOW_LOOPBACK=1 を明示した場合だけ許可する
+// (設定ファイルの書き換えだけでは、ローカルの別プロセスへ平文 HTTP でキーを送らせられない)。
+function isAllowedBaseUrl(base, env) {
   try {
     const u = new URL(base);
-    if (u.protocol === 'https:' && u.hostname === 'api.anthropic.com') return true;
-    return (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && (u.protocol === 'http:' || u.protocol === 'https:');
+    if (u.username || u.password) return false;
+    if (u.protocol === 'https:' && u.hostname === 'api.anthropic.com' && (u.port === '' || u.port === '443')) return true;
+    if (!env || env.CLAUDEOS_MA_ALLOW_LOOPBACK !== '1') return false;
+    return u.hostname === '127.0.0.1' && (u.protocol === 'http:' || u.protocol === 'https:');
   } catch { return false; }
 }
 
@@ -229,9 +253,10 @@ function createContext(opts) {
       throw new AdapterError('CONFIG', 'CONFIG_UNREADABLE', `config を解釈できない: ${configPath} (${e.message})`);
     }
   }
-  const validation = validateConfig(config);
+  const validation = validateConfig(config, env);
   const stateDir = resolveStateDir(config, env);
-  const githubTokenEnv = (config && config.github && config.github.workspace && config.github.workspace.tokenEnv) || 'CLAUDEOS_MA_GITHUB_TOKEN';
+  const cfgTokenEnv = config && config.github && config.github.workspace && config.github.workspace.tokenEnv;
+  const githubTokenEnv = typeof cfgTokenEnv === 'string' && TOKEN_ENV_RE.test(cfgTokenEnv) ? cfgTokenEnv : 'CLAUDEOS_MA_GITHUB_TOKEN';
   return {
     env, config, configPath, validation,
     mode: validation.mode,
@@ -248,7 +273,9 @@ function createContext(opts) {
     fetch: o.fetch || globalThis.fetch,
     now: o.now || (() => new Date()),
     sleep: o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms))),
-    requestTimeoutMs: o.requestTimeoutMs || (config && config.requestTimeoutMs) || 30000,
+    requestTimeoutMs: o.requestTimeoutMs || clampNumber(config && config.requestTimeoutMs, 30000, 1000, 120000),
+    // ポーリング間隔の下限 (API を連打しない)。テストだけが小さい値を注入できる。
+    minPollMs: o.minPollMs || 1000,
   };
 }
 
@@ -275,6 +302,7 @@ async function apiRequest(ctx, method, urlPath, body, opts) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ctx.requestTimeoutMs);
     let res;
+    let bodyText = '';
     let cls = null;
     let errInfo = null;
     try {
@@ -287,17 +315,21 @@ async function apiRequest(ctx, method, urlPath, body, opts) {
           'content-type': 'application/json',
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+        // リダイレクトを追わない (別オリジンへ x-api-key が転送されるのを防ぐ)
+        redirect: 'error',
         signal: controller.signal,
       });
+      // 本文の読み取りまでをタイムアウトの対象にする (ヘッダ受信後に本文が届かない場合も打ち切る)。
+      bodyText = await res.text();
     } catch (e) {
       cls = e && e.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK';
-      errInfo = { message: cls === 'TIMEOUT' ? `API が ${ctx.requestTimeoutMs}ms 以内に応答しない` : `API へ接続できない (${redact(e && e.message, secretsOf(ctx))})` };
+      errInfo = { message: cls === 'TIMEOUT' ? `API が ${ctx.requestTimeoutMs}ms 以内に応答しない` : `API との通信に失敗した (${redact(e && e.message, secretsOf(ctx))})` };
+      res = null;
     } finally { clearTimeout(timer); }
 
     if (res) {
       let parsed = null;
-      const text = await res.text();
-      if (text) { try { parsed = JSON.parse(text); } catch { parsed = null; } }
+      if (bodyText) { try { parsed = JSON.parse(bodyText); } catch { parsed = null; } }
       if (res.ok) return parsed;
       cls = classifyHttp(res.status, parsed);
       errInfo = {
@@ -378,6 +410,42 @@ function rosterSummary(ctx) {
   });
 }
 
+// リモートの Agent 実体が読取専用かどうか (metadata ではなく tools / mcp_servers の実体で判定)。
+function isRemoteReadOnly(agent) {
+  try { return assertReadOnlyAgent(agent); } catch { return false; }
+}
+
+// セッション作成の直前に、使う Agent と Environment の実体を API から取得して検証する。
+//   - Agent: 固定する version が最新版と一致し、tools が read / glob / grep のみ・MCP なし
+//   - Environment: limited networking で、MCP・パッケージマネージャを許可していない
+// registry や config の ID を信用せず、ここで構造を確認できなければセッションを作らない。
+async function verifyRemoteResources(ctx, agentRef, environmentId) {
+  assertId('agent', agentRef.id);
+  assertId('environment', environmentId);
+  const agent = await apiRequest(ctx, 'GET', `/v1/agents/${agentRef.id}`);
+  if (!agent || agent.archived_at) throw new AdapterError('POLICY', 'AGENT_ARCHIVED', 'agent が archive 済み、または取得できない');
+  if (!Number.isInteger(agent.version)) throw new AdapterError('POLICY', 'AGENT_VERSION_UNKNOWN', 'agent の version を確認できない');
+  if (agentRef.version != null && agent.version !== agentRef.version) {
+    throw new AdapterError('POLICY', 'AGENT_VERSION_DRIFT', `agent の最新 version (${agent.version}) が固定 version (${agentRef.version}) と異なる。agents sync で再同期する`);
+  }
+  assertReadOnlyAgent(agent);
+  const environment = await apiRequest(ctx, 'GET', `/v1/environments/${environmentId}`);
+  assertLimitedEnvironment(environment);
+  return { agentVersion: agent.version };
+}
+
+function assertLimitedEnvironment(environment) {
+  const net = environment && environment.config && environment.config.networking;
+  const violations = [];
+  if (!environment || environment.archived_at) violations.push('environment が archive 済み、または取得できない');
+  if (!net || net.type !== 'limited') violations.push('networking.type が limited ではない');
+  if (net && net.allow_mcp_servers === true) violations.push('allow_mcp_servers が有効');
+  if (net && net.allow_package_managers === true) violations.push('allow_package_managers が有効');
+  if (net && Array.isArray(net.allowed_hosts) && net.allowed_hosts.length) violations.push('allowed_hosts が空ではない');
+  if (violations.length) throw new AdapterError('POLICY', 'ENVIRONMENT_NOT_LIMITED', `Environment が PoC の条件を満たさない: ${violations.join(' / ')}`, { violations });
+  return true;
+}
+
 async function agentsSync(ctx, onlyRole) {
   requireUsable(ctx);
   const roster = loadRoster(ctx.config);
@@ -397,7 +465,9 @@ async function agentsSync(ctx, onlyRole) {
     if (!found) {
       agent = await apiRequest(ctx, 'POST', '/v1/agents', p.definition.body);
       action = 'created';
-    } else if (found.metadata.claudeos_def_sha !== p.definition.sha) {
+    } else if (found.metadata.claudeos_def_sha !== p.definition.sha || !isRemoteReadOnly(found)) {
+      // metadata が一致していても、リモートの実体 (Console 等で変更され得る) が読取専用でなければ定義で上書きする。
+      assertId('agent', found.id);
       // version を渡して楽観ロック (不一致は 409 → CONFLICT として返し、黙って上書きしない)
       agent = await apiRequest(ctx, 'POST', `/v1/agents/${found.id}`, Object.assign({ version: found.version }, p.definition.body));
       action = 'updated';
@@ -434,13 +504,15 @@ async function envEnsure(ctx) {
   const known = resolveEnvironmentId(ctx);
   let environment;
   let action;
-  if (known) { environment = await apiRequest(ctx, 'GET', `/v1/environments/${known}`); action = 'existing'; }
+  if (known) { environment = await apiRequest(ctx, 'GET', `/v1/environments/${assertId('environment', known)}`); action = 'existing'; }
   else {
     const all = await listAll(ctx, '/v1/environments?limit=100');
     environment = all.find((e) => e.name === def.name && !e.archived_at);
     action = environment ? 'found' : 'created';
     if (!environment) environment = await apiRequest(ctx, 'POST', '/v1/environments', body);
   }
+  // 既存の Environment を採用する場合も、limited networking であることを実体で確認する。
+  assertLimitedEnvironment(environment);
   const reg = readRegistry(ctx);
   reg.environment = { id: environment.id, name: environment.name, synced_at: ctx.now().toISOString() };
   writeRegistry(ctx, reg);
@@ -467,12 +539,23 @@ function resolveSessionRequest(ctx, args) {
   if (!args.prompt || !String(args.prompt).trim()) throw new AdapterError('CONFIG', 'PROMPT_REQUIRED', '--prompt または --prompt-file は必須');
   const roster = loadRoster(ctx.config);
   const def = agentDefinition(roster, args.role);
-  const taskClass = args.taskClass === 'check' ? 'check' : 'task';
+  // タスク種別は必須。Router の許可リストと、その Agent が担当する種別の両方に含まれる場合だけ受け付ける
+  // (Router を通さずに session create を直接呼んでも、対象外の種別は作れない)。
+  const taskType = String(args.taskType || (args.taskClass === 'check' ? 'check' : '')).trim().toLowerCase();
+  if (!taskType) throw new AdapterError('POLICY', 'TASK_TYPE_REQUIRED', '--task-type は必須');
+  if (!agentRouter.MANAGED_TASK_TYPES.includes(taskType) || !def.taskTypes.includes(taskType)) {
+    throw new AdapterError('POLICY', 'TASK_TYPE_NOT_ALLOWED', `task_type=${taskType} は role=${args.role} の対象外 (許可: ${def.taskTypes.filter((t) => agentRouter.MANAGED_TASK_TYPES.includes(t)).join(', ')})`);
+  }
+  const taskClass = taskType === 'check' ? 'check' : 'task';
 
   // 予算: 明示指定 > config.budget。どちらも無ければ拒否 (予算未指定セッション禁止)。
   let cents = null;
   if (args.budgetCents != null) cents = budget.parseCentsString(args.budgetCents);
-  else if (ctx.config.budget && ctx.config.budget.amountCents != null && ctx.config.budget.amountCents !== '') cents = budget.parseCentsString(ctx.config.budget.amountCents);
+  else if (ctx.config.budget && ctx.config.budget.amountCents != null && ctx.config.budget.amountCents !== '') {
+    cents = budget.parseCentsString(ctx.config.budget.amountCents);
+    // 確認処理は既定額を接続テスト上限へ丸める (明示指定した場合は丸めず、上限超過として拒否する)。
+    if (taskClass === 'check') cents = Math.min(cents, ctx.policy.connectionTestMaxCents);
+  }
   if (cents == null) throw new AdapterError('BUDGET', 'BUDGET_REQUIRED', 'セッション予算が未指定 (--budget-cents か config.budget.amountCents が必須)');
   if ((ctx.config.budget && ctx.config.budget.currency && ctx.config.budget.currency !== 'USD')) throw new AdapterError('BUDGET', 'BUDGET_CURRENCY_INVALID', 'budget.currency は USD のみ');
   return { roster, def, taskClass, cents };
@@ -483,6 +566,8 @@ function buildSessionPayload(ctx, args, req, agentRef, environmentId, withSecret
   if (resources.length) {
     if (withSecrets) {
       if (!ctx.githubToken) throw new AdapterError('KEY_MISSING', 'GITHUB_TOKEN_MISSING', `環境変数 ${ctx.githubTokenEnv} が未設定 (読取専用の fine-grained PAT: Contents=Read のみ)`);
+      // API キーを GitHub トークンとして送らない (環境変数の取り違え・設定の誘導を防ぐ)
+      if (ctx.githubToken === ctx.apiKey || /^sk-ant-/.test(ctx.githubToken)) throw new AdapterError('POLICY', 'GITHUB_TOKEN_IS_API_KEY', `環境変数 ${ctx.githubTokenEnv} の値が Anthropic の API キーに見える (送信しない)`);
       resources[0].authorization_token = ctx.githubToken;
     } else {
       resources[0].authorization_token = `<env:${ctx.githubTokenEnv}>`;
@@ -543,7 +628,11 @@ async function sessionCreate(ctx, args) {
   if (!agentRef) throw new AdapterError('CONFIG', 'AGENT_NOT_SYNCED', `role=${args.role} の agent が未同期 (agents sync を先に実行)`);
   const environmentId = resolveEnvironmentId(ctx);
   if (!environmentId) throw new AdapterError('CONFIG', 'ENVIRONMENT_NOT_SYNCED', 'environment が未作成 (env ensure を先に実行)');
+  // 使う Agent / Environment の実体を検証し、検証した version に固定する (課金の発生しない GET 2 回)。
+  const verified = await verifyRemoteResources(ctx, agentRef, environmentId);
+  agentRef.version = verified.agentVersion;
   const payload = buildSessionPayload(ctx, args, req, agentRef, environmentId, true);
+  if ('vault_ids' in payload) throw new AdapterError('POLICY', 'VAULT_NOT_ALLOWED', 'PoC では vault_ids を送信しない');
   if (!payload.budget || !payload.budget.max_list_cost || payload.budget.max_list_cost.amount !== String(req.cents)) {
     throw new AdapterError('BUDGET', 'BUDGET_NOT_APPLIED', 'payload に budget.max_list_cost が反映されていない (送信しない)');
   }
@@ -563,30 +652,71 @@ async function sessionCreate(ctx, args) {
   try {
     session = await apiRequest(ctx, 'POST', '/v1/sessions', payload, { operation: 'POST /v1/sessions' });
   } catch (e) {
-    // 作成に失敗したので予約を解除する。POST は再試行しない。
-    // ただしタイムアウト・接続断は「作成されたか不明」なので予約を残す (保守側・人間が Console で確認)。
-    const uncertain = e instanceof AdapterError && (e.cls === 'TIMEOUT' || e.cls === 'NETWORK');
-    if (!uncertain) budget.release(ctx.ledgerPath, ctx.now(), args.taskId, `create-failed:${e.cls || 'unknown'}`);
-    if (e instanceof AdapterError) e.extra.reservation = uncertain ? 'kept-session-state-unknown' : 'released';
+    // POST は再試行しない。サーバーが明確に拒否した場合 (4xx) だけ予約を解除する。
+    // タイムアウト・接続断・5xx / 529 は「作成されたか不明」なので予約を残す。解除すると同じ task_id で
+    // 二重に作成でき、Local へのフォールバックと合わせて二重実行になる。
+    // 成否は `session close --task-id <id>` (セッション一覧から突き合わせ) で確定する。
+    const definite = e instanceof AdapterError && ['AUTH', 'PERMISSION', 'BILLING', 'RATE_LIMIT', 'INVALID_REQUEST', 'NOT_FOUND', 'CONFLICT'].includes(e.cls);
+    if (definite) budget.release(ctx.ledgerPath, ctx.now(), args.taskId, `create-rejected:${e.cls}`);
+    if (e instanceof AdapterError) {
+      e.extra.reservation = definite ? 'released' : 'kept-session-state-unknown';
+      // 成否不明のまま Local で同じタスクを実行すると二重実行になるため、この場合は自動で戻さない。
+      if (!definite) e.noFallback = true;
+    }
     throw e;
   }
-  budget.recordUsage(ctx.ledgerPath, ctx.now(), { taskId: args.taskId, sessionId: session.id, listCostCents: 0, final: false, status: 'created' });
-  appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'session-created', task_id: args.taskId, role: args.role, session_id: session.id, budget_cents: req.cents, stage: g.stage });
+  if (!session || typeof session.id !== 'string' || !ID_PATTERNS.session.test(session.id)) {
+    const err = new AdapterError('CONFLICT', 'SESSION_ID_MISSING', 'セッション作成の応答に有効な ID が無い (予約は残す。Console で確認する)', { reservation: 'kept-session-state-unknown' });
+    err.noFallback = true;
+    throw err;
+  }
+  try {
+    budget.recordUsage(ctx.ledgerPath, ctx.now(), { taskId: args.taskId, sessionId: session.id, listCostCents: 0, final: false, status: 'created' });
+    appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'session-created', task_id: args.taskId, role: args.role, session_id: session.id, budget_cents: req.cents, stage: g.stage });
+  } catch (e) {
+    // セッションは作成済み。記録に失敗しても session_id を必ず返し、Local へは戻さない (二重実行防止)。
+    const err = new AdapterError('CONFLICT', 'LEDGER_RECORD_FAILED', `セッションは作成済みだが台帳への記録に失敗した (${e.message})`, { session_id: session.id, task_id: args.taskId, reservation: 'kept' });
+    err.noFallback = true;
+    throw err;
+  }
   return {
     mode: ctx.mode, executed: true, task_id: args.taskId, role: args.role, session_id: session.id, status: session.status,
     budget_cents: req.cents, budget_stage: g.stage, warnings: g.warnings || [], console_url: consoleUrl(ctx, session.id),
   };
 }
 
+// 累積 list_cost (セント整数の文字列)。欠落・小数・指数表記など解釈できない場合は null。
 function usageCents(session) {
   const amount = session && session.usage && session.usage.list_cost && session.usage.list_cost.amount;
-  return /^\d+$/.test(String(amount)) ? Number(amount) : 0;
+  return typeof amount === 'string' && /^\d+$/.test(amount) && Number.isSafeInteger(Number(amount)) ? Number(amount) : null;
 }
 
-function recordSessionUsage(ctx, taskId, session, final, status) {
+// task_id とセッションの対応を確認する。別のセッションの使用量でタスクを確定させない
+// (安価な別セッションを指定して予約と並列枠を解放する迂回を防ぐ)。
+function assertTaskSessionBinding(ctx, taskId, session) {
+  const meta = (session && session.metadata) || {};
+  if (meta.claudeos_task_id !== taskId) {
+    throw new AdapterError('POLICY', 'TASK_SESSION_MISMATCH', 'セッションの metadata.claudeos_task_id が task_id と一致しない (台帳へ記録しない)');
+  }
+  const task = budget.foldTasks(budget.readLedger(ctx.ledgerPath).entries).get(taskId);
+  if (!task) throw new AdapterError('POLICY', 'TASK_UNKNOWN', `task_id=${taskId} の予約が台帳に無い`);
+  if (task.session_id && task.session_id !== session.id) {
+    throw new AdapterError('POLICY', 'TASK_SESSION_MISMATCH', 'task_id に記録済みのセッションと異なるセッションが指定された (台帳へ記録しない)');
+  }
+  return task;
+}
+
+// 使用量を台帳へ記録する。確定 (final) にできるのは、セッションが停止しており、かつ使用量を解釈できた場合だけ。
+// それ以外は未確定のまま残し、予約額で保守的に計上し続ける。
+function recordSessionUsage(ctx, taskId, session, status) {
+  assertTaskSessionBinding(ctx, taskId, session);
   const u = (session && session.usage) || {};
+  const cents = usageCents(session);
+  const stopped = session.status === 'idle' || session.status === 'terminated';
+  const final = stopped && cents !== null;
   budget.recordUsage(ctx.ledgerPath, ctx.now(), {
-    taskId, sessionId: session && session.id, listCostCents: usageCents(session), final, status,
+    taskId, sessionId: session && session.id, listCostCents: cents === null ? 0 : cents, final,
+    status: final ? status : `${status}:unconfirmed`,
     inputTokens: u.input_tokens, outputTokens: u.output_tokens, cacheReadInputTokens: u.cache_read_input_tokens,
     activeSeconds: u.active_seconds,
     model: session && session.agent && session.agent.model && (session.agent.model.id || session.agent.model),
@@ -598,12 +728,9 @@ function latestStatusEvent(events) {
   const statuses = events
     .map((e, i) => ({ e, i }))
     .filter(({ e }) => /^session\.status_(idle|running|rescheduled|terminated)$/.test(e.type || ''));
-  statuses.sort((a, b) => {
-    const pa = a.e.processed_at || '';
-    const pb = b.e.processed_at || '';
-    if (pa !== pb) return pa < pb ? -1 : 1;
-    return a.i - b.i;
-  });
+  // 時刻は数値で比較する (小数秒の桁数が混在すると文字列比較では順序が逆転する)。
+  const at = (e) => { const t = Date.parse(e.processed_at); return Number.isNaN(t) ? -Infinity : t; };
+  statuses.sort((a, b) => (at(a.e) - at(b.e)) || (a.i - b.i));
   return statuses.length ? statuses[statuses.length - 1].e : null;
 }
 
@@ -628,34 +755,53 @@ function collectText(events) {
   return parts.join('\n');
 }
 
+const MAX_WAIT_SECONDS = 3600;
+// 数値引数を範囲内に収める。解釈できない値は既定値。
+//   value も def も数値として解釈できない場合は min を使う (NaN を返さない: NaN の待機上限は無限待機になる)。
+function clampNumber(value, def, min, max) {
+  const pick = (v) => { const n = typeof v === 'number' || typeof v === 'string' ? Number(v) : NaN; return Number.isFinite(n) && n > 0 ? n : null; };
+  const n = pick(value);
+  const d = pick(def);
+  return Math.min(max, Math.max(min, n !== null ? n : (d !== null ? d : min)));
+}
+
 async function sendInterrupt(ctx, sessionId) {
+  assertId('session', sessionId);
   return apiRequest(ctx, 'POST', `/v1/sessions/${sessionId}/events`, { events: [{ type: 'user.interrupt' }] }, { operation: 'interrupt' });
 }
 
 async function sessionWait(ctx, args) {
   requireLive(ctx);
-  if (!args.sessionId) throw new AdapterError('CONFIG', 'SESSION_ID_REQUIRED', '--session-id は必須');
-  const maxWaitMs = (Number(args.maxWaitSeconds) > 0 ? Number(args.maxWaitSeconds) : (ctx.config.sessionLifecycle && ctx.config.sessionLifecycle.maxWaitSeconds) || 900) * 1000;
-  const pollMs = Number(args.pollMs) > 0 ? Number(args.pollMs) : 5000;
+  // task_id が無いと使用量を記録できず、予約が未確定のまま残る。
+  if (!args.taskId) throw new AdapterError('CONFIG', 'TASK_ID_REQUIRED', '--task-id は必須 (使用量の記録先)');
+  assertId('session', args.sessionId);
+  const known = budget.foldTasks(budget.readLedger(ctx.ledgerPath).entries).get(args.taskId);
+  if (!known || known.released) throw new AdapterError('POLICY', 'TASK_UNKNOWN', `task_id=${args.taskId} の有効な予約が台帳に無い`);
+  if (known.session_id && known.session_id !== args.sessionId) throw new AdapterError('POLICY', 'TASK_SESSION_MISMATCH', 'task_id に記録済みのセッションと異なるセッションが指定された');
+  const cfgWait = ctx.config.sessionLifecycle && ctx.config.sessionLifecycle.maxWaitSeconds;
+  const maxWaitMs = clampNumber(args.maxWaitSeconds, clampNumber(cfgWait, 900, 10, MAX_WAIT_SECONDS), 10, MAX_WAIT_SECONDS) * 1000;
+  const pollMs = clampNumber(args.pollMs, 5000, ctx.minPollMs, 60000);
   const began = ctx.now().getTime();
   let outcome = null;
   let events = [];
-  let interrupted = false;
+  let interruptSent = false;
+  let interruptError = null;
+  const tryInterrupt = async () => {
+    try { await sendInterrupt(ctx, args.sessionId); interruptSent = true; } catch (e) { interruptError = (e && e.cls) || 'UNKNOWN'; }
+  };
   try {
     for (;;) {
       events = await listAll(ctx, `/v1/sessions/${args.sessionId}/events?limit=1000`, 20);
       outcome = outcomeOf(latestStatusEvent(events));
       if (outcome === 'requires_action') {
-        // PoC の Agent は承認不要ツールのみ。承認要求が来たら自動承認せず止める。
-        await sendInterrupt(ctx, args.sessionId).catch(() => {});
-        interrupted = true;
+        // PoC の Agent は承認不要ツールのみ。承認要求が来たら自動承認せず中断を試みる。
+        await tryInterrupt();
         break;
       }
       if (outcome) break;
       if (ctx.now().getTime() - began >= maxWaitMs) {
-        // 無限待機しない。上限時間で中断を送り、以後は再開しない。
-        await sendInterrupt(ctx, args.sessionId).catch(() => {});
-        interrupted = true;
+        // 無限待機しない。上限時間で中断を試み、以後は再開しない。
+        await tryInterrupt();
         outcome = 'timeout';
         break;
       }
@@ -663,18 +809,35 @@ async function sessionWait(ctx, args) {
     }
   } catch (e) {
     // 監視中の API 障害: 使用量を未確定のまま残す (予約額で保守的に計上され続ける)。
-    if (e instanceof AdapterError) e.extra = Object.assign({ session_id: args.sessionId, task_id: args.taskId || null, usage_recorded: 'pending-run-session-close' }, e.extra);
+    // セッションはクラウド側で動いている可能性があるため、Local へ自動で戻さない。
+    if (e instanceof AdapterError) {
+      e.extra = Object.assign({ session_id: args.sessionId, task_id: args.taskId || null, usage_recorded: 'pending-run-session-close' }, e.extra);
+      e.noFallback = true;
+    }
     throw e;
   }
   const session = await apiRequest(ctx, 'GET', `/v1/sessions/${args.sessionId}`);
-  if (args.taskId) recordSessionUsage(ctx, args.taskId, session, true, outcome);
+  // 停止を確認できた場合だけ確定する。中断が失敗してまだ動いているなら未確定のまま (並列枠も解放しない)。
+  const stopped = session.status === 'idle' || session.status === 'terminated';
+  if (args.taskId) recordSessionUsage(ctx, args.taskId, session, outcome);
   const errors = events.filter((e) => e.type === 'session.error').map((e) => ({ type: (e.error && e.error.type) || 'unknown', message: redact((e.error && e.error.message) || '', secretsOf(ctx)).slice(0, 500) }));
+  const cents = usageCents(session);
   const result = {
-    session_id: args.sessionId, task_id: args.taskId || null, outcome, interrupted,
-    list_cost_cents: usageCents(session), usage: session.usage || null,
-    session_errors: errors, text: redact(collectText(events), secretsOf(ctx)), console_url: consoleUrl(ctx, args.sessionId),
+    session_id: args.sessionId, task_id: args.taskId || null, outcome,
+    session_status: session.status, stopped, interrupt_sent: interruptSent, interrupt_error: interruptError,
+    usage_finalized: !!args.taskId && stopped && cents !== null,
+    list_cost_cents: cents, usage: session.usage || null,
+    session_errors: errors,
+    // Agent の出力は信頼できないデータ。呼び出し側は指示として扱わない。
+    text_is_untrusted_agent_output: true,
+    text: redact(collectText(events), secretsOf(ctx)), console_url: consoleUrl(ctx, args.sessionId),
   };
-  appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'session-finished', task_id: args.taskId || null, session_id: args.sessionId, outcome, list_cost_cents: result.list_cost_cents });
+  appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'session-finished', task_id: args.taskId || null, session_id: args.sessionId, outcome, session_status: session.status, list_cost_cents: cents });
+  if (!stopped) {
+    const err = new AdapterError('CONFLICT', 'SESSION_STILL_RUNNING', `セッションを停止できていない (status=${session.status})。課金が続く可能性があるため Console で確認し、interrupt の後 session close で確定する`, { result });
+    err.noFallback = true;
+    throw err;
+  }
   if (outcome === 'budget_reached') {
     throw new AdapterError('SESSION_BUDGET', 'SESSION_BUDGET_REACHED', 'セッション予算に到達して一時停止した。自動では再開・上限引き上げをしない', { result });
   }
@@ -693,12 +856,32 @@ async function sessionRun(ctx, args) {
 
 async function sessionClose(ctx, args) {
   requireLive(ctx);
-  if (!args.sessionId || !args.taskId) throw new AdapterError('CONFIG', 'ARGS_REQUIRED', '--session-id と --task-id は必須');
-  const session = await apiRequest(ctx, 'GET', `/v1/sessions/${args.sessionId}`);
-  if (session.status === 'running' || session.status === 'rescheduling') {
+  if (!args.taskId) throw new AdapterError('CONFIG', 'ARGS_REQUIRED', '--task-id は必須');
+  const task = budget.foldTasks(budget.readLedger(ctx.ledgerPath).entries).get(args.taskId);
+  if (!task || task.released) throw new AdapterError('POLICY', 'TASK_UNKNOWN', `task_id=${args.taskId} の有効な予約が台帳に無い`);
+  let sessionId = args.sessionId || task.session_id || '';
+  if (!sessionId) {
+    // 作成の成否が不明なまま予約が残ったタスク: セッション一覧から metadata.claudeos_task_id で突き合わせる。
+    const sessions = await listAll(ctx, '/v1/sessions?limit=100', 10);
+    const matches = sessions.filter((s) => s.metadata && s.metadata.claudeos_task_id === args.taskId);
+    if (matches.length > 1) throw new AdapterError('CONFLICT', 'TASK_SESSION_AMBIGUOUS', `task_id=${args.taskId} に対応するセッションが複数ある (Console で確認する)`, { session_ids: matches.map((s) => s.id) });
+    if (matches.length === 0) {
+      // 一覧の取得上限 (1000 件) の範囲で見つからない。作成されなかったと判断できるのは人間だけなので、明示指定を要求する。
+      if (!args.confirmNotCreated) {
+        throw new AdapterError('CONFLICT', 'TASK_SESSION_NOT_FOUND', '対応するセッションが見つからない。Console で作成されていないことを確認してから --confirm-not-created を付けて予約を解除する');
+      }
+      budget.release(ctx.ledgerPath, ctx.now(), args.taskId, 'confirmed-not-created-by-operator');
+      return { task_id: args.taskId, released: true, finalized: false };
+    }
+    sessionId = matches[0].id;
+  }
+  assertId('session', sessionId);
+  const session = await apiRequest(ctx, 'GET', `/v1/sessions/${sessionId}`);
+  if (session.status !== 'idle' && session.status !== 'terminated') {
     throw new AdapterError('CONFLICT', 'SESSION_STILL_RUNNING', `セッションが ${session.status} のため確定できない (先に interrupt)`);
   }
-  recordSessionUsage(ctx, args.taskId, session, true, `closed:${session.status}`);
+  if (usageCents(session) === null) throw new AdapterError('CONFLICT', 'USAGE_UNREADABLE', 'セッションの使用量を解釈できないため確定しない (予約額のまま計上)');
+  recordSessionUsage(ctx, args.taskId, session, `closed:${session.status}`);
   return { session_id: session.id, task_id: args.taskId, status: session.status, list_cost_cents: usageCents(session), finalized: true };
 }
 
@@ -750,7 +933,10 @@ function route(ctx, task, args) {
   let cents = null;
   try {
     if (a.budgetCents != null) cents = budget.parseCentsString(a.budgetCents);
-    else if (ctx.config && ctx.config.budget && ctx.config.budget.amountCents) cents = budget.parseCentsString(ctx.config.budget.amountCents);
+    else if (ctx.config && ctx.config.budget && ctx.config.budget.amountCents) {
+      cents = budget.parseCentsString(ctx.config.budget.amountCents);
+      if (taskClass === 'check') cents = Math.min(cents, ctx.policy.connectionTestMaxCents);
+    }
   } catch { cents = null; }
   const { entries, corrupt } = budget.readLedger(ctx.ledgerPath);
   const g = corrupt > 0 ? { allow: false, code: 'LEDGER_CORRUPT', stage: 'unknown' } : budget.guard(entries, ctx.now(), ctx.policy, { cents, taskClass, ackDailySoft: !!a.ackDailySoft });
@@ -778,16 +964,23 @@ function route(ctx, task, args) {
 }
 
 // --- CLI ---
+// 値を取るオプションと真偽フラグを明示的に分ける。値が無い・未知のオプションはエラーにする
+// (--budget-cents の値を忘れて既定額で実行される、といった黙った読み替えを防ぐ)。
+const VALUE_OPTIONS = new Set(['config', 'role', 'task-id', 'task-type', 'prompt', 'prompt-file', 'budget-cents', 'class', 'repo', 'ref', 'session-id', 'max-wait-seconds', 'poll-ms', 'console-usd', 'note', 'json']);
+const FLAG_OPTIONS = new Set(['probe', 'ack-daily-soft', 'confirm-not-created']);
 function parseArgs(argv) {
   const pos = [];
   const opts = {};
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a.startsWith('--')) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith('--')) opts[key] = true; else { opts[key] = next; i += 1; }
-    } else pos.push(a);
+    if (!a.startsWith('--')) { pos.push(a); continue; }
+    const key = a.slice(2);
+    if (FLAG_OPTIONS.has(key)) { opts[key] = true; continue; }
+    if (!VALUE_OPTIONS.has(key)) throw new AdapterError('CONFIG', 'OPTION_UNKNOWN', `不明なオプション: --${key}`);
+    // 値は次の引数をそのまま使う ("--" で始まる文字列も値として受け取る。例: --prompt "--verbose を説明")
+    if (i + 1 >= argv.length) throw new AdapterError('CONFIG', 'OPTION_VALUE_REQUIRED', `--${key} には値が必要`);
+    opts[key] = argv[i + 1];
+    i += 1;
   }
   return { pos, opts };
 }
@@ -799,6 +992,8 @@ function sessionArgs(o) {
     taskId: typeof o['task-id'] === 'string' ? o['task-id'] : '', role: typeof o.role === 'string' ? o.role : '', prompt,
     budgetCents: typeof o['budget-cents'] === 'string' ? o['budget-cents'] : null,
     taskClass: o.class === 'check' ? 'check' : 'task',
+    taskType: typeof o['task-type'] === 'string' ? o['task-type'] : '',
+    confirmNotCreated: o['confirm-not-created'] === true,
     repo: typeof o.repo === 'string' ? o.repo : '', ref: typeof o.ref === 'string' ? o.ref : '',
     ackDailySoft: o['ack-daily-soft'] === true,
     sessionId: typeof o['session-id'] === 'string' ? o['session-id'] : '',
@@ -824,9 +1019,9 @@ async function dispatch(ctx, pos, o) {
     if (sub === 'run') return sessionRun(ctx, a);
     if (sub === 'wait') return sessionWait(ctx, a);
     if (sub === 'close') return sessionClose(ctx, a);
-    if (sub === 'get') { requireLive(ctx); return apiRequest(ctx, 'GET', `/v1/sessions/${a.sessionId}`); }
-    if (sub === 'events') { requireLive(ctx); return { data: await listAll(ctx, `/v1/sessions/${a.sessionId}/events?limit=1000`, 20) }; }
-    if (sub === 'interrupt') { requireLive(ctx); await sendInterrupt(ctx, a.sessionId); return { session_id: a.sessionId, interrupted: true }; }
+    if (sub === 'get') { requireLive(ctx); return apiRequest(ctx, 'GET', `/v1/sessions/${assertId('session', a.sessionId)}`); }
+    if (sub === 'events') { requireLive(ctx); return { data: await listAll(ctx, `/v1/sessions/${assertId('session', a.sessionId)}/events?limit=1000`, 20) }; }
+    if (sub === 'interrupt') { requireLive(ctx); await sendInterrupt(ctx, a.sessionId); return { session_id: a.sessionId, interrupt_sent: true }; }
   }
   if (cmd === 'budget') {
     if (sub === 'status' || !sub) return budgetStatus(ctx);
@@ -853,16 +1048,19 @@ function errorPayload(e, ctx) {
     body: {
       ok: false, class: cls, code: e.code || 'UNEXPECTED', state: meta.state,
       message: redact(e.message, ctx ? secretsOf(ctx) : []),
-      fallback: fallbackDecision(cls),
+      // noFallback: クラウド側でセッションが動いている (かもしれない) 場合。Local で再実行すると二重実行になる。
+      fallback: e.noFallback
+        ? { to: 'none', state: 'NEEDS_OPERATOR', reason: 'managed-session-state-unconfirmed' }
+        : fallbackDecision(cls),
       details: e.extra || {},
     },
   };
 }
 
 async function main() {
-  const { pos, opts } = parseArgs(process.argv.slice(2));
   let ctx = null;
   try {
+    const { pos, opts } = parseArgs(process.argv.slice(2));
     ctx = createContext({ configPath: typeof opts.config === 'string' ? opts.config : undefined });
     const out = await dispatch(ctx, pos, opts);
     process.stdout.write(redact(JSON.stringify(out, null, 2), secretsOf(ctx)) + '\n');

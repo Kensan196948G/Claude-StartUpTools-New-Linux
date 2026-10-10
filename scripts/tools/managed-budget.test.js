@@ -194,7 +194,7 @@ test('normalizePolicy: 無制限リトライ・不正な閾値順・不正な an
 
 test('T06 reserve: 同じ task_id の 2 回目は DUPLICATE_TASK で拒否する', () => {
   const ledger = tmpLedger();
-  const p = policy({ maxConcurrentSessions: 5 });
+  const p = policy();
   const first = b.reserve(ledger, NOW, p, { taskId: 'task-1', cents: 100 });
   assert.equal(first.allow, true);
   const second = b.reserve(ledger, NOW, p, { taskId: 'task-1', cents: 100 });
@@ -241,6 +241,77 @@ test('reconcile: Console の実績との差分を返し、照合記録を残す'
   assert.equal(b.readLedger(ledger).entries.filter((e) => e.type === 'reconcile').length, 1);
   // 照合記録は消費額に影響しない
   assert.equal(b.summarize(b.readLedger(ledger).entries, NOW, p).actualMonthCents, 42);
+});
+
+test('normalizePolicy: PoC のハード上限を超える値・不正な日時は拒否する', () => {
+  for (const over of [{ maxConcurrentSessions: 2 }, { sessionMaxCents: 501 }, { monthlyBudgetCents: 10001 }, { dailySoftCents: 10001 }, { exhaustedPct: 101 }]) {
+    assert.throws(() => b.normalizePolicy(over), (e) => e.code === 'POLICY_INVALID', JSON.stringify(over));
+  }
+  assert.throws(() => b.normalizePolicy({ cycle: { creditsExpireAt: 'bogus' } }), (e) => e.code === 'POLICY_INVALID');
+  assert.throws(() => b.normalizePolicy({ cycle: { consoleVerifiedAt: 12345 } }), (e) => e.code === 'POLICY_INVALID');
+  assert.equal(b.normalizePolicy({ cycle: { creditsExpireAt: '2026-11-01T00:00:00Z' } }).cycle.creditsExpireAt, '2026-11-01T00:00:00Z');
+});
+
+test('請求期間・日付の境界: 前期間に開始した未確定セッションも並列数と予約に数える', () => {
+  const open = [{ type: 'reserve', ts: '2026-09-30T23:59:50.000Z', task_id: 'cross', cents: 200 }];
+  const justAfter = new Date('2026-10-01T00:00:05Z');
+  const g = b.guard(open, justAfter, policy(), { cents: 100 });
+  assert.equal(g.allow, false);
+  assert.equal(g.code, 'CONCURRENCY_LIMIT');
+  const s = b.summarize(open, justAfter, policy());
+  assert.deepEqual([s.openSessions, s.committedMonthCents, s.committedDayCents], [1, 200, 200]);
+  // 確定後は開始した期間の実績になり、当期の枠は空く
+  const closed = [...open, { type: 'usage', ts: '2026-10-01T00:01:00.000Z', task_id: 'cross', session_id: 's', list_cost_cents: 150, final: true }];
+  assert.deepEqual([b.summarize(closed, justAfter, policy()).openSessions, b.summarize(closed, justAfter, policy()).committedMonthCents], [0, 0]);
+});
+
+test('解除済みタスクに後から使用量が届いた場合、その実績は消さない (実は作成されていた場合)', () => {
+  const entries = [
+    { type: 'reserve', ts: '2026-10-10T01:00:00.000Z', task_id: 'ghost', cents: 200 },
+    { type: 'release', ts: '2026-10-10T01:00:01.000Z', task_id: 'ghost', reason: 'create-rejected' },
+    { type: 'usage', ts: '2026-10-10T01:05:00.000Z', task_id: 'ghost', session_id: 's', list_cost_cents: 40, final: true },
+  ];
+  const s = b.summarize(entries, NOW, policy());
+  assert.deepEqual([s.committedMonthCents, s.actualMonthCents, s.openSessions], [40, 40, 0]);
+});
+
+test('ロック: 取得できなければ fail-closed。古いロックを自動回収せず、他者のロックを解放しない', () => {
+  const ledger = tmpLedger();
+  const lockDir = `${ledger}.lock`;
+  fs.mkdirSync(lockDir);
+  const old = new Date(Date.now() - 10 * 60 * 1000);
+  fs.utimesSync(lockDir, old, old); // 10 分前のロックでも回収しない
+  assert.throws(() => b.withLock(ledger, () => 'entered', { timeoutMs: 200 }), (e) => e.code === 'LEDGER_LOCK_TIMEOUT');
+  assert.ok(fs.existsSync(lockDir), '他者のロックは残る');
+  assert.throws(() => b.reserve(ledger, NOW, policy(), { taskId: 'blocked', cents: 10 }, undefined), (e) => e.code === 'LEDGER_LOCK_TIMEOUT');
+  fs.rmdirSync(lockDir);
+  assert.equal(b.withLock(ledger, () => 'entered'), 'entered');
+  assert.equal(fs.existsSync(lockDir), false, '自分のロックは解放する');
+  assert.throws(() => b.withLock(ledger, () => { throw new Error('boom'); }), /boom/);
+  assert.equal(fs.existsSync(lockDir), false, '例外時も解放する');
+});
+
+test('ロック: 複数プロセスが同時に予約しても並列数 1 を超えて許可しない', () => {
+  const { spawnSync } = require('child_process');
+  const ledger = tmpLedger();
+  const script = `
+    const b = require(${JSON.stringify(require.resolve('./managed-budget.js'))});
+    const g = b.reserve(process.argv[1], new Date('2026-10-10T12:00:00Z'), b.normalizePolicy({}), { taskId: 'p-' + process.argv[2], cents: 100 });
+    process.stdout.write(g.allow ? 'ALLOW' : g.code);`;
+  const runner = `
+    const { spawn } = require('child_process');
+    let left = 8; const out = [];
+    for (let i = 0; i < 8; i += 1) {
+      const c = spawn(process.execPath, ['-e', ${JSON.stringify(script)}, ${JSON.stringify(ledger)}, String(i)]);
+      let s = ''; c.stdout.on('data', (d) => { s += d; });
+      c.on('close', () => { out.push(s); left -= 1; if (!left) process.stdout.write(JSON.stringify(out)); });
+    }`;
+  const r = spawnSync(process.execPath, ['-e', runner], { encoding: 'utf8', timeout: 60000 });
+  const results = JSON.parse(r.stdout);
+  assert.equal(results.length, 8);
+  assert.equal(results.filter((x) => x === 'ALLOW').length, 1, JSON.stringify(results));
+  assert.equal(results.filter((x) => x === 'CONCURRENCY_LIMIT').length, 7, JSON.stringify(results));
+  assert.equal(fs.existsSync(`${ledger}.lock`), false);
 });
 
 test('台帳ファイルは所有者のみ読み書き可 (0600) で作られる', () => {

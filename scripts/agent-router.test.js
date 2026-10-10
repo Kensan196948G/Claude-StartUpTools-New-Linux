@@ -69,7 +69,8 @@ test('agent-router.js: 正本 (scripts/tools) と2つの配布コピーは同一
 // --- Managed Agents (opt-in) ---
 const { managedEligibility, MANAGED_TASK_TYPES } = require('./tools/agent-router.js');
 const lowRisk = (over) => Object.assign({ task_type: 'review', complexity: 'medium', risk: 'low', read_only: true, files_affected: 10 }, over);
-const managedOk = (over) => Object.assign({ available: true, budget_state: 'ok' }, over);
+// 安全条件は明示的に false を渡す (省略・不明値は fail-closed で拒否される)
+const managedOk = (over) => Object.assign({ available: true, budget_state: 'ok', human_gate: false, requires_secrets: false, requires_external_network: false }, over);
 
 test('router managed: managed ブロックが無ければ出力は従来と完全に同一 (配布先の後方互換)', () => {
   for (const c of golden.cases) {
@@ -115,7 +116,7 @@ test('router managed: 高リスク・書込み・DB/デプロイ影響・Secret�
 });
 
 test('router managed: 予算段階 — warn は可、verify-only は check のみ、stop / exhausted / 不明は不可 (capacity)', () => {
-  const run = (budget_state, task_type) => route(lowRisk({ task_type: task_type || 'review', managed: { available: true, budget_state, requested: true } }));
+  const run = (budget_state, task_type) => route(lowRisk({ task_type: task_type || 'review', managed: managedOk({ budget_state, requested: true }) }));
   assert.strictEqual(run('warn').execution, 'ManagedAgent');
   assert.notStrictEqual(run('verify-only').execution, 'ManagedAgent');
   assert.strictEqual(run('verify-only', 'check').execution, 'ManagedAgent');
@@ -127,12 +128,49 @@ test('router managed: 予算段階 — warn は可、verify-only は check の�
 });
 
 test('router managed: 利用不可・重複タスクは capacity 拒否で Local の決定を返す', () => {
-  const unavailable = route(lowRisk({ managed: { available: false, budget_state: 'ok', requested: true } }));
+  const unavailable = route(lowRisk({ managed: managedOk({ available: false, requested: true }) }));
   assert.strictEqual(unavailable.execution, 'Subagent');
   assert.deepStrictEqual(unavailable.managed.denied, ['managed-unavailable']);
   const dup = route(lowRisk({ managed: managedOk({ requested: true, duplicate: true }) }));
   assert.strictEqual(dup.execution, 'Subagent');
   assert.ok(dup.managed.denied.includes('duplicate-task'));
+});
+
+test('router managed: 安全条件は fail-closed (省略・不明値・呼び出し側による緩和では選ばない)', () => {
+  const pick = (input) => route(input);
+  const denied = [
+    lowRisk({ managed: { available: true, budget_state: 'ok', requested: true } }), // 確認項目の省略
+    lowRisk({ managed: managedOk({ requested: true, human_gate: 'yes' }) }),
+    lowRisk({ managed: managedOk({ requested: true, requires_secrets: 'TRUE' }) }),
+    lowRisk({ managed: managedOk({ requested: true, requires_external_network: 'no' }) }),
+    lowRisk({ security_impact: 'High ', managed: managedOk({ requested: true }) }),
+    lowRisk({ deployment_impact: 'severe', managed: managedOk({ requested: true }) }),
+    lowRisk({ database_impact: 'yes', managed: managedOk({ requested: true }) }),
+    lowRisk({ risk: undefined, managed: managedOk({ requested: true }) }),
+    lowRisk({ read_only: 'yes', managed: managedOk({ requested: true }) }),
+    lowRisk({ task_type: 'deploy', managed: managedOk({ requested: true, allowed_task_types: ['deploy'] }) }),
+    lowRisk({ expected_duration_min: 600, managed: managedOk({ requested: true, max_duration_min: 9999 }) }),
+    lowRisk({ expected_duration_min: 'forever', managed: managedOk({ requested: true }) }),
+  ];
+  for (const input of denied) {
+    const d = pick(input);
+    assert.notStrictEqual(d.execution, 'ManagedAgent', JSON.stringify(input));
+    assert.strictEqual(d.managed.policy_denied, true, JSON.stringify(input));
+  }
+  // local_available は明示的な false のときだけ「使えない」と扱う
+  assert.strictEqual(pick(lowRisk({ managed: managedOk({ local_available: null }) })).execution, 'Subagent');
+  assert.strictEqual(pick(lowRisk({ managed: managedOk({ local_available: false }) })).execution, 'ManagedAgent');
+  // 許可リストは狭められるが広げられない
+  assert.strictEqual(pick(lowRisk({ managed: managedOk({ requested: true, allowed_task_types: ['docs'] }) })).managed.policy_denied, true);
+});
+
+test('router managed: managed が null / 配列 / 文字列 / 数値でも従来の出力と同じ (managed キーを付けない)', () => {
+  for (const c of golden.cases) {
+    const base = JSON.stringify(route(c.input));
+    for (const junk of [null, [], 'yes', 1, true, undefined]) {
+      assert.strictEqual(JSON.stringify(route(Object.assign({}, c.input, { managed: junk }))), base, c.name);
+    }
+  }
 });
 
 test('router managed: 許可タスク種別に書込み・本番系が含まれない', () => {

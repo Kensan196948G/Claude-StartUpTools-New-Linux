@@ -43,27 +43,45 @@ const MANAGED_TASK_TYPES = ['review', 'code-review', 'diff-analysis', 'qa-analys
 //   denied[]  : 選択不可の理由。kind=policy は安全上の拒否で、フォールバックで回避してはならない。
 //               kind=capacity は予算・可用性の不足で、Local 経路へ安全に戻してよい。
 //   preferred : Local が使えない、または明示要求がある (Local 稼働中というだけでは並列起動しない)。
-function managedEligibility(i, m) {
+//   安全条件は fail-closed: 解釈できない値・省略された確認項目は「拒否」に倒す。
+//   (Local 向けの route() は従来どおり寛容に解釈する。厳格なのはクラウドへ出す判定だけ)
+const MANAGED_MAX_DURATION_MIN = 30;
+
+// 厳格なレベル解釈: 省略は def、未知の文字列は critical 扱い。
+function strictLevel(v, def) {
+  if (v === undefined || v === null || v === '') return LEVELS[def];
+  return LEVELS[String(v).trim().toLowerCase()] || LEVELS.critical;
+}
+// 明示的な false だけを「該当なし」と認める (省略・"yes"・"no" などは未確認として拒否)。
+function explicitlyFalse(v) { return v === false || v === 'false' || v === 0 || v === '0'; }
+function explicitlyTrue(v) { return v === true || v === 'true' || v === 1 || v === '1'; }
+
+function managedEligibility(i, m, raw) {
+  const r = raw || {};
   const denied = [];
   const deny = (kind, code, text) => denied.push({ kind, code, text });
-  const allowedTypes = Array.isArray(m.allowed_task_types) && m.allowed_task_types.length
-    ? m.allowed_task_types.map((t) => String(t).toLowerCase()) : MANAGED_TASK_TYPES;
-  const sensitivity = String(m.data_sensitivity || 'internal').toLowerCase();
+  // 呼び出し側の許可リストは既定リストを狭めることだけできる (広げられない)。
+  const requested = Array.isArray(m.allowed_task_types) ? m.allowed_task_types.map((t) => String(t).trim().toLowerCase()) : null;
+  const allowedTypes = requested ? MANAGED_TASK_TYPES.filter((t) => requested.includes(t)) : MANAGED_TASK_TYPES;
+  const sensitivity = String(m.data_sensitivity === undefined ? 'internal' : m.data_sensitivity).trim().toLowerCase();
   const budget = String(m.budget_state || 'unknown').toLowerCase();
-  const maxDuration = num(m.max_duration_min, 30);
+  const reqMax = Number(m.max_duration_min);
+  const maxDuration = Number.isFinite(reqMax) && reqMax > 0 ? Math.min(reqMax, MANAGED_MAX_DURATION_MIN) : MANAGED_MAX_DURATION_MIN;
+  const rawDuration = r.expected_duration_min;
+  const duration = rawDuration === undefined || rawDuration === null || rawDuration === '' ? i.duration : Number(rawDuration);
 
-  if (bool(m.human_gate)) deny('policy', 'human-gate', '人間承認待ちのタスクは Managed Agents へ出さない');
-  if (!i.readOnly) deny('policy', 'not-read-only', '初期 PoC は読取専用タスクのみ');
-  if (i.risk > LEVELS.low) deny('policy', 'risk', 'risk が low を超える');
-  if (i.security > LEVELS.low) deny('policy', 'security-impact', 'security_impact が low を超える');
-  if (i.database > LEVELS.low) deny('policy', 'database-impact', 'Local PostgreSQL へ影響するタスクは対象外');
-  if (i.deployment > LEVELS.low) deny('policy', 'deployment-impact', '本番・デプロイへ影響するタスクは対象外');
-  if (bool(m.requires_secrets)) deny('policy', 'requires-secrets', 'Secret を必要とするタスクは対象外');
+  if (!explicitlyFalse(m.human_gate)) deny('policy', 'human-gate', '人間承認が不要であることを明示していない (human_gate=false が必須)');
+  if (!explicitlyTrue(r.read_only)) deny('policy', 'not-read-only', '初期 PoC は読取専用タスクのみ (read_only=true が必須)');
+  if (strictLevel(r.risk, 'medium') > LEVELS.low) deny('policy', 'risk', 'risk が low ではない (省略・不明値を含む)');
+  if (strictLevel(r.security_impact, 'low') > LEVELS.low) deny('policy', 'security-impact', 'security_impact が low を超える');
+  if (strictLevel(r.database_impact, 'low') > LEVELS.low) deny('policy', 'database-impact', 'Local PostgreSQL へ影響するタスクは対象外');
+  if (strictLevel(r.deployment_impact, 'low') > LEVELS.low) deny('policy', 'deployment-impact', '本番・デプロイへ影響するタスクは対象外');
+  if (!explicitlyFalse(m.requires_secrets)) deny('policy', 'requires-secrets', 'Secret 不要であることを明示していない (requires_secrets=false が必須)');
   if (sensitivity !== 'public' && sensitivity !== 'internal') deny('policy', 'data-sensitivity', `データ機密性 ${sensitivity} は対象外`);
-  if (bool(m.requires_external_network)) deny('policy', 'external-network', '外部通信が必要なタスクは対象外 (environment は limited networking)');
-  if (i.comm) deny('policy', 'inter-agent-communication', 'Agent 間の相互通信が必要なタスクは対象外');
+  if (!explicitlyFalse(m.requires_external_network)) deny('policy', 'external-network', '外部通信不要であることを明示していない (requires_external_network=false が必須)');
+  if (i.comm || (r.needs_inter_agent_communication !== undefined && !explicitlyFalse(r.needs_inter_agent_communication))) deny('policy', 'inter-agent-communication', 'Agent 間の相互通信が必要なタスクは対象外');
   if (!allowedTypes.includes(i.task_type)) deny('policy', 'task-type', `task_type=${i.task_type} は許可リスト外`);
-  if (i.duration > maxDuration) deny('policy', 'duration', `所要時間 ${i.duration}min が上限 ${maxDuration}min を超える`);
+  if (!Number.isFinite(duration) || duration < 0 || duration > maxDuration) deny('policy', 'duration', `所要時間 ${rawDuration === undefined ? i.duration : rawDuration}min が上限 ${maxDuration}min を超えるか解釈できない`);
 
   if (!bool(m.available)) deny('capacity', 'managed-unavailable', 'Managed Agents が利用不可 (設定・認証・稼働状態)');
   if (bool(m.duplicate)) deny('capacity', 'duplicate-task', '同一タスク ID のセッションが既に存在する');
@@ -73,8 +91,9 @@ function managedEligibility(i, m) {
     deny('capacity', `budget-${budget}`, `予算状態 ${budget} のため新規セッション不可`);
   }
 
-  const localAvailable = m.local_available === undefined ? true : bool(m.local_available);
-  const preferred = bool(m.requested) || !localAvailable;
+  // Local が使えないと扱うのは明示的な false のときだけ (null や不明値で Managed を選ばせない)。
+  const localAvailable = !explicitlyFalse(m.local_available);
+  const preferred = explicitlyTrue(m.requested) || !localAvailable;
   return { eligible: denied.length === 0, preferred, denied, local_available: localAvailable, budget_state: budget };
 }
 
@@ -143,7 +162,7 @@ function route(raw) {
   // --- Managed Agents (opt-in)。managed ブロックが無ければ従来の出力をそのまま返す ---
   const m = raw.managed;
   if (m && typeof m === 'object' && !Array.isArray(m)) {
-    const e = managedEligibility(i, m);
+    const e = managedEligibility(i, m, raw);
     const policyDenied = e.denied.filter((d) => d.kind === 'policy');
     decision.managed = {
       eligible: e.eligible,
@@ -211,4 +230,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { route, managedEligibility, LEVELS, MANAGED_TASK_TYPES };
+module.exports = { route, managedEligibility, LEVELS, MANAGED_TASK_TYPES, MANAGED_MAX_DURATION_MIN };

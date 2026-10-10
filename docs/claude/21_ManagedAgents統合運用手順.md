@@ -98,12 +98,12 @@ bin/managed-agents.sh status
 # 3) 同期計画と request の確認（ネットワークなし）
 bin/managed-agents.sh agents plan
 bin/managed-agents.sh env plan
-bin/managed-agents.sh session create --task-id review-20261010-1 --role repository-review \
+bin/managed-agents.sh session create --task-id review-20261010-1 --role repository-review --task-type review \
   --prompt "docs/architecture と README の整合性を確認してください" --budget-cents 100
 
 # 4) 実行先の判定（Managed へ出してよいかと理由。決定は decisions.jsonl に残る）
 bin/managed-agents.sh route --task-id review-20261010-1 \
-  --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true}}'
+  --json '{"task_type":"review","risk":"low","read_only":true,"files_affected":12,"managed":{"requested":true,"human_gate":false,"requires_secrets":false,"requires_external_network":false}}'
 ```
 
 live（§4 を満たした後）:
@@ -117,7 +117,7 @@ bin/managed-agents.sh env ensure       # limited networking の Environment を�
 bin/managed-agents.sh agents sync      # 3 Agent を作成・更新
 
 # 初回接続テスト（上限 $0.50）
-bin/managed-agents.sh session run --task-id connect-20261010-1 --role repository-review --class check \
+bin/managed-agents.sh session run --task-id connect-20261010-1 --role repository-review --task-type check \
   --budget-cents 50 --prompt "README.md を読み、3 行で要約してください。"
 
 bin/managed-agents.sh budget status
@@ -131,7 +131,8 @@ bin/managed-agents.sh budget reconcile --console-usd 0.12 --note "Console 確認
 | `env plan / ensure` | Environment の計画、作成 |
 | `route --json '<task>'` | Agent Router による実行先の判定と記録 |
 | `session create / run` | 予算付きセッションの作成、作成から完了までの監視 |
-| `session wait / get / events / interrupt / close` | 監視、状態取得、イベント取得、中断、使用量の確定 |
+| `session wait / get / events / interrupt` | 監視、状態取得、イベント取得、中断 |
+| `session close --task-id T [--session-id S] [--confirm-not-created]` | 使用量の確定。セッション ID を省くと一覧から `task_id` で突き合わせる |
 | `budget status / reconcile` | 台帳の集計、Console との照合 |
 
 `task_id` は重複実行防止のキーです。同じ `task_id` では 2 回実行できません。
@@ -145,10 +146,12 @@ bin/managed-agents.sh budget reconcile --console-usd 0.12 --note "Console 確認
 | セッション予算に到達 | 終了コード 3。再開・引き上げをしない | 結果が途中まで出ている。続きが必要なら Local で実施する |
 | クレジット不足（`billing_error`） | 終了コード 3 | Console で残高を確認する。追加購入は別途承認が必要 |
 | 認証・権限エラー（401 / 403） | 終了コード 4（BLOCKED）。再試行しない | API キーと workspace の権限を確認する |
-| API 障害・タイムアウト | 終了コード 5 / 8。GET のみ 1 回再試行 | Local で実施する。作成の成否が不明な場合は Console でセッションを確認し `session close` で確定する |
-| 監視時間の超過 | `user.interrupt` を送って停止 | 必要なら Local で実施する |
+| API 障害（セッション作成前・一覧取得など） | 終了コード 5 / 8。GET のみ 1 回再試行 | Local で実施する |
+| 作成の成否が不明（作成時のタイムアウト・接続断・5xx）、監視中の API 障害 | 予約を残して停止。`fallback.state` は `NEEDS_OPERATOR` で、Local へ自動では戻さない | `session close --task-id <id>` で突き合わせて確定する。見つからなければ Console で未作成を確認し `--confirm-not-created` を付けて解除する。その後に Local で実施する |
+| 監視時間の超過 | `user.interrupt` を送る。停止を確認できた場合だけ使用量を確定する | 停止できた場合は必要なら Local で実施。`SESSION_STILL_RUNNING` の場合は Console で確認し、`session interrupt` の後 `session close` |
 | 同一 `task_id` | 終了コード 6 | 既存の結果を確認する。やり直す場合は新しい `task_id` を使う |
 | 台帳の破損 | fail-closed で新規実行を拒否 | `~/.claudeos/managed-agents/ledger.jsonl` を確認・修復する |
+| 台帳ロックを取得できない（`LEDGER_LOCK_TIMEOUT`） | fail-closed で停止。古いロックを自動回収しない | 他の実行が無いことを確認してから `ledger.jsonl.lock` ディレクトリを削除する |
 
 ## 7. ロールバック
 

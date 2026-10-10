@@ -24,10 +24,11 @@ Worktree: 並列書込み、Background Agent の書込み、Agent View は常に
 
 | 区分 | 条件 |
 |---|---|
-| 安全条件（policy） | `read_only=true`、risk / security / database / deployment が low、Secret 不要、外部通信不要、データ機密性が public / internal、Agent 間通信なし、人間承認待ちでない、task_type が許可リスト内（review / code-review / diff-analysis / qa-analysis / test-generation / triage / docs / research / check）、所要時間が上限内 |
+| 安全条件（policy） | `read_only=true`、`risk=low`（省略不可）、security / database / deployment が low、`managed.human_gate=false`・`managed.requires_secrets=false`・`managed.requires_external_network=false` を**明示**、データ機密性が public / internal、Agent 間通信なし、task_type が許可リスト内（review / code-review / diff-analysis / qa-analysis / test-generation / triage / docs / research / check）、所要時間が 30 分以内 |
 | 容量条件（capacity） | Managed Agents が利用可能（設定・認証）、予算状態が ok / warn（verify-only は `check` のみ）、同一タスク ID が未実行 |
 | 選択条件 | 明示要求（`managed.requested=true`）がある、または Local が利用できない（`managed.local_available=false`）。**Local が稼働中というだけでは並列起動しない** |
 
+- 安全条件は fail-closed。省略された確認項目、真偽値でない値（`"yes"` など）、未知のレベル文字列（`"severe"` など）は拒否に倒す。呼び出し側は許可リストと時間上限を狭められるが、広げられない。
 - 条件を満たして選択された場合のみ `execution: "ManagedAgent"`。それ以外は上の決定表の結果のまま。
 - `managed.fallback_execution` に Local 側の決定を常に保持する（API 障害・予算不足時の戻り先）。
 - `managed.policy_denied=true` は安全上の拒否。フォールバックや別経路で承認・拒否を回避しない。

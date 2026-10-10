@@ -94,11 +94,14 @@ ma__validate() {
 # ------------------------------------------------------------
 ma__cli() {
   command -v node >/dev/null 2>&1 || { printf 'node が見つかりません\n' >&2; return 127; }
-  local token_env="${CLAUDEOS_MA_GITHUB_TOKEN_ENV:-CLAUDEOS_MA_GITHUB_TOKEN}"
-  local -a pass=("PATH=$PATH" "HOME=$HOME")
+  local -a pass=("PATH=${PATH:-/usr/bin:/bin}" "HOME=${HOME:-}")
   local name
-  for name in ANTHROPIC_API_KEY CLAUDEOS_MANAGED_AGENTS_CONFIG CLAUDEOS_MA_STATE_DIR CLAUDEOS_HOME "$token_env" LANG LC_ALL TZ; do
+  for name in ANTHROPIC_API_KEY CLAUDEOS_MANAGED_AGENTS_CONFIG CLAUDEOS_HOME LANG LC_ALL TZ; do
     [[ -n "${!name:-}" ]] && pass+=("$name=${!name}")
   done
+  # adapter 専用の変数 (CLAUDEOS_MA_*: 状態ディレクトリ、GitHub トークン。config の tokenEnv もこの接頭辞に限定)
+  while IFS= read -r name; do
+    [[ -n "${!name:-}" ]] && pass+=("$name=${!name}")
+  done < <(compgen -v CLAUDEOS_MA_)
   env -i "${pass[@]}" node "$(ma__tool)" "$@"
 }

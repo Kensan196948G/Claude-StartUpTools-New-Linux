@@ -22,6 +22,18 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+
+// 初期 PoC のハード上限。設定ファイルでこれを超える値を指定しても検証で拒否する
+// (設定の書き換えだけで予算制御を無効化できないようにする)。
+const HARD_LIMITS = Object.freeze({
+  monthlyBudgetCents: 10000,      // $100 (月額クレジット全体) を超える枠は設定不可
+  sessionMaxCents: 500,           // 単一セッション $5 まで
+  connectionTestMaxCents: 100,
+  dailySoftCents: 10000,
+  maxConcurrentSessions: 1,       // PoC は並列 1 固定
+  maxApiRetries: 1,
+});
 
 const DEFAULT_POLICY = Object.freeze({
   monthlyBudgetCents: 2000,       // Managed Agents 月間 PoC 予算 $20
@@ -79,17 +91,25 @@ function normalizePolicy(raw) {
   for (const k of Object.keys(DEFAULT_POLICY)) {
     const v = src[k] === undefined ? DEFAULT_POLICY[k] : src[k];
     if (!Number.isInteger(v) || v < 0) throw new BudgetError('POLICY_INVALID', `budgetPolicy.${k} は 0 以上の整数 (actual: ${v})`);
+    if (HARD_LIMITS[k] !== undefined && v > HARD_LIMITS[k]) {
+      throw new BudgetError('POLICY_INVALID', `budgetPolicy.${k}=${v} は PoC のハード上限 ${HARD_LIMITS[k]} を超える`);
+    }
     p[k] = v;
   }
+  if (p.exhaustedPct > 100) throw new BudgetError('POLICY_INVALID', 'budgetPolicy.exhaustedPct は 100 以下');
   if (!(p.warnPct <= p.verifyOnlyPct && p.verifyOnlyPct <= p.stopPct && p.stopPct <= p.exhaustedPct)) {
     throw new BudgetError('POLICY_INVALID', 'budgetPolicy の閾値は warn <= verifyOnly <= stop <= exhausted');
   }
-  if (p.maxApiRetries > 1) throw new BudgetError('POLICY_INVALID', 'budgetPolicy.maxApiRetries は最大 1 (無制限リトライ禁止)');
   if (p.maxConcurrentSessions < 1) throw new BudgetError('POLICY_INVALID', 'budgetPolicy.maxConcurrentSessions は 1 以上');
   const cycle = src.cycle && typeof src.cycle === 'object' ? src.cycle : {};
   const anchorDay = cycle.anchorDay == null ? null : cycle.anchorDay;
   if (anchorDay !== null && !(Number.isInteger(anchorDay) && anchorDay >= 1 && anchorDay <= 28)) {
     throw new BudgetError('POLICY_INVALID', 'budgetPolicy.cycle.anchorDay は 1〜28 の整数または null');
+  }
+  for (const k of ['creditsExpireAt', 'consoleVerifiedAt']) {
+    if (cycle[k] != null && cycle[k] !== '' && (typeof cycle[k] !== 'string' || Number.isNaN(Date.parse(cycle[k])))) {
+      throw new BudgetError('POLICY_INVALID', `budgetPolicy.cycle.${k} は ISO 8601 の日時文字列または null`);
+    }
   }
   p.cycle = {
     anchorDay,
@@ -147,23 +167,33 @@ function sleepMs(ms) {
 }
 
 // 予約の判定と追記を直列化する。mkdir の原子性を使うロック (依存ゼロ)。
+//   - 古いロックを自動回収しない: 「stat → 削除」は原子的でなく、他プロセスが取り直したロックを
+//     消して複数プロセスが同時に臨界区間へ入り得る。取得できなければ fail-closed で止め、人間が解除する。
+//   - 解放は所有者トークンが自分のものである場合だけ行う。
 function withLock(ledgerPath, fn, opts) {
   const lockDir = `${ledgerPath}.lock`;
+  const ownerFile = path.join(lockDir, 'owner');
+  const token = `${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
   const timeoutMs = (opts && opts.timeoutMs) || 5000;
-  const staleMs = (opts && opts.staleMs) || 60000;
   fs.mkdirSync(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
   const began = Date.now();
   for (;;) {
-    try { fs.mkdirSync(lockDir); break; } catch (e) {
+    try { fs.mkdirSync(lockDir, { mode: 0o700 }); break; } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      try {
-        if (Date.now() - fs.statSync(lockDir).mtimeMs > staleMs) { fs.rmdirSync(lockDir); continue; }
-      } catch { continue; }
-      if (Date.now() - began > timeoutMs) throw new BudgetError('LEDGER_LOCK_TIMEOUT', '台帳ロックを取得できない (fail-closed)');
+      if (Date.now() - began > timeoutMs) {
+        throw new BudgetError('LEDGER_LOCK_TIMEOUT', `台帳ロックを取得できない (fail-closed)。他の実行が無いことを確認してから ${lockDir} を削除する`);
+      }
       sleepMs(25);
     }
   }
-  try { return fn(); } finally { try { fs.rmdirSync(lockDir); } catch { /* 既に解放済み */ } }
+  try {
+    fs.writeFileSync(ownerFile, token, { mode: 0o600 });
+    return fn();
+  } finally {
+    try {
+      if (fs.readFileSync(ownerFile, 'utf8') === token) { fs.unlinkSync(ownerFile); fs.rmdirSync(lockDir); }
+    } catch { /* 所有者でない、または既に解放済み */ }
+  }
 }
 
 // --- 集計 ---
@@ -185,13 +215,15 @@ function foldTasks(entries) {
     } else if (t && e.type === 'release') {
       t.released = true; t.status = 'released';
     }
+    // 解除後に usage が届いた場合は実績を保持する (released のまま actualCents に反映済み)。
   }
   return tasks;
 }
 
-// committed: 確定済みは実績、未確定は max(予約, 実績)、解除済みは 0。
+// committed: 確定済みは実績、未確定は max(予約, 実績)、解除済みは実績 (通常 0)。
+//   解除後に使用量が記録された場合 (実は作成されていた) も、その実績は消さない。
 function committedCents(t) {
-  if (t.released) return 0;
+  if (t.released) return t.actualCents;
   return t.final ? t.actualCents : Math.max(t.reservedCents, t.actualCents);
 }
 
@@ -201,12 +233,16 @@ function summarize(entries, now, policy) {
   const tasks = foldTasks(entries);
   const s = { period, committedMonthCents: 0, actualMonthCents: 0, committedDayCents: 0, openSessions: 0, taskCount: 0 };
   for (const t of tasks.values()) {
-    if (!(t.ts >= period.start && t.ts < period.end)) continue;
+    const open = !t.final && !t.released;
+    // 未確定のセッションは、開始した請求期間に関わらず並列数と当期の予約に数える
+    // (期間の境界をまたいだ瞬間に枠が空いて 2 本目が作れてしまうのを防ぐ)。
+    if (open) s.openSessions += 1;
+    const inPeriod = t.ts >= period.start && t.ts < period.end;
+    if (!inPeriod && !open) continue;
     s.taskCount += 1;
     s.committedMonthCents += committedCents(t);
-    s.actualMonthCents += t.released ? 0 : t.actualCents;
-    if (t.ts >= today) s.committedDayCents += committedCents(t);
-    if (!t.final && !t.released) s.openSessions += 1;
+    s.actualMonthCents += t.actualCents;
+    if (t.ts >= today || open) s.committedDayCents += committedCents(t);
   }
   s.stage = stageOf(s.committedMonthCents, policy);
   return s;
@@ -316,7 +352,7 @@ function reconcile(ledgerPath, now, policy, consoleCents, note) {
 }
 
 module.exports = {
-  DEFAULT_POLICY, BudgetError, usdToCents, centsToUsd, parseCentsString, normalizePolicy,
+  DEFAULT_POLICY, HARD_LIMITS, BudgetError, withLock, usdToCents, centsToUsd, parseCentsString, normalizePolicy,
   billingPeriod, readLedger, foldTasks, summarize, stageOf, stageReason, guard, reserve,
   recordUsage, release, reconcile,
 };
