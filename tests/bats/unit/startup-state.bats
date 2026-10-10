@@ -20,6 +20,8 @@ setup() {
 { "projects": "$PDIR", "projectGroups": [], "localExcludes": [] }
 JSON
   SCRIPT="$REPO_ROOT/libexec/startup-state.sh"
+  # 実機で動いている claudeos-* の tmux セッションを数えない (開発機の状態でセッション数が変わるのを防ぐ)
+  make_stub_bin tmux 'exit 1'
 }
 teardown() { _bats_common_teardown; }
 
