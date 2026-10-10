@@ -95,6 +95,38 @@ tmux attach -t claudeos-<project>  # 接続（Ctrl-b d でデタッチ=BG継続�
 
 起動・停止・Supervisor 適用・登録削除といった操作は、それぞれ運用メニューの専用項目（起動 `L1`/`S1`、cron `14`、Supervisor は `bin/autonomy.sh`）から行います。
 
+## 🌐 Web スタートアップコンソール
+
+同じ起動操作（L1 / T1 / S1 / Supervisor 全適用 / セッション停止）をブラウザから行う Web 版です。
+判定・起動ロジックは持たず、既存 CLI（`bin/start-claude.sh` / `bin/autonomy.sh`）をそのまま呼ぶ薄いアダプタです。
+
+```bash
+bash bin/web-startup.sh --start          # 既定 http://127.0.0.1:3740
+bash bin/web-startup.sh --status
+bash bin/web-startup.sh --stop
+npm run start:web:dry                    # 計画専用モード (実起動しない)
+
+bash bin/web-startup-service.sh --register   # systemd --user で常駐 (loopback のまま)
+```
+
+| アイコン | 機能 | 内容 |
+|---|---|---|
+| 📂 | プロジェクト選択 | 登録候補をグループ別に表示し、稼働状態と Supervisor 情報を表示 |
+| 🎯 | Goal / 要求入力 | Goal Router の自動判定または Goal 固定 + 要求テキスト（番号・名前は UI の選択式） |
+| 📋 | 計画確認 | 必ず `--dry-run` で起動計画を確認してから実行（Human Gate） |
+| 🌐 | 全適用 | `--dry-run` で対象と skip 理由を確認 → 人間確認 → `--yes` |
+| 📄 | ログ閲覧 | `~/.claudeos` 配下のセッションログを末尾表示 |
+| 🛑 | 停止 | グレースフル停止 / 即停止（`--now`） |
+| 🔐 | 認証 | `STARTUP_WEB_PASSWORD` 設定時は Basic 認証。LAN 公開時は必須（fail-closed） |
+
+- Web サーバは TTY を持たないため、**`foreground`（L1）はデスクトップ端末がある環境でのみ選択可**です
+  （`team`（tmux 4分割）/ `background`（Supervisor）は常に利用可）。接続は `tmux attach -t claudeos-<project>`。
+- 変更系操作は `~/.claudeos/logs/web-startup-audit.log` に記録されます。
+- 設計・API・安全統制の詳細: [`docs/architecture/WEB_STARTUP_TOOL.md`](docs/architecture/WEB_STARTUP_TOOL.md)
+- 外部公開（Cloudflare Tunnel + Access で `kensan1969@gmail.com` のみ許可）は**設計のみ**用意しています。
+  適用は人間の Y/N 後: [`docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md`](docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md)
+  （設計値: `config/cloudflare/web-startup-{tunnel.yml,access-policy.json}`）
+
 ## 🔁 Supervisor全適用
 
 ```mermaid

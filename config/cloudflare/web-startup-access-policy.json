@@ -1,0 +1,43 @@
+{
+  "_comment": "Cloudflare Access ポリシー設計 (Web スタートアップコンソール公開用)。repo 管理下の設計値であり、Cloudflare へは適用していない。適用は Approval PR + 人間 Y/N の後 (docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md §4)。実適用時は <GOOGLE_IDP_ID> を account 固有値へ置換し、CLOUDFLARE_ACCOUNT_ID は環境変数から読む (値は repo へ書かない)。",
+  "hostname": "claude-startuptools.mirai-dx-platform.com",
+  "application": {
+    "name": "ClaudeOS Web Startup Console",
+    "type": "self_hosted",
+    "domain": "claude-startuptools.mirai-dx-platform.com",
+    "session_duration": "8h",
+    "auto_redirect_to_identity": true,
+    "app_launcher_visible": false,
+    "http_only_cookie_attribute": true,
+    "enable_binding_cookie": true,
+    "skip_interstitial": false,
+    "allowed_idps": ["<GOOGLE_IDP_ID>"]
+  },
+  "policies": [
+    {
+      "name": "allow-kensan1969-gmail",
+      "decision": "allow",
+      "precedence": 1,
+      "include": [{ "email": { "email": "kensan1969@gmail.com" } }],
+      "require": [],
+      "exclude": []
+    },
+    {
+      "name": "deny-all-others",
+      "decision": "deny",
+      "precedence": 2,
+      "include": [{ "everyone": {} }],
+      "require": [],
+      "exclude": []
+    }
+  ],
+  "service_tokens": {
+    "enabled": false,
+    "_comment": "自動化 (cron / CI) から API を叩く場合のみ作成する。作成・失効は Approval PR。既定は無効 = fail closed。"
+  },
+  "notes": [
+    "認可モデルは email 1 件の明示 allow + catch-all deny。メール集合の拡大 (ドメイン単位 / everyone) は禁止。",
+    "Access が入口認証の主体。アプリ側 Basic 認証 (STARTUP_WEB_PASSWORD) は多層防御として任意で併用する。",
+    "origin (cloudflared → 127.0.0.1:3740) は loopback のみで、LAN からは到達できない。"
+  ]
+}

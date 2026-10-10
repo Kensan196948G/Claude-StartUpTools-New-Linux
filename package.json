@@ -9,6 +9,8 @@
   "scripts": {
     "start": "node scripts/dashboards/serve-dashboard.js",
     "start:dashboard": "node scripts/dashboards/serve-dashboard.js --port 3737",
+    "start:web": "node scripts/web/startup-server.js",
+    "start:web:dry": "node scripts/web/startup-server.js --dry-run-only",
     "start:watch": "node scripts/dashboards/watch-and-run.js",
     "test": "npm run test:bats && npm run test:node",
     "test:bats": "bats tests/bats/unit/",
