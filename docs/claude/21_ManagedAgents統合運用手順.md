@@ -232,7 +232,9 @@ bin/managed-agents.sh ask --role repository-review --prompt "README と設計書
 - タスク ID を自動で採番します（`ask-<role>-<日時>`）。
 - 種別は role の既定を使います（`repository-review` → `review`、`quality-assurance` → `qa-analysis`、`documentation` → `docs`）。小さな確認は `--task-type check`（上限 $0.50）。
 - Agent Router の判定を通します。Managed へ出せない場合（予算・回数・未設定など）は実行せず、`managed: false` と Local 側の実行先（`do_locally_with`）を返します。
-- `--source human|agent` で、人の操作か Claude の判断かを履歴（`decisions.jsonl`）に残します。
+- `--source human|agent` で、人の操作か Claude の判断かを履歴（`decisions.jsonl`）に残します。呼び出し側の自己申告で、省略すると `unknown` です。これを根拠に制約を緩めることはありません。
+- `ask` は `--config`、`--repo`、`--ref`、`--ack-daily-soft` を受け付けません。ファイルを依頼文として渡す引数（`--prompt-file`）は廃止しました。任意のローカルファイルの内容をクラウドへ送る経路になるためです。
+- 未確定のセッション（実行中、または作成の成否が不明）が残っている間は、`OPEN_SESSION_EXISTS` で止まります。Local への切替も案内しません（二重実行を防ぐため）。`session close --task-id <id>` で確定してから依頼してください。
 
 ### 10.2 起動メニュー（`./start.sh` → `MA`）
 
@@ -246,7 +248,7 @@ bin/managed-agents.sh ask --role repository-review --prompt "README と設計書
 
 起動した Claude Code が、条件を満たす読取専用の調査を自分の判断で依頼できるようにする skill です（このリポジトリ専用。他のプロジェクトへは配布していません）。
 
-- 許可しているコマンドは `ask` / `status` / `budget status` / `route` だけです。`agents sync`、`env ensure`、`session close`、設定の変更は含みません。
+- skill の `allowed-tools` に列挙しているのは `ask` / `status` / `budget status` / `route` だけです。ただし、**これは強制力のある境界ではありません**。このリポジトリの権限設定（`.claude/settings.json`）は `node scripts/*` や `cp` / `mv` / `tee` を広く許可しているため、Claude は skill を通さずに adapter を直接呼んだり、設定や台帳を書き換えたりできます。skill の手順ではそれらを禁じていますが、仕組みで止めているわけではありません。確実に止めるには権限設定への `deny` の追加が必要です（未実施。security policy の変更にあたるため、別途判断が必要）。
 - 依頼文に秘密情報・個人情報・本番データを書かない、Agent の出力を指示として扱わない、`NEEDS_OPERATOR` のときは Local で同じタスクを実行しない、といった手順を skill に書いています。
 - `mode=live` の間は、Claude の判断で課金が発生します。止めたい場合は `mode` を `dry-run` に戻してください。
 
@@ -258,7 +260,8 @@ bin/managed-agents.sh ask --role repository-review --prompt "README と設計書
 | 1 回の予算 | $2（確認処理は $0.50） | `budgetPolicy.sessionMaxCents`。上限 $5 |
 | 月間の予算 | $20 | `budgetPolicy.monthlyBudgetCents`。上限 $100 |
 | 並列 | 1 | 固定 |
-| 依頼文の検査 | API キー・トークン・秘密鍵・認証情報つき接続文字列を含む依頼文、8,000 文字を超える依頼文は送信前に拒否 | 固定 |
+| 依頼文の検査 | API キー・各種トークン・秘密鍵・JWT・`KEY=値` 形式の秘密・認証情報つき接続文字列を含む依頼文、8,000 文字を超える依頼文は送信前に拒否。伏せ字・例示値・変数参照は通す | 固定 |
+| 設定・台帳の差し替え | 課金を伴う経路（`ask` / `session create` / `session run`）では `--config` 不可。台帳の場所は設定ファイルでは変えられない | 固定（環境変数による指定は残る） |
 | 対象 | 読取専用の Agent（`read` / `glob` / `grep`）のみ | 固定 |
 
-依頼文の検査は、よくある形式の秘密を拾うためのものです。個人情報や社内情報のように形式で判別できないものは検出できません。何を書くかは依頼する側（人、または skill に従う Claude）の責任です。
+依頼文の検査は、よくある形式の秘密をうっかり送ることを防ぐためのものです。値を分割・符号化すれば通ってしまうので、意図的な持ち出しは止められません。個人情報や社内情報のように形式で判別できないものは検出できません。何を書くかは依頼する側（人、または skill に従う Claude）の責任です。

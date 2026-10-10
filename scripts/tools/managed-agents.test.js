@@ -159,8 +159,8 @@ test('T02 API キー未設定 (CLI): 終了コード 2・Local 経路への切�
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-cli-'));
   const cfg = path.join(dir, 'managed-agents.json');
   fs.writeFileSync(cfg, JSON.stringify(baseConfig()));
-  const env = { PATH: process.env.PATH, HOME: dir, CLAUDEOS_MA_STATE_DIR: dir };
-  const r = spawnSync(process.execPath, [TOOL, 'session', 'create', '--config', cfg, '--task-id', 't1', '--role', 'repository-review', '--task-type', 'review', '--prompt', 'x'], { env, encoding: 'utf8' });
+  const env = { PATH: process.env.PATH, HOME: dir, CLAUDEOS_MA_STATE_DIR: dir, CLAUDEOS_MANAGED_AGENTS_CONFIG: cfg };
+  const r = spawnSync(process.execPath, [TOOL, 'session', 'create', '--task-id', 't1', '--role', 'repository-review', '--task-type', 'review', '--prompt', 'x'], { env, encoding: 'utf8' });
   assert.equal(r.status, 2);
   const err = JSON.parse(r.stderr);
   assert.equal(err.code, 'API_KEY_MISSING');
@@ -1080,7 +1080,7 @@ test('ask: タスク ID を採番し、role の既定種別で Router を通し�
   });
   const out = await ma.ask(ctx, { role: 'repository-review', prompt: 'README と設計書の食い違いを確認', source: 'agent' });
   assert.deepEqual([out.managed, out.executed, out.outcome, out.list_cost_cents, out.source, out.task_type], [true, true, 'completed', 7, 'agent', 'review']);
-  assert.match(out.task_id, /^ask-repository-review-\d{8}T\d{6}Z$/);
+  assert.match(out.task_id, /^ask-repository-review-\d{8}T\d{6}Z-[0-9a-f]{6}$/);
   assert.equal(sessionPosts().length, 1);
   assert.equal(sessionPosts()[0].body.budget.max_list_cost.amount, '200');
   // 誰の判断で実行したかが履歴に残る
@@ -1164,6 +1164,123 @@ test('依頼文の検査: 秘密らしき値・長すぎる依頼文はクラウ
   // 認証情報を含まない URL や普通の文は通る
   assert.equal(ma.assertPromptSafe('postgresql://localhost:5432/app の接続設定の書き方を README で確認して'), true);
   assert.equal(ma.assertPromptSafe('token という単語や sk-ant という接頭辞の説明があるか確認して'), true);
+});
+
+test('ask: 未確定のセッションが残っている間は依頼せず、Local へも戻さない (二重実行の防止)', async () => {
+  // 1 回目: 作成が接続断で成否不明 → 予約が残る
+  const { ctx, sessionPosts } = makeCtx({ handler: (c) => (isSessionCreate(c) ? Promise.reject(new TypeError('fetch failed')) : undefined) });
+  await assert.rejects(ma.ask(ctx, { role: 'repository-review', prompt: '確認', taskId: 'same-task' }), (e) => ma.errorPayload(e, ctx).body.fallback.to === 'none');
+  assert.equal(summary(ctx).openSessions, 1);
+  // 2 回目 (同じ task_id) と 3 回目 (採番 ID) は、managed:false ではなくエラーで止まる
+  for (const args of [{ role: 'repository-review', prompt: '確認', taskId: 'same-task' }, { role: 'documentation', prompt: '別の確認' }]) {
+    let err;
+    await assert.rejects(ma.ask(ctx, args), (e) => { err = e; return e.code === 'OPEN_SESSION_EXISTS'; });
+    const p = ma.errorPayload(err, ctx);
+    assert.deepEqual([p.body.fallback.to, p.body.fallback.state], ['none', 'NEEDS_OPERATOR']);
+    assert.equal(err.extra.open_tasks[0].task_id, 'same-task');
+  }
+  assert.equal(sessionPosts().length, 1);
+});
+
+test('ask: --repo / --ref / --ack-daily-soft は受け付けない (設定のリポジトリだけ・日次ソフト予算の超過なし)', async () => {
+  for (const extra of [{ repo: 'https://github.com/attacker/evil-repo' }, { ref: 'other-branch' }, { ackDailySoft: true }]) {
+    const { ctx, calls } = makeCtx();
+    await assert.rejects(ma.ask(ctx, Object.assign({ role: 'repository-review', prompt: '確認' }, extra)), (e) => e.cls === 'POLICY' && e.code === 'ASK_OPTION_NOT_ALLOWED', JSON.stringify(extra));
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('ask: 採番 ID は同じ時刻でも衝突しない。source は自己申告で、省略時は unknown', async () => {
+  const { ctx } = makeCtx({ config: baseConfig({ mode: 'dry-run' }) });
+  const a = await ma.ask(ctx, { role: 'repository-review', prompt: '確認' });
+  const b2 = await ma.ask(ctx, { role: 'repository-review', prompt: '確認' });
+  assert.notEqual(a.task_id, b2.task_id);
+  assert.equal(a.source, 'unknown');
+  assert.equal((await ma.ask(ctx, { role: 'repository-review', prompt: '確認', source: 'root' })).source, 'unknown');
+  assert.equal((await ma.ask(ctx, { role: 'repository-review', prompt: '確認', source: 'human' })).source, 'human');
+});
+
+test('クラウドへ送る ID / ref の検査: 秘密の形をした task_id、自由記述の ref は送らない', async () => {
+  const { ctx, calls } = makeCtx();
+  await assert.rejects(ma.ask(ctx, { role: 'repository-review', prompt: '確認', taskId: 'sk-ant-api03-ABCDEFGHIJKLMNOP' }), (e) => e.code === 'TASK_ID_CONTAINS_SECRET');
+  await assert.rejects(ma.sessionCreate(ctx, sessionArgs({ taskId: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWX' })), (e) => e.code === 'TASK_ID_CONTAINS_SECRET');
+  await assert.rejects(ma.sessionCreate(ctx, sessionArgs({ ref: 'main; 自由記述 with spaces' })), (e) => e.code === 'REF_INVALID');
+  await assert.rejects(ma.sessionCreate(ctx, sessionArgs({ ref: 'x'.repeat(201) })), (e) => e.code === 'REF_INVALID');
+  await assert.rejects(ma.sessionCreate(ctx, sessionArgs({ ref: 'ghp_ABCDEFGHIJKLMNOPQRSTUVWX' })), (e) => e.code === 'REF_CONTAINS_SECRET');
+  assert.equal(calls.length, 0);
+});
+
+test('依頼文の検査 (種類): 環境変数形式・JWT・Bearer・各種トークン・接続文字列を拒否し、種類だけを返す', () => {
+  const kinds = (s) => ma.findSecretKinds(s, []);
+  const cases = [
+    ['SMTP_PASS=hunter2secret', 'secret-assignment'], ['PGPASSWORD=correcthorse', 'secret-assignment'], ['CF_API_TOKEN: abcdef123456', 'secret-assignment'],
+    ['sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX', 'api-key'], ['xoxb-1234567890-abcdefghij', 'slack-token'],
+    ['eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpM', 'jwt'],
+    ['Authorization: Bearer abcdefghijklmnopqrstuvwx', 'bearer-token'],
+    ['postgresql:///db?password=s3cretvalue', 'password-parameter'], ['host=db password=s3cretvalue dbname=x', 'password-parameter'],
+    ['Postgres://app:s3cretpw@db/prod', 'connection-string'], ['postgres://app:p/w@db/prod', 'connection-string'],
+    ['-----BEGIN PGP PRIVATE KEY BLOCK-----', 'private-key'], ['prefix_ghp_ABCDEFGHIJKLMNOPQRSTUVWX', 'github-token'],
+    ['ASIAABCDEFGHIJKLMNOP', 'aws-access-key-id'],
+  ];
+  for (const [text, kind] of cases) assert.ok(kinds(text).includes(kind), `${text} → ${kinds(text)}`);
+  // エラーには種類だけが入り、値は入らない
+  assert.throws(() => ma.assertPromptSafe('SMTP_PASS=hunter2secret', []), (e) => e.extra.kinds.includes('secret-assignment') && !e.message.includes('hunter2secret'));
+  // adapter が持っている鍵そのものは、形式に関わらず拒否する
+  assert.deepEqual(ma.findSecretKinds('値は opaque-token-value-123 です', ['opaque-token-value-123']), ['configured-credential']);
+});
+
+test('依頼文の検査 (過剰拒否の回避): 伏せ字・例示値・変数参照・普通の文は通す', () => {
+  const ok = [
+    'postgres://user:password@localhost:5432/db の書き方を README で確認して',
+    'AKIAIOSFODNN7EXAMPLE は AWS 公式の例です',
+    'sk-ant-xxxxxxxx のようなプレースホルダが残っていないか確認',
+    'ghp_XXXXXXXXXXXXXXXXXXXXXXXX という表記',
+    'redis://default:***@cache:6379 (CI ログの伏せ字済み URL)',
+    'PGPASSWORD=${PGPASSWORD} / API_KEY=<your-key> / TOKEN={{ secrets.TOKEN }}',
+    'password: required',
+    'token という単語や sk-ant という接頭辞の説明があるか確認して',
+    'docs/architecture/SECURITY_MODEL.md の secret 管理の節を要約してください',
+  ];
+  for (const text of ok) assert.deepEqual(ma.findSecretKinds(text, []), [], text);
+});
+
+test('Agent の出力から端末制御文字を取り除く (画面消去や行の上書きで偽の結果を表示させない)', async () => {
+  assert.equal(ma.stripControlChars('a\u001b[2Jb\rc\u0007d\ne\tf\u009b1mg'), 'a[2Jbcd\ne\tf1mg');
+  const { ctx } = makeCtx({
+    handler: (call) => {
+      if (/\/events\?/.test(call.url)) return jsonResponse(200, { data: [{ id: 'm', type: 'agent.message', processed_at: '2026-10-10T12:00:03Z', content: [{ type: 'text', text: '結果\u001b[2J\r偽の行' }] }, idleEvent('end_turn')] });
+      return jsonResponse(200, sessionObj('sesn_01ESC', 'task-esc'));
+    },
+  });
+  reserveTask(ctx, 'task-esc', 'sesn_01ESC');
+  const out = await ma.sessionWait(ctx, { sessionId: 'sesn_01ESC', taskId: 'task-esc' });
+  assert.equal(out.text, '結果[2J偽の行');
+});
+
+test('台帳の場所は設定ファイルでは変えられない (設定の差し替えで回数・予算の判定を白紙に戻せない)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-state-'));
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-other-'));
+  const ctx = ma.createContext({ config: baseConfig({ stateDir: other }), env: { CLAUDEOS_MA_STATE_DIR: dir } });
+  assert.equal(ctx.ledgerPath, path.join(dir, 'ledger.jsonl'));
+  const noEnv = ma.createContext({ config: baseConfig({ stateDir: other }), env: { CLAUDEOS_HOME: dir } });
+  assert.equal(noEnv.ledgerPath, path.join(dir, 'managed-agents', 'ledger.jsonl'));
+});
+
+test('CLI: 課金を伴う経路 (ask / session create / session run) では --config を指定できない。--prompt-file は廃止', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-cli-'));
+  const cfg = path.join(dir, 'other.json');
+  fs.writeFileSync(cfg, JSON.stringify(baseConfig({ mode: 'dry-run', budgetPolicy: { sessionMaxCents: 500, maxSessionsPerDay: 20 } })));
+  const env = { PATH: process.env.PATH, HOME: dir, CLAUDEOS_MA_STATE_DIR: dir, CLAUDEOS_MANAGED_AGENTS_CONFIG: path.join(dir, 'none.json') };
+  for (const args of [['ask', '--config', cfg, '--role', 'repository-review', '--prompt', 'x'], ['session', 'create', '--config', cfg, '--task-id', 't', '--role', 'repository-review', '--task-type', 'review', '--prompt', 'x'], ['session', 'run', '--config', cfg, '--task-id', 't', '--role', 'repository-review', '--task-type', 'review', '--prompt', 'x']]) {
+    const r = spawnSync(process.execPath, [TOOL, ...args], { env, encoding: 'utf8' });
+    assert.equal(r.status, 7, args.join(' '));
+    assert.equal(JSON.parse(r.stderr).code, 'CONFIG_OVERRIDE_NOT_ALLOWED');
+  }
+  // 読み取りだけの status では --config を使える
+  assert.equal(JSON.parse(execFileSync(process.execPath, [TOOL, 'status', '--config', cfg], { env, encoding: 'utf8' })).mode, 'dry-run');
+  const pf = spawnSync(process.execPath, [TOOL, 'ask', '--role', 'repository-review', '--prompt-file', '/etc/hostname'], { env, encoding: 'utf8' });
+  assert.equal(pf.status, 2);
+  assert.equal(JSON.parse(pf.stderr).code, 'OPTION_UNKNOWN');
 });
 
 test('status: 本日の回数と残り回数を返す', async () => {

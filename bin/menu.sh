@@ -370,6 +370,14 @@ managed_agents__summary() {
   ' 2>/dev/null || printf '  状態を取得できません (bin/managed-agents.sh status を確認)\n'
 }
 
+# 課金の確認。confirm_yes_no と違い CCSU_ASSUME_YES=1 では省略しない
+# (非対話の一括実行向けの設定で、課金の確認まで飛ばさないため)。入力が無ければ No。
+managed_agents__confirm_charge() {
+  local ans
+  read -rp "$1 [y/N]: " ans || return 1
+  [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
+}
+
 managed_agents__ask() {
   local role="$1" label="$2" prompt mode
   mode="$(bash "$BIN/managed-agents.sh" status 2>/dev/null | jq -r '.mode' 2>/dev/null || true)"
@@ -377,10 +385,13 @@ managed_agents__ask() {
   printf '  ※ 依頼文はクラウドへ送信されます。秘密情報・個人情報・本番データは書かないでください。\n'
   read -rp "  依頼: " prompt || return 0
   [[ -n "$prompt" ]] || { log_warn "キャンセルしました"; return 0; }
-  if [[ "$mode" == "live" ]]; then
-    confirm_yes_no "  実際に実行します (課金されます。上限は上の表示のとおり)。よろしいですか?" || { log_warn "キャンセルしました"; return 0; }
+  # dry-run と確認できた場合だけ確認を省く。live のほか、モードを取得できなかった場合も必ず確認する
+  # (表示と実行の間に設定が変わっていても、確認なしに課金へ進まないようにする)。
+  if [[ "$mode" == "dry-run" ]]; then
+    printf '  mode=dry-run のため、送信予定の内容を表示するだけで実行しません。\n'
   else
-    printf '  mode=%s のため、送信予定の内容を表示するだけで実行しません。\n' "${mode:-unknown}"
+    managed_agents__confirm_charge "  mode=${mode:-不明}: 実際に実行される場合は課金されます (上限は上の表示のとおり)。よろしいですか?" \
+      || { log_warn "キャンセルしました"; return 0; }
   fi
   local out rc=0
   out="$(bash "$BIN/managed-agents.sh" ask --source human --role "$role" --prompt "$prompt" 2>&1)" || rc=$?

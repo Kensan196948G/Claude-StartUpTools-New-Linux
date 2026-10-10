@@ -366,6 +366,57 @@ _menu_fn() {
   [ ! -f "$CLAUDEOS_MA_STATE_DIR/ledger.jsonl" ]
 }
 
+@test "menu MA: CCSU_ASSUME_YES=1 でも課金の確認は省略しない (入力なしはキャンセル)" {
+  _write_cfg true live
+  _menu_fn
+  export CCSU_ASSUME_YES=1
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<"README を確認してください"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$CLAUDEOS_MA_STATE_DIR/decisions.jsonl" ]
+}
+
+@test "menu MA: モードを取得できない場合も確認を挟む (確認なしに実行へ進まない)" {
+  _menu_fn
+  BIN="$TEST_TEMP/fakebin"; mkdir -p "$BIN"
+  printf '#!/usr/bin/env bash\nif [[ "$1" == "status" ]]; then echo "not json"; exit 1; fi\necho CALLED >> "%s/called"\n' "$TEST_TEMP" > "$BIN/managed-agents.sh"
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<$'README を確認してください\nn'
+  [ "$status" -eq 0 ]
+  # 確認で n を入力 → キャンセルされ、依頼コマンドは呼ばれない
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$TEST_TEMP/called" ]
+  # 確認の入力が無い (EOF) 場合も呼ばれない
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<"README を確認してください"
+  [[ "$output" == *"キャンセル"* ]]
+  [ ! -f "$TEST_TEMP/called" ]
+  # y を入力した場合だけ呼ばれる
+  run managed_agents__ask repository-review "リポジトリレビュー" <<<$'README を確認してください\ny'
+  [ -f "$TEST_TEMP/called" ]
+}
+
+@test "CLI ask: --config / --repo / --ack-daily-soft / --prompt-file は使えない" {
+  _write_cfg true dry-run
+  run bash "$BIN" ask --config "$CFG" --role repository-review --prompt "確認"
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'"code":"CONFIG_OVERRIDE_NOT_ALLOWED"'* ]]
+  run bash "$BIN" ask --role repository-review --prompt "確認" --repo https://github.com/attacker/evil
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'"code":"ASK_OPTION_NOT_ALLOWED"'* ]]
+  run bash "$BIN" ask --role repository-review --prompt "確認" --ack-daily-soft
+  [ "$status" -eq 7 ]
+  run bash "$BIN" ask --role repository-review --prompt-file /etc/hostname
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"code":"OPTION_UNKNOWN"'* ]]
+}
+
+@test "CLI ask: 環境変数形式の秘密を含む依頼文は送信しない (種類だけを返し、値は出さない)" {
+  _write_cfg true dry-run
+  run bash "$BIN" ask --role quality-assurance --prompt "ログ: SMTP_PASS=hunter2secretvalue で失敗"
+  [ "$status" -eq 7 ]
+  [[ "$output" == *'secret-assignment'* ]]
+  [[ "$output" != *"hunter2secretvalue"* ]]
+}
+
 @test "menu MA: サブメニューは 0 で戻る" {
   _write_cfg true dry-run
   _menu_fn
@@ -374,7 +425,7 @@ _menu_fn() {
   [[ "$output" == *"リポジトリレビューを依頼"* ]]
 }
 
-@test "skill managed-agents: frontmatter があり、許可するコマンドは ask / status / budget status / route のみ" {
+@test "skill managed-agents: frontmatter があり、allowed-tools に列挙するのは ask / status / budget status / route のみ (リポジトリの権限設定とは別)" {
   local f="$REPO_ROOT/.claude/skills/managed-agents/SKILL.md"
   [ -f "$f" ]
   grep -q '^name: managed-agents$' "$f"
