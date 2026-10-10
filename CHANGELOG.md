@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added — Managed Agents 実行基盤 P0（ClaudeOS v11 移行 開始、2026-09-09）
+
+- 🏗️ `config/managed-agents.json.template`: 記録用プレースホルダから**実行可能設定契約**へ昇格
+  （`enabled` / `mode=disabled|dry-run|live` / budget 契約 / `github`: **Repository Resource 主系 + MCP は PR/Issue 限定**
+  / `permissionPolicy` / `sessionLifecycle` / P1 用 `webhook` プレースホルダ）。
+- 💰 `scripts/tools/managed-session-payload.js`: POST /v1/sessions body 契約（公式仕様準拠: agent は ID 文字列、
+  budget は `{type: "limit", max_list_cost: {amount: セント整数文字列, currency: "USD"}}`）。
+  **budget 無し Session 作成は BUDGET_REQUIRED (exit 3) で拒否**（budget は後付け不可のため）。
+  `user.message` / `user.tool_confirmation` イベント構築も同契約モジュールで提供。
+- 🧭 `lib/goal-router.sh`: 実行 Plane 選択（v11 P0 要件 4/9）を統合 — Evidence に `execution_plane=managed|local`
+  を付与、route 出力 / persist（`state.goal_router.execution_plane`）/ summary へ収録。
+  adapter・契約不成立時は **fail-safe で local**（fallback 動作を含む）。`state.schema.json` に `execution_plane` 追加。
+- 📝 `docs/architecture/audits/2026-09-09-managed-agents-v11-p0.md`: P0 監査（資産棚卸し・PoC crash 前提の再評価・
+  live 検証 Blocker と次の Action）。
+- 🧪 テスト: `managed-session-payload.test.js`（node 13）+ `tests/bats/unit/managed-session-payload.bats`（統合 6）+
+  `goal-router.bats` plane 5 件。全体 bats 779 / node 13 / schema 9 全 PASS。
+- ⏸️ Thin Adapter（`lib/managed-agents.sh`）と Permission Policy Engine は**人間判断待ち（HUMAN REVIEW）** —
+  作成・編集が連続で拒否されたため保留。Goal Router は fail-safe 動作で壊れない。詳細は監査ドキュメント §6。
+- 🔴 live API 検証は NOT RUN（課金人間決裁 + sandbox crash 再現確認が必要）。
+
 ### Added — Goal Router バックログ対応（2026-09-08）
 
 - 🖥️ `bin/menu.sh`: L1 / T1 / S1 の Yes 確認後に「🎯 Goal [自動]」「📝 要求」を対話入力し `--goal` / `--intent` として

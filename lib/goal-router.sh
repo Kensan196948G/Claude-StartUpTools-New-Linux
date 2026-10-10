@@ -118,6 +118,22 @@ goal_router__evidence() {
 
   printf 'intent=%s\n' "$(_gr__sanitize "$intent")"
 
+  # --- 実行 Plane (v11: managed|local)。読み込み失敗時は安全側 local ---
+  local ma_lib
+  ma_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/managed-agents.sh"
+  if [[ -f "$ma_lib" ]]; then
+    # shellcheck source=lib/managed-agents.sh
+    source "$ma_lib"
+    ma__load >/dev/null 2>&1 || true
+    if ma__validate >/dev/null 2>&1; then
+      printf 'execution_plane=managed\nma_mode=%s\nma_reason=%s\n' "$MA_MODE" "$MA_REASON"
+    else
+      printf 'execution_plane=local\nma_mode=%s\nma_reason=%s\n' "${MA_MODE:-missing}" "${MA_REASON:-adapter-unavailable}"
+    fi
+  else
+    printf 'execution_plane=local\nma_mode=missing\nma_reason=adapter-missing\n'
+  fi
+
   # --- state.json (python3 優先、無ければ jq、両方無ければ state_present=0) ---
   if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
     python3 - "$state_file" <<'PYEOF' 2>/dev/null || printf 'state_present=0\nstate_error=1\n'
@@ -588,6 +604,9 @@ goal_router__route() {
   fi
   local effective="${specialized:-$primary}"
   local evidence_csv; evidence_csv="$(IFS=,; printf '%s' "${used[*]}")"
+  # 実行 Plane (v11 P0 要件 4): managed 不可なら安全側 local。Evidence 不在も local。
+  local plane="${ev[execution_plane]:-local}"
+  [[ "$plane" == "managed" || "$plane" == "local" ]] || plane="local"
 
   printf 'primary=%s\n' "$primary"
   printf 'specialized=%s\n' "$specialized"
@@ -600,6 +619,8 @@ goal_router__route() {
   printf 'locked_by_user=%s\n' "$locked_by_user"
   printf 'session_locked=%s\n' "$session_locked"
   printf 'fallback=%s\n' "$fallback"
+  printf 'execution_plane=%s\n' "$plane"
+  printf 'ma_mode=%s\n' "${ev[ma_mode]:-missing}"
   printf 'snap_deploy_ready=%s\n' "${ev[deploy_ready]:-}"
   printf 'snap_phase_mode=%s\n' "$pm"
   printf 'snap_security_critical=%s\n' "$sec"
@@ -622,6 +643,7 @@ goal_router__persist() {
   GR_REASON="${GOAL_ROUTER_REASON:-}" GR_EVIDENCE="${GOAL_ROUTER_EVIDENCE:-}" \
   GR_MODE="${GOAL_ROUTER_MODE:-auto}" GR_LOCKED="${GOAL_ROUTER_LOCKED_BY_USER:-false}" \
   GR_SESSION_LOCKED="${GOAL_ROUTER_SESSION_LOCKED:-true}" GR_TRANSITION="${GOAL_ROUTER_TRANSITION:-}" \
+  GR_PLANE="${GOAL_ROUTER_EXECUTION_PLANE:-local}" \
   GR_TRIGGER="${GOAL_ROUTER_TRIGGER:-auto}" GR_VERSION="$GOAL_ROUTER_VERSION" GR_NOW="$(_gr__now_iso)" \
   GR_SNAP_DR="${GOAL_ROUTER_SNAP_DEPLOY_READY:-}" GR_SNAP_PM="${GOAL_ROUTER_SNAP_PHASE_MODE:-}" \
   GR_SNAP_SEC="${GOAL_ROUTER_SNAP_SECURITY_CRITICAL:-0}" GR_SNAP_CI="${GOAL_ROUTER_SNAP_CI:-unknown}" \
@@ -652,6 +674,7 @@ gr.update({
     "locked_by_user": e["GR_LOCKED"] == "true", "session_locked": e["GR_SESSION_LOCKED"] == "true",
     "route_version": int(e["GR_VERSION"]), "last_routed_at": e["GR_NOW"],
     "last_transition_reason": f"{e['GR_TRANSITION']}:{e['GR_TRIGGER']}",
+    "execution_plane": e["GR_PLANE"] if e["GR_PLANE"] in ("managed", "local") else "local",
     "evidence_snapshot": {"deploy_ready": e["GR_SNAP_DR"], "phase_mode": e["GR_SNAP_PM"],
                           "security_critical": e["GR_SNAP_SEC"], "ci": e["GR_SNAP_CI"],
                           "runtime_health": e["GR_SNAP_RT"]},
@@ -711,6 +734,7 @@ except Exception: print('mvp-release')" "$state_file" 2>/dev/null || printf 'mvp
   GOAL_ROUTER_LOCKED_BY_USER="false" GOAL_ROUTER_SESSION_LOCKED="true" GOAL_ROUTER_FALLBACK="0"
   GOAL_ROUTER_SNAP_DEPLOY_READY="" GOAL_ROUTER_SNAP_PHASE_MODE="" GOAL_ROUTER_SNAP_SECURITY_CRITICAL="0" GOAL_ROUTER_SNAP_CI="unknown"
   GOAL_ROUTER_SNAP_RUNTIME_HEALTH="unknown"
+  GOAL_ROUTER_EXECUTION_PLANE="local" GOAL_ROUTER_MA_MODE="missing"
   while IFS= read -r line; do
     k="${line%%=*}"; v="${line#*=}"
     case "$k" in
@@ -725,6 +749,8 @@ except Exception: print('mvp-release')" "$state_file" 2>/dev/null || printf 'mvp
       locked_by_user) GOAL_ROUTER_LOCKED_BY_USER="$v" ;;
       session_locked) GOAL_ROUTER_SESSION_LOCKED="$v" ;;
       fallback) GOAL_ROUTER_FALLBACK="$v" ;;
+      execution_plane) GOAL_ROUTER_EXECUTION_PLANE="$v" ;;
+      ma_mode) GOAL_ROUTER_MA_MODE="$v" ;;
       snap_deploy_ready) GOAL_ROUTER_SNAP_DEPLOY_READY="$v" ;;
       snap_phase_mode) GOAL_ROUTER_SNAP_PHASE_MODE="$v" ;;
       snap_security_critical) GOAL_ROUTER_SNAP_SECURITY_CRITICAL="$v" ;;
@@ -763,9 +789,10 @@ except Exception: print('mvp-release')" "$state_file" 2>/dev/null || printf 'mvp
 
 # goal_router__summary — 1 行サマリ (ログ / RESUME_HEADER 用)
 goal_router__summary() {
-  printf 'primary=%s specialized=%s effective=%s confidence=%s mode=%s transition=%s reason=%s' \
+  printf 'primary=%s specialized=%s effective=%s confidence=%s mode=%s transition=%s plane=%s reason=%s' \
     "${GOAL_ROUTER_PRIMARY:-}" "${GOAL_ROUTER_SPECIALIZED:-none}" "${GOAL_ROUTER_EFFECTIVE:-}" \
-    "${GOAL_ROUTER_CONFIDENCE:-0}" "${GOAL_ROUTER_MODE:-auto}" "${GOAL_ROUTER_TRANSITION:-}" "${GOAL_ROUTER_REASON:-}"
+    "${GOAL_ROUTER_CONFIDENCE:-0}" "${GOAL_ROUTER_MODE:-auto}" "${GOAL_ROUTER_TRANSITION:-}" \
+    "${GOAL_ROUTER_EXECUTION_PLANE:-local}" "${GOAL_ROUTER_REASON:-}"
 }
 
 # goal_router__header — プロンプト先頭へ置く Router コンテキスト (500 字以内)

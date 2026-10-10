@@ -3,6 +3,14 @@
 状態: Baseline（変更前）。監査レポート全文は `docs/architecture/audits/2026-09-07-*.md`。
 対象: `Claude-StartUpTools-New-Linux` v4.0.0-linux @ `44ba960`（origin/main）
 
+> 🆕 **v11 移行（2026-09-09 着手）**: Claude Managed Agents を Autonomous Execution Plane
+> とする P0（実行基盤）を開始。監査と実施状況は
+> `docs/architecture/audits/2026-09-09-managed-agents-v11-p0.md`、
+> 設定契約は `config/managed-agents.json.template`（実行可能契約へ昇格済み）、
+> Goal Router への実行 Plane 選択（`execution_plane=managed|local`・fail-safe local）は
+> `lib/goal-router.sh` に統合済み。Thin Adapter（Session/Environment Manager）と
+> Permission Policy Engine は人間判断待ち（HUMAN REVIEW・監査 §6）。
+
 ## 1. Baseline 実測
 
 | 項目 | 結果 |
