@@ -59,7 +59,9 @@ function makeCtx(opts) {
   const o = opts || {};
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-adapter-'));
   const calls = [];
-  const env = Object.assign({ ANTHROPIC_API_KEY: FAKE_KEY, CLAUDEOS_MA_GITHUB_TOKEN: FAKE_GH, CLAUDEOS_MA_STATE_DIR: stateDir }, o.env);
+  // 設定パスも一時領域へ向ける。config: null (設定なし) のテストが、開発機に実在する
+  // config/managed-agents.json を読んで結果が変わるのを防ぐ。
+  const env = Object.assign({ ANTHROPIC_API_KEY: FAKE_KEY, CLAUDEOS_MA_GITHUB_TOKEN: FAKE_GH, CLAUDEOS_MA_STATE_DIR: stateDir, CLAUDEOS_MANAGED_AGENTS_CONFIG: path.join(stateDir, 'no-such-config.json') }, o.env);
   for (const k of Object.keys(env)) if (env[k] === null) delete env[k];
   let t = NOW.getTime();
   const ctx = ma.createContext({
