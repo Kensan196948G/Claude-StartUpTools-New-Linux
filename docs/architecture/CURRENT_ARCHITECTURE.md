@@ -14,7 +14,7 @@
 > 🤝 **2026-10-10 更新**: HUMAN REVIEW 項目を read-only PoC として実装した。Local Claude Code を主系とし、
 > `execution_plane` は常に `local`。Managed Agents は Agent Router が選ぶ低リスク・読取専用タスクの補完先
 > （`scripts/tools/managed-agents.js` / `managed-budget.js`）。設計は `MANAGED_AGENTS_INTEGRATION.md`、
-> 運用は `docs/claude/21_ManagedAgents統合運用手順.md`。live 検証は BLOCKED。
+> 運用は `docs/claude/21_ManagedAgents統合運用手順.md`。live の初回接続テストは成功（2026-10-10。`docs/claude/21` §9）。
 
 ## 1. Baseline 実測
 

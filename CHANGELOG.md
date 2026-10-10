@@ -28,7 +28,7 @@
 
 ### Known limitations
 
-- 🔴 live API 検証は BLOCKED（Console の残高・利用権限の確認と課金の人間承認が前提）。
+- 🟢 live の初回接続テストは成功（2026-10-10、$0.05。`docs/claude/21` §9）。異常系（予算到達・タイムアウト・中断・API 障害）は実 API では未検証。
 - ❓ 2026-06 / 07 に記録した GitHub MCP 実行クラッシュの修正状況は未確認。PoC は MCP を使わない構成で回避。
 
 ### Added — Web スタートアップコンソール（menu.sh の Web 版、2026-09-24）
