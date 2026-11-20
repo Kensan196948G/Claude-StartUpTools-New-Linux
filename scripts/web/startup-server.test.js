@@ -423,3 +423,58 @@ test('isLoopback', () => {
   assert.equal(srv.isLoopback('0.0.0.0'), false);
   assert.equal(srv.isLoopback('192.168.0.185'), false);
 });
+/* ---------------------------------------------------------------- 運用情報 (読み取り専用) ---
+ * cron / systemd / agents は「実測値を返すか、取得できなければ available:false を返す」。
+ * 取得できない環境 (CI 等) でも 200 + ok:true を保ち、嘘の値を返さないことを固定する。
+ */
+test('HTTP: GET /api/ops/systemd は読み取り専用で unit 一覧を返す', async () => {
+  await withServer({}, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/systemd');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(typeof r.json.available, 'boolean');
+    assert.ok(Array.isArray(r.json.units));
+    r.json.units.forEach((u) => {
+      assert.equal(typeof u.name, 'string');
+      assert.equal(typeof u.active, 'string');
+      assert.ok(/^claude/i.test(u.name), 'このプロジェクトの unit のみ返す');
+    });
+  });
+});
+
+test('HTTP: GET /api/ops/cron は entries 配列を返し、取得不能でも嘘をつかない', async () => {
+  await withServer({}, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/cron');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(typeof r.json.available, 'boolean');
+    assert.ok(Array.isArray(r.json.entries));
+    if (!r.json.available) {
+      assert.equal(r.json.entries.length, 0, '取得不能なら空で返す');
+      assert.ok(r.json.note, '取得不能の理由を返す');
+    }
+    r.json.entries.forEach((e) => {
+      assert.equal(typeof e.command, 'string');
+      assert.equal(typeof e.disabled, 'boolean');
+    });
+  });
+});
+
+test('HTTP: GET /api/ops/agents は available と data の組を返す', async () => {
+  await withServer({}, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/agents');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(typeof r.json.available, 'boolean');
+    if (r.json.available) assert.ok(r.json.data && typeof r.json.data === 'object');
+  });
+});
+
+test('HTTP: /api/ops/* は GET 以外を受け付けない (読み取り専用)', async () => {
+  await withServer({}, async (port) => {
+    for (const p of ['/api/ops/cron', '/api/ops/systemd', '/api/ops/agents']) {
+      const r = await req(port, 'POST', p, {});
+      assert.equal(r.status, 404, p + ' は POST を受け付けない');
+    }
+  });
+});

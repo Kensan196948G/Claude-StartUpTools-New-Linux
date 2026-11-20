@@ -60,3 +60,33 @@ Cron スケジュール、Systemd 起動管理、Agent Teams 管理、SubAgent �
   偽装タイマーの不在、サンプル表記の不在を固定する（5 テスト）。
 - ブラウザ実測: `http://127.0.0.1:3740/v2.html` で 369 プロジェクト・監査 35 件を表示、
   計画実行で `POST /api/startup/plan` が 200 / `exitCode 0`、実 dry-run 出力を画面表示。
+
+## 読み取り専用の運用情報 API（2026-11-21 追加）
+
+`startup-server.js` に、書き込みを行わない運用情報の取得 API を追加した。
+いずれも `spawn(cmd, args)` を配列引数で呼び、シェル解釈を介さない。
+
+| API | 取得元 | 返すもの |
+|---|---|---|
+| `GET /api/ops/systemd` | `systemctl --user list-units --type=service` | `claude*` unit の name / load / active / sub / description |
+| `GET /api/ops/cron` | `crontab -l` | 5 フィールドのスケジュール・コマンド・無効化フラグ |
+| `GET /api/ops/agents` | `scripts/tools/agent-teams-status.js --json` | Agent Teams 使用状況（state.json 由来） |
+
+設計方針: **取得できなければ `available: false` と理由 (`note` / `stderr`) を返し、
+空配列を「0 件」と偽らない**。取得できない環境（CI・権限なし）でも HTTP 200 と `ok: true` を保ち、
+UI 側が「未取得」と「0 件」を区別できるようにする。
+
+### 既知の制約: cron が取得できない理由
+
+このホストでは `claudeos-web-startup.service` が `NoNewPrivileges=yes` で動いており、
+`crontab` が spool (`/var/spool/cron/crontabs/<user>`, `drwx-wx--T root:crontab`) を読むための
+setgid 昇格が阻害される。そのためサービス文脈では `crontab -l` が
+`crontabs/<user>/: fopen: Permission denied` で失敗し、API は `available: false` を返す。
+
+対応方針（いずれも未実施）:
+
+1. `NoNewPrivileges` を外す — 硬化を弱めるため非推奨
+2. プロジェクト側の cron 管理（`bin/cron-schedule.sh`）が保持する定義を取得元にする
+3. 特権ヘルパー（root 側で crontab を読む小さな unit）を用意し、その出力を読む
+
+現状は 2 が最短。UI の Cron 画面はサンプル値のままなので、2 を実装してから接続する。
