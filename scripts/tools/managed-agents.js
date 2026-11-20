@@ -23,7 +23,7 @@
 //   managed-agents.js status [--probe]
 //   managed-agents.js agents list|plan|sync [--role r]
 //   managed-agents.js env plan|ensure
-//   managed-agents.js session create --task-id T --role R --task-type review (--prompt P | --prompt-file F)
+//   managed-agents.js session create --task-id T --role R --task-type review --prompt P
 //                                    [--budget-cents N] [--repo https://github.com/o/r] [--ref main] [--ack-daily-soft]
 //                                    (--task-type check は確認処理: 上限 $0.50)
 //   managed-agents.js session run    (create と同じ引数) [--max-wait-seconds N]
@@ -31,6 +31,7 @@
 //   managed-agents.js session get|events|interrupt --session-id S
 //   managed-agents.js session close --task-id T [--session-id S] [--confirm-not-created]
 //   managed-agents.js budget status | budget reconcile --console-usd 1.23 [--note text]
+//   managed-agents.js ask --role R --prompt P [--task-type T] [--source human|agent]   (--config / --repo / --ref / --ack-daily-soft は不可)
 //   managed-agents.js route --json '<task json>' [--task-id T] [--budget-cents N]
 //
 // 終了コード: 0 成功 / 2 設定 / 3 予算 / 4 認証・権限 (BLOCKED) / 5 API 障害 / 6 重複 / 7 ポリシー拒否 / 8 タイムアウト
@@ -148,9 +149,10 @@ function resolveConfigPath(explicit, env) {
   return explicit || env.CLAUDEOS_MANAGED_AGENTS_CONFIG || path.join(REPO_ROOT, 'config', 'managed-agents.json');
 }
 
-function resolveStateDir(config, env) {
+// 台帳の場所は設定ファイルでは変えられない (設定を差し替えるだけで回数・予算・重複の判定を白紙に戻せないようにする)。
+// 環境変数による指定はテストと運用上の移設のために残す。
+function resolveStateDir(_config, env) {
   if (env.CLAUDEOS_MA_STATE_DIR) return env.CLAUDEOS_MA_STATE_DIR;
-  if (config && typeof config.stateDir === 'string' && config.stateDir) return config.stateDir.replace(/^~(?=\/|$)/, os.homedir());
   return path.join(env.CLAUDEOS_HOME || path.join(os.homedir(), '.claudeos'), 'managed-agents');
 }
 
@@ -556,15 +558,84 @@ function buildResources(ctx, args) {
     throw new AdapterError('CONFIG', 'REPO_URL_INVALID', `repository は https://github.com/<owner>/<repo> 形式のみ (actual: ${repo})`);
   }
   const ref = args.ref || ws.ref || '';
+  // ref はクラウドへ送信される。ブランチ名か 40 桁のコミット SHA として妥当な形だけを受け付ける。
+  if (ref && !/^[A-Za-z0-9._/-]{1,200}$/.test(ref)) throw new AdapterError('CONFIG', 'REF_INVALID', 'ref はブランチ名または 40 桁のコミット SHA (英数字と . _ / - のみ、200 文字以内)');
+  if (ref && findSecretKinds(ref, secretsOf(ctx)).length) throw new AdapterError('POLICY', 'REF_CONTAINS_SECRET', 'ref に秘密らしき値が含まれる');
   const resource = { type: 'github_repository', url: repo, mount_path: ws.mountPath || '/workspace/repo' };
   if (ref) resource.checkout = /^[0-9a-f]{40}$/.test(ref) ? { type: 'commit', sha: ref } : { type: 'branch', name: ref };
   return { resources: [resource], repo, tokenRequired: true };
 }
 
+// 依頼文はクラウドへ送信される。秘密らしき値を含むもの・長すぎるものは送信前に拒否する
+// (ローカルで見た鍵や接続文字列を、依頼文に書いて外へ出してしまうのを防ぐ)。
+const MAX_PROMPT_CHARS = 8000;
+// 種類ごとのパターン。値の部分を 1 番目の捕捉グループに取り、伏せ字・例示値は除外する。
+//   この検査は「よくある形式の秘密をうっかり送る」ことを防ぐもので、意図的な回避 (分割・符号化) は止められない。
+const PROMPT_SECRET_PATTERNS = [
+  ['anthropic-api-key', /(sk-ant-[A-Za-z0-9_-]{8,})/g],
+  ['api-key', /(?<![A-Za-z0-9])(sk-(?:proj-)?[A-Za-z0-9_-]{20,})/g],
+  ['github-token', /(?<![A-Za-z0-9])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})/g],
+  ['slack-token', /(?<![A-Za-z0-9])(xox[abprs]-[A-Za-z0-9-]{10,})/g],
+  ['aws-access-key-id', /(?<![A-Za-z0-9])((?:AKIA|ASIA)[0-9A-Z]{16})(?![0-9A-Z])/g],
+  ['private-key', /(-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----)/g],
+  ['jwt', /(?<![A-Za-z0-9_-])(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/g],
+  ['bearer-token', /\bBearer\s+([A-Za-z0-9._~+/=-]{16,})/gi],
+  ['connection-string', /\b[a-z][a-z0-9+.-]{2,}:\/\/[^\s:@/]*:([^\s@]{3,})@/gi],
+  ['password-parameter', /[?&\s;]password=([^\s&;'"]{3,})/gi],
+  // KEY=値 / KEY: 値 (キー名に pass / secret / token / api key / credential を含むもの)
+  ['secret-assignment', /\b[A-Za-z0-9_.-]*(?:pass(?:word|wd)?|secret|token|api[_-]?key|credential)[A-Za-z0-9_.-]*\s*[=:]\s*["']?([^\s"',;]{6,})/gi],
+];
+// 伏せ字・例示値・変数参照は秘密として扱わない (文書の例や、伏せ字済みの CI ログを過剰に拒否しないため)。
+function isPlaceholderValue(v) {
+  const s = String(v);
+  // xxxx / **** / sk-ant-xxxx / ghp_XXXX: 接頭辞 (英字 + 区切り) をすべて外した残りが伏せ字だけ
+  if (/^[xX*•.<>_-]+$/.test(s.replace(/^(?:[A-Za-z]{2,10}[_-])+/, ''))) return true;
+  if (/(example|redacted|placeholder|changeme|your[_-]|dummy|sample)/i.test(s)) return true;
+  if (/^(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|<[^>]+>|\{\{[^}]+\}\}|%[A-Za-z_]+%)$/.test(s)) return true; // $VAR / <token> / {{x}}
+  if (/^(.)\1+$/.test(s)) return true;                                               // 同じ文字の繰り返し
+  if (/^(true|false|null|none|required|optional|string|password|user(name)?)$/i.test(s)) return true;
+  return false;
+}
+
+// 依頼文・タスク ID・ref など、クラウドへ送る文字列の検査。該当した種類を返す (値は返さない)。
+function findSecretKinds(text, knownSecrets) {
+  const s = String(text);
+  const kinds = new Set();
+  for (const v of knownSecrets || []) if (typeof v === 'string' && v.length >= 6 && s.includes(v)) kinds.add('configured-credential');
+  for (const [kind, re] of PROMPT_SECRET_PATTERNS) {
+    re.lastIndex = 0;
+    for (let m = re.exec(s); m; m = re.exec(s)) {
+      if (!isPlaceholderValue(m[1])) { kinds.add(kind); break; }
+    }
+  }
+  return [...kinds];
+}
+
+function assertPromptSafe(prompt, knownSecrets) {
+  const text = String(prompt);
+  if (text.length > MAX_PROMPT_CHARS) throw new AdapterError('POLICY', 'PROMPT_TOO_LONG', `依頼文が長すぎる (${text.length} 文字、上限 ${MAX_PROMPT_CHARS})`);
+  const kinds = findSecretKinds(text, knownSecrets);
+  if (kinds.length) {
+    throw new AdapterError('POLICY', 'PROMPT_CONTAINS_SECRET', `依頼文に秘密らしき値が含まれるため送信しない (種類: ${kinds.join(', ')})。値を取り除くか伏せ字にする`, { kinds });
+  }
+  return true;
+}
+
+// Agent の出力など外部由来の文字列から端末制御文字を取り除く (改行とタブは残す)。
+// 画面の消去や行の上書きで、偽の結果表示を作られないようにする。
+function stripControlChars(text) {
+  // eslint-disable-next-line no-control-regex
+  return String(text).replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '');
+}
+
 function resolveSessionRequest(ctx, args) {
   if (!args.taskId) throw new AdapterError('CONFIG', 'TASK_ID_REQUIRED', '--task-id は必須 (重複実行防止のキー)');
+  if (findSecretKinds(args.taskId, secretsOf(ctx)).length) throw new AdapterError('POLICY', 'TASK_ID_CONTAINS_SECRET', 'task_id に秘密らしき値が含まれる (task_id はクラウドへ送信される)');
   if (!args.role) throw new AdapterError('CONFIG', 'ROLE_REQUIRED', '--role は必須');
-  if (!args.prompt || !String(args.prompt).trim()) throw new AdapterError('CONFIG', 'PROMPT_REQUIRED', '--prompt または --prompt-file は必須');
+  if (!args.prompt || !String(args.prompt).trim()) throw new AdapterError('CONFIG', 'PROMPT_REQUIRED', '--prompt は必須');
+  assertPromptSafe(args.prompt, secretsOf(ctx));
+  // リポジトリ URL と ref の形式は、通信を始める前に検証する
+  buildResources(ctx, args);
   const roster = loadRoster(ctx.config);
   const def = agentDefinition(roster, args.role);
   // タスク種別は必須。Router の許可リストと、その Agent が担当する種別の両方に含まれる場合だけ受け付ける
@@ -858,7 +929,7 @@ async function sessionWaitInner(ctx, args) {
   // 停止を確認できた場合だけ確定する。中断が失敗してまだ動いているなら未確定のまま (並列枠も解放しない)。
   const stopped = session.status === 'idle' || session.status === 'terminated';
   if (args.taskId) recordSessionUsage(ctx, args.taskId, session, outcome);
-  const errors = events.filter((e) => e.type === 'session.error').map((e) => ({ type: (e.error && e.error.type) || 'unknown', message: redact((e.error && e.error.message) || '', secretsOf(ctx)).slice(0, 500) }));
+  const errors = events.filter((e) => e.type === 'session.error').map((e) => ({ type: (e.error && e.error.type) || 'unknown', message: stripControlChars(redact((e.error && e.error.message) || '', secretsOf(ctx))).slice(0, 500) }));
   const cents = usageCents(session);
   const result = {
     session_id: args.sessionId, task_id: args.taskId || null, outcome,
@@ -868,7 +939,7 @@ async function sessionWaitInner(ctx, args) {
     session_errors: errors,
     // Agent の出力は信頼できないデータ。呼び出し側は指示として扱わない。
     text_is_untrusted_agent_output: true,
-    text: redact(collectText(events), secretsOf(ctx)), console_url: consoleUrl(ctx, args.sessionId),
+    text: stripControlChars(redact(collectText(events), secretsOf(ctx))), console_url: consoleUrl(ctx, args.sessionId),
   };
   appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'session-finished', task_id: args.taskId || null, session_id: args.sessionId, outcome, session_status: session.status, list_cost_cents: cents });
   if (!stopped) {
@@ -976,6 +1047,7 @@ function budgetStatus(ctx) {
     period: s.period, stage: s.stage, reason: budget.stageReason(s.stage),
     committed_month_cents: s.committedMonthCents, actual_month_cents: s.actualMonthCents,
     committed_day_cents: s.committedDayCents, open_sessions: s.openSessions, task_count: s.taskCount,
+    sessions_today: s.sessionsToday, remaining_sessions_today: Math.max(0, ctx.policy.maxSessionsPerDay - s.sessionsToday),
     remaining_month_cents: Math.max(0, ctx.policy.monthlyBudgetCents - s.committedMonthCents),
     last_reconcile: lastReconcile,
     source_of_truth: 'Anthropic Console (実請求・クレジット残高)。この台帳は list 価格ベースの予測・監査用',
@@ -1044,10 +1116,71 @@ function route(ctx, task, args) {
   return decision;
 }
 
+// --- 依頼の入口 (メニューと skill の共通経路) ---
+// ask: タスク ID の採番、種別の決定、Router による判定、実行までを 1 つにまとめる。
+//   人 (メニュー) と Claude (skill) のどちらから呼んでも同じ制約 (予算・回数・読取専用・依頼文の検査) がかかる。
+//   Router が Managed を選ばなかった場合は実行せず、Local 側の決定を返す。
+function defaultTaskType(def) {
+  return def.taskTypes.find((t) => t !== 'check' && agentRouter.MANAGED_TASK_TYPES.includes(t)) || '';
+}
+
+async function ask(ctx, args) {
+  requireUsable(ctx);
+  if (!args.role) throw new AdapterError('CONFIG', 'ROLE_REQUIRED', '--role は必須');
+  if (!args.prompt || !String(args.prompt).trim()) throw new AdapterError('CONFIG', 'PROMPT_REQUIRED', '--prompt は必須');
+  assertPromptSafe(args.prompt, secretsOf(ctx));
+  // ask は自律実行からも呼ばれる入口なので、受け付ける引数を絞る。
+  //   --repo / --ref : マウント対象は設定のリポジトリだけ (任意のリポジトリへトークンを添えて送らせない)
+  //   --ack-daily-soft : 日次ソフト予算の超過は、この入口からは認めない
+  for (const [key, label] of [['repo', '--repo'], ['ref', '--ref'], ['ackDailySoft', '--ack-daily-soft']]) {
+    if (args[key]) throw new AdapterError('POLICY', 'ASK_OPTION_NOT_ALLOWED', `ask では ${label} を指定できない`);
+  }
+  // source は呼び出し側の自己申告 (記録用)。これを根拠に制約を緩めることはしない。省略時は unknown。
+  const source = args.source === 'agent' || args.source === 'human' ? args.source : 'unknown';
+  const def = agentDefinition(loadRoster(ctx.config), args.role);
+  const taskType = String(args.taskType || defaultTaskType(def)).trim().toLowerCase();
+  const stamp = ctx.now().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  // 同じ秒に 2 回呼ばれても衝突しないよう乱数の接尾辞を付ける
+  const taskId = args.taskId || `ask-${args.role}-${stamp}-${crypto.randomBytes(3).toString('hex')}`;
+  if (findSecretKinds(taskId, secretsOf(ctx)).length) throw new AdapterError('POLICY', 'TASK_ID_CONTAINS_SECRET', 'task_id に秘密らしき値が含まれる (task_id はクラウドへ送信される)');
+
+  // 未確定のセッション (実行中、または作成の成否が不明) が残っている間は、新しい依頼を出さず、Local へも戻さない。
+  // クラウド側で同じタスクが動いているかもしれないため、Local で実施すると二重実行になる。
+  const { entries, corrupt } = budget.readLedger(ctx.ledgerPath);
+  if (corrupt === 0) {
+    const open = [...budget.foldTasks(entries).values()].filter((t) => !t.final && !t.released);
+    if (open.length) {
+      const err = new AdapterError('CONFLICT', 'OPEN_SESSION_EXISTS', `未確定のセッションがある (task_id=${open.map((t) => t.task_id).join(', ')})。session close --task-id <id> で確定してから依頼する`, { open_tasks: open.map((t) => ({ task_id: t.task_id, session_id: t.session_id })) });
+      err.noFallback = true;
+      throw err;
+    }
+  }
+
+  // この入口から出せるのは読取専用の Agent だけなので、安全条件は固定値で宣言する。
+  // 可用性・予算・回数・重複は route() が台帳から判定する。
+  const decision = route(ctx, {
+    task_type: taskType, complexity: 'medium', risk: 'low', read_only: true, files_affected: 10, expected_duration_min: 15,
+    managed: { requested: true, data_sensitivity: 'internal', human_gate: false, requires_secrets: false, requires_external_network: false },
+  }, { taskId, budgetCents: args.budgetCents, ackDailySoft: false });
+  appendJsonl(ctx.decisionsPath, { ts: ctx.now().toISOString(), kind: 'ask', source, task_id: taskId, role: args.role, task_type: taskType, execution: decision.execution });
+
+  if (decision.execution !== 'ManagedAgent') {
+    return {
+      mode: ctx.mode, executed: false, managed: false, source, task_id: taskId, role: args.role, task_type: taskType,
+      denied: decision.managed.denied, policy_denied: decision.managed.policy_denied,
+      budget_code: decision.managed.evidence.budget_code,
+      // Managed へ出せない場合の Local 側の実行先。安全上の拒否 (policy_denied) の場合も、Local の承認手続きはそのまま適用される。
+      do_locally_with: decision.managed.fallback_execution,
+    };
+  }
+  const result = await sessionRun(ctx, Object.assign({}, args, { taskId, taskType, taskClass: taskType === 'check' ? 'check' : 'task' }));
+  return Object.assign({ managed: true, source, task_type: taskType }, result);
+}
+
 // --- CLI ---
 // 値を取るオプションと真偽フラグを明示的に分ける。値が無い・未知のオプションはエラーにする
 // (--budget-cents の値を忘れて既定額で実行される、といった黙った読み替えを防ぐ)。
-const VALUE_OPTIONS = new Set(['config', 'role', 'task-id', 'task-type', 'prompt', 'prompt-file', 'budget-cents', 'class', 'repo', 'ref', 'session-id', 'max-wait-seconds', 'poll-ms', 'console-usd', 'note', 'json']);
+const VALUE_OPTIONS = new Set(['config', 'source', 'role', 'task-id', 'task-type', 'prompt', 'budget-cents', 'class', 'repo', 'ref', 'session-id', 'max-wait-seconds', 'poll-ms', 'console-usd', 'note', 'json']);
 const FLAG_OPTIONS = new Set(['probe', 'ack-daily-soft', 'confirm-not-created']);
 function parseArgs(argv) {
   const pos = [];
@@ -1067,14 +1200,15 @@ function parseArgs(argv) {
 }
 
 function sessionArgs(o) {
-  let prompt = typeof o.prompt === 'string' ? o.prompt : '';
-  if (!prompt && typeof o['prompt-file'] === 'string') prompt = fs.readFileSync(o['prompt-file'], 'utf8');
+  const prompt = typeof o.prompt === 'string' ? o.prompt : '';
+  // --prompt-file は提供しない: 任意のローカルファイルの内容をクラウドへ送る経路になるため。
   return {
     taskId: typeof o['task-id'] === 'string' ? o['task-id'] : '', role: typeof o.role === 'string' ? o.role : '', prompt,
     budgetCents: typeof o['budget-cents'] === 'string' ? o['budget-cents'] : null,
     taskClass: o.class === 'check' ? 'check' : 'task',
     taskType: typeof o['task-type'] === 'string' ? o['task-type'] : '',
     confirmNotCreated: o['confirm-not-created'] === true,
+    source: typeof o.source === 'string' ? o.source : '',
     repo: typeof o.repo === 'string' ? o.repo : '', ref: typeof o.ref === 'string' ? o.ref : '',
     ackDailySoft: o['ack-daily-soft'] === true,
     sessionId: typeof o['session-id'] === 'string' ? o['session-id'] : '',
@@ -1119,6 +1253,7 @@ async function dispatch(ctx, pos, o) {
       return budget.reconcile(ctx.ledgerPath, ctx.now(), ctx.policy, budget.usdToCents(o['console-usd']), typeof o.note === 'string' ? o.note : null);
     }
   }
+  if (cmd === 'ask') return ask(ctx, sessionArgs(o));
   if (cmd === 'route') {
     let task;
     try { task = JSON.parse(typeof o.json === 'string' ? o.json : fs.readFileSync(0, 'utf8')); } catch (e) {
@@ -1150,6 +1285,12 @@ async function main() {
   let ctx = null;
   try {
     const { pos, opts } = parseArgs(process.argv.slice(2));
+    // 課金を伴う経路では --config を受け付けない。別の設定 (別の上限・mode) へ差し替えて
+    // 回数や予算の歯止めを外せないようにする。設定の場所は既定か環境変数で決める。
+    const billingPath = pos[0] === 'ask' || (pos[0] === 'session' && (pos[1] === 'create' || pos[1] === 'run'));
+    if (billingPath && opts.config !== undefined) {
+      throw new AdapterError('POLICY', 'CONFIG_OVERRIDE_NOT_ALLOWED', `${pos.slice(0, 2).join(' ')} では --config を指定できない (設定は既定の場所か環境変数 CLAUDEOS_MANAGED_AGENTS_CONFIG で決める)`);
+    }
     ctx = createContext({ configPath: typeof opts.config === 'string' ? opts.config : undefined });
     const out = await dispatch(ctx, pos, opts);
     process.stdout.write(redact(JSON.stringify(out, null, 2), secretsOf(ctx)) + '\n');
@@ -1164,7 +1305,7 @@ module.exports = {
   ERROR_CLASSES, AdapterError, classifyHttp, fallbackDecision, redact, findSecretKeys, validateConfig,
   isAllowedBaseUrl, assertReadOnlyAgent, agentDefinition, loadRoster, createContext, apiRequest,
   agentsSync, agentsList, envEnsure, sessionCreate, sessionWait, sessionRun, sessionClose,
-  budgetStatus, status, route, latestStatusEvent, outcomeOf, errorPayload, dispatch, parseArgs,
+  budgetStatus, status, route, ask, assertPromptSafe, findSecretKinds, stripControlChars, latestStatusEvent, outcomeOf, errorPayload, dispatch, parseArgs,
 };
 
 if (require.main === module) main();

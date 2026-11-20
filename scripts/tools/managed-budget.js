@@ -32,6 +32,7 @@ const HARD_LIMITS = Object.freeze({
   connectionTestMaxCents: 100,
   dailySoftCents: 10000,
   maxConcurrentSessions: 1,       // PoC は並列 1 固定
+  maxSessionsPerDay: 20,          // 1 日あたりのセッション数 (自律実行での連発を防ぐ)
   maxApiRetries: 1,
 });
 
@@ -41,6 +42,7 @@ const DEFAULT_POLICY = Object.freeze({
   connectionTestMaxCents: 50,     // 初回接続テスト・確認処理 (task_class=check) 上限 $0.50
   dailySoftCents: 300,            // 日次ソフト予算 $3
   maxConcurrentSessions: 1,
+  maxSessionsPerDay: 5,           // 1 日あたりのセッション数の上限 (UTC の日付で数える)
   maxApiRetries: 1,
   warnPct: 70,
   verifyOnlyPct: 85,
@@ -237,7 +239,7 @@ function summarize(entries, now, policy) {
   const period = billingPeriod(now, policy.cycle);
   const today = dayStart(now);
   const tasks = foldTasks(entries);
-  const s = { period, committedMonthCents: 0, actualMonthCents: 0, committedDayCents: 0, openSessions: 0, taskCount: 0 };
+  const s = { period, committedMonthCents: 0, actualMonthCents: 0, committedDayCents: 0, openSessions: 0, taskCount: 0, sessionsToday: 0 };
   for (const t of tasks.values()) {
     const open = !t.final && !t.released;
     // 未確定のセッションは、開始した請求期間に関わらず並列数と当期の予約に数える
@@ -249,6 +251,8 @@ function summarize(entries, now, policy) {
     s.committedMonthCents += committedCents(t);
     s.actualMonthCents += (t.carriedCents || 0) + t.actualCents;
     if (t.ts >= today || open) s.committedDayCents += committedCents(t);
+    // 今日作成を試みたセッション数 (作成が明確に拒否されて解除されたものは数えない)
+    if (t.ts >= today && !t.released) s.sessionsToday += 1;
   }
   s.stage = stageOf(s.committedMonthCents, policy);
   return s;
@@ -295,6 +299,7 @@ function guard(entries, now, policy, request) {
     return deny('MONTHLY_RESERVATION_EXCEEDED', `予約後の月間合計 ${s.committedMonthCents + cents}¢ が月間予算 ${policy.monthlyBudgetCents}¢ を超える`);
   }
   if (s.openSessions >= policy.maxConcurrentSessions) return deny('CONCURRENCY_LIMIT', `実行中セッション数が上限 ${policy.maxConcurrentSessions} に達している`);
+  if (s.sessionsToday >= policy.maxSessionsPerDay) return deny('DAILY_SESSION_LIMIT', `本日のセッション数が上限 ${policy.maxSessionsPerDay} に達している (UTC の日付で数える)`);
   const warnings = [];
   if (s.committedDayCents + cents > policy.dailySoftCents) {
     if (!req.ackDailySoft) return deny('DAILY_SOFT_EXCEEDED', `予約後の日次合計 ${s.committedDayCents + cents}¢ が日次ソフト予算 ${policy.dailySoftCents}¢ を超える (--ack-daily-soft で明示許可)`);
