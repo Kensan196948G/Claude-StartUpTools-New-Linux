@@ -355,10 +355,29 @@ function createServer(cfg) {
   // 変更系操作は同時 1 件 (レースで同じプロジェクトを二重起動しない)
   let busy = false;
 
+  /**
+   * state の短命キャッシュ。
+   *   libexec/startup-state.sh は projectsDir 配下の全フォルダを走査するため、
+   *   370 件規模では実測 12 秒前後かかる。UI は 15 秒ごとに取得するため、そのままでは
+   *   常時 CPU を使い続ける。既定 20 秒だけ結果を使い回す (STARTUP_STATE_CACHE_MS で変更可)。
+   *   走査 12 秒 > UI 周期 15 秒のため、TTL は走査時間より十分長く取る必要がある。
+   *   起動・停止などの変更系の後は invalidateState() で必ず捨てる。
+   */
+  const STATE_CACHE_MS = Number(process.env.STARTUP_STATE_CACHE_MS || 20000);
+  let stateCache = null;
+
+  function invalidateState() { stateCache = null; }
+
   async function getState() {
+    const now = Date.now();
+    if (stateCache && (now - stateCache.at) < STATE_CACHE_MS) {
+      return { ok: true, value: stateCache.value, cached: true };
+    }
     const r = await runScript(LIBEXEC_STATE, [], { cwd: conf.root, timeoutMs: conf.stateTimeoutMs });
     if (r.exitCode !== 0) return { ok: false, error: 'STATE_EXEC', stderr: r.stderr };
-    return parseState(r.stdout);
+    const parsed = parseState(r.stdout);
+    if (parsed.ok) stateCache = { at: now, value: parsed.value };
+    return parsed;
   }
 
   function json(res, code, obj) {
@@ -427,6 +446,7 @@ function createServer(cfg) {
     if (!v.ok) return json(res, 400, { ok: false, error: v.error });
     const args = buildLaunchArgs(Object.assign({ dryRun: true }, v.value));
     const r = await runScript(BIN_START, args, { cwd: conf.root, timeoutMs: conf.planTimeoutMs });
+    invalidateState();
     appendAudit({ action: 'plan', project: v.value.project, mode: v.value.mode, goal: v.value.goal,
                   exit: r.exitCode, remote });
     const maxSessions = Number.isInteger(ctx.limits.max_sessions) ? ctx.limits.max_sessions : 4;
@@ -452,6 +472,7 @@ function createServer(cfg) {
     if (body.confirm !== true || conf.dryRunOnly) {
       const args = buildLaunchArgs(Object.assign({ dryRun: true }, v.value));
       const r = await runScript(BIN_START, args, { cwd: conf.root, timeoutMs: conf.planTimeoutMs });
+      invalidateState();
       appendAudit({ action: 'launch-plan', project: v.value.project, mode: v.value.mode,
                     goal: v.value.goal, exit: r.exitCode, remote,
                     dryRunOnly: conf.dryRunOnly });
@@ -511,6 +532,7 @@ function createServer(cfg) {
       const o = body.all === true ? { all: true, force: !!body.force } : { project: body.project, force: !!body.force };
       const args = buildStopArgs(o);
       const r = await runScript(BIN_AUTONOMY, args, { cwd: conf.root, timeoutMs: conf.planTimeoutMs });
+      invalidateState();
       appendAudit({ action: 'stop', project: body.all ? '--all' : body.project, force: !!body.force,
                     exit: r.exitCode, remote });
       return json(res, 200, { ok: r.exitCode === 0, exitCode: r.exitCode, args, output: r.stdout, stderr: r.stderr });
@@ -526,6 +548,7 @@ function createServer(cfg) {
     busy = true;
     try {
       const dry = await runScript(BIN_AUTONOMY, dryArgs, { cwd: conf.root, timeoutMs: conf.planTimeoutMs });
+      invalidateState();
       if (body.confirm !== true || conf.dryRunOnly) {
         appendAudit({ action: 'apply-all-plan', exit: dry.exitCode, remote });
         return json(res, 200, {
@@ -597,16 +620,38 @@ function createServer(cfg) {
         note: 'systemctl --user を実行できません', stderr: String(r.stderr || '').slice(0, 300),
       });
     }
+    // enabled/disabled は list-unit-files から、実行コマンドは ExecStart から取る
+    const ef = await runCmd('systemctl',
+      ['--user', 'list-unit-files', '--type=service', '--no-legend', '--plain'],
+      { timeoutMs: 8000 });
+    const enabledMap = {};
+    ef.stdout.split('\n').forEach((line) => {
+      const f = line.trim().split(/\s+/);
+      if (f[0]) enabledMap[f[0]] = f[1];
+    });
+
     const units = [];
+    const names = [];
     r.stdout.split('\n').forEach((line) => {
       const t = line.trim();
       if (!t || !/^claude/i.test(t)) return;   // このプロジェクトの unit のみ
       const f = t.split(/\s+/);
+      names.push(f[0]);
       units.push({
         name: f[0], load: f[1], active: f[2], sub: f[3],
         description: f.slice(4).join(' '),
+        enabled_file: enabledMap[f[0]] || 'unknown',
+        enabled: enabledMap[f[0]] === 'enabled',
       });
     });
+
+    // ExecStart を実値で埋める (件数はこのプロジェクトの unit のみ = 数件)
+    await Promise.all(units.map(async (u) => {
+      const sh = await runCmd('systemctl',
+        ['--user', 'show', u.name, '-p', 'ExecStart', '--value'], { timeoutMs: 5000 });
+      u.exec_start = sh.exitCode === 0 ? String(sh.stdout || '').trim().slice(0, 300) : '';
+    }));
+
     return json(res, 200, { ok: true, available: true, count: units.length, units });
   }
 
