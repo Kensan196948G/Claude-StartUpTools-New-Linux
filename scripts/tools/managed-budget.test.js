@@ -297,6 +297,30 @@ test('解除して再予約したタスクは、以前に記録された実績�
   assert.deepEqual([s.committedMonthCents, s.actualMonthCents, s.openSessions], [190, 90, 1]);
 });
 
+test('1 日あたりのセッション数: 上限に達したら拒否する (連発の歯止め)。明確に拒否された作成は数えない', () => {
+  const p = policy({ dailySoftCents: 5000 });
+  const done = (id, ts) => [
+    { type: 'reserve', ts, task_id: id, cents: 10 },
+    { type: 'usage', ts, task_id: id, session_id: `s-${id}`, list_cost_cents: 3, final: true },
+  ];
+  const four = ['a', 'b', 'c', 'd'].flatMap((id) => done(id, '2026-10-10T01:00:00.000Z'));
+  assert.equal(b.guard(four, NOW, p, { cents: 10 }).allow, true);
+  assert.equal(b.summarize(four, NOW, p).sessionsToday, 4);
+  const five = [...four, ...done('e', '2026-10-10T02:00:00.000Z')];
+  const g = b.guard(five, NOW, p, { cents: 10 });
+  assert.equal(g.allow, false);
+  assert.equal(g.code, 'DAILY_SESSION_LIMIT');
+  // 前日の分と、作成が拒否されて解除された分は数えない
+  const mixed = [...four, ...done('y', '2026-10-09T23:00:00.000Z'),
+    { type: 'reserve', ts: '2026-10-10T03:00:00.000Z', task_id: 'rej', cents: 10 },
+    { type: 'release', ts: '2026-10-10T03:00:01.000Z', task_id: 'rej', reason: 'create-rejected:AUTH' }];
+  assert.equal(b.summarize(mixed, NOW, p).sessionsToday, 4);
+  assert.equal(b.guard(mixed, NOW, p, { cents: 10 }).allow, true);
+  // 設定で 20 回を超える値にはできない
+  assert.throws(() => b.normalizePolicy({ maxSessionsPerDay: 21 }), (e) => e.code === 'POLICY_INVALID');
+  assert.equal(b.normalizePolicy({}).maxSessionsPerDay, 5);
+});
+
 test('ロック: 取得できなければ fail-closed。古いロックを自動回収せず、他者のロックを解放しない', () => {
   const ledger = tmpLedger();
   const lockDir = `${ledger}.lock`;
