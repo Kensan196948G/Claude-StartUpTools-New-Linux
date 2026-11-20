@@ -74,11 +74,13 @@ test('Access policy: session_duration は 8h 以下 (長時間の無操作セッ
   assert.ok(hours <= 8, `session_duration が長すぎる: ${policy.application.session_duration}`);
 });
 
-test('tunnel: ルートは WebUI(4612)、/terminal は ttyd(3741) へ向ける', () => {
+test('tunnel: ルートは統合コンソール v2 (3740)、/terminal は ttyd (3741) へ向ける', () => {
   assert.ok(tunnel.includes(`hostname: ${HOSTNAME}`));
-  assert.ok(tunnel.includes('service: http://127.0.0.1:4612'), 'ルートは ClaudeOS Console WebUI (4612)');
+  // ルートは startup-server (3740)。`/` が v2.html、旧コンソールは /index.html。
+  assert.ok(tunnel.includes('service: http://127.0.0.1:3740'), 'ルートは統合コンソール v2 (3740)');
   assert.ok(tunnel.includes('service: http://127.0.0.1:3741'), '/terminal は ttyd (3741)');
-  assert.ok(!/service: http:\/\/127\.0\.0\.1:3740/.test(tunnel), '旧 Node コンソール (3740) は公開ルートから外す');
+  // 旧 OpenDesign WebUI (4612) へは向けない
+  assert.ok(!/service: http:\/\/127\.0\.0\.1:4612/.test(tunnel), '旧 WebUI (4612) は公開ルートから外す');
 });
 
 test('tunnel: 0.0.0.0 / LAN アドレスへの公開を含まない', () => {

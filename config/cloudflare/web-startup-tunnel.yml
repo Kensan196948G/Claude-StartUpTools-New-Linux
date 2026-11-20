@@ -36,14 +36,13 @@ ingress:
     path: ^/terminal
     service: http://127.0.0.1:3741
 
-  # 公開ルートは ClaudeOS Console WebUI (設計プロトタイプ)。
-  # 実体: OpenDesign プロジェクト ee1e2a6f の tools/serve.mjs を systemd --user
-  # claude-startuptools-webui.service が 127.0.0.1:4612 で待ち受ける。
-  # Node コンソール (bin/web-startup.sh --start, 127.0.0.1:3740) は loopback 運用のまま残す。
+  # 公開ルートは統合コンソール v2 (scripts/web/public/v2.html)。
+  # systemd --user claudeos-web-startup.service が 127.0.0.1:3740 で待ち受け、
+  # `/` は v2.html、`/api/startup/*` は実 API、旧コンソールは /index.html で残る。
   # Access application はこの hostname 単位で / と /terminal の両方を保護する
   # (config/cloudflare/web-startup-access-policy.json)。
   - hostname: claude-startuptools.mirai-dx-platform.com
-    service: http://127.0.0.1:4612
+    service: http://127.0.0.1:3740
 
   # 既存の別サービスがある場合はここへ追記する (このテンプレートは単一サービスのみ)。
 
