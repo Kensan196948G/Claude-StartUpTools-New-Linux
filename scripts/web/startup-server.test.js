@@ -437,6 +437,8 @@ test('HTTP: GET /api/ops/systemd は読み取り専用で unit 一覧を返す',
     r.json.units.forEach((u) => {
       assert.equal(typeof u.name, 'string');
       assert.equal(typeof u.active, 'string');
+      assert.equal(typeof u.enabled, 'boolean', 'enabled は真偽値で返す');
+      assert.equal(typeof u.exec_start, 'string', 'ExecStart を実値で返す');
       assert.ok(/^claude/i.test(u.name), 'このプロジェクトの unit のみ返す');
     });
   });
