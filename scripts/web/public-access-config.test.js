@@ -74,9 +74,11 @@ test('Access policy: session_duration は 8h 以下 (長時間の無操作セッ
   assert.ok(hours <= 8, `session_duration が長すぎる: ${policy.application.session_duration}`);
 });
 
-test('tunnel: 対象 hostname を loopback の 3740 へ向ける', () => {
+test('tunnel: ルートは WebUI(4612)、/terminal は ttyd(3741) へ向ける', () => {
   assert.ok(tunnel.includes(`hostname: ${HOSTNAME}`));
-  assert.ok(tunnel.includes('service: http://127.0.0.1:3740'));
+  assert.ok(tunnel.includes('service: http://127.0.0.1:4612'), 'ルートは ClaudeOS Console WebUI (4612)');
+  assert.ok(tunnel.includes('service: http://127.0.0.1:3741'), '/terminal は ttyd (3741)');
+  assert.ok(!/service: http:\/\/127\.0\.0\.1:3740/.test(tunnel), '旧 Node コンソール (3740) は公開ルートから外す');
 });
 
 test('tunnel: 0.0.0.0 / LAN アドレスへの公開を含まない', () => {
@@ -95,5 +97,12 @@ test('tunnel: secret / 実 ID を commit していない (placeholder のみ)', 
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(tunnel), '実 UUID を書かない');
   // 値 (コメント以外) に secret 系キーを持ち込まない
   assert.ok(!/api[_-]?token|secret|password|_key:/i.test(yamlLines.join('\n')), 'secret を設定値として書かない');
-  assert.ok(policy.application.allowed_idps.every(v => v === '<GOOGLE_IDP_ID>'), 'IdP ID も placeholder');
+  assert.deepEqual(policy.application.allowed_idps, [], 'IdP は既定 (空)。実 ID を固定しない');
+});
+
+test('Access policy: IdP は既定 (allowed_idps 空) を使う (既存アプリ慣例)', () => {
+  // 本アカウントに Google IdP は無い。既存アプリ (ai-coding / opencode-harness 等) と同じく
+  // allowed_idps を空にして既定 IdP (One-time PIN 等) で email 条件を検証する。
+  assert.ok(Array.isArray(policy.application.allowed_idps), 'allowed_idps は配列');
+  assert.deepEqual(policy.application.allowed_idps, [], 'アカウント固有 IdP ID を repo に固定しない');
 });

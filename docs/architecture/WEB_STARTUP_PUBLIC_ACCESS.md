@@ -1,6 +1,6 @@
 # Web スタートアップコンソール 公開設計（Cloudflare Tunnel + Access）
 
-状態: **設計のみ（NOT APPLIED）** — Cloudflare への適用は人間の Y/N 後（Approval PR）。
+状態: **適用済み（APPLIED, 2026-09-24）** — 人間 Y/N の下で適用。read-back は §5.1、適用時の落とし穴は §5.2。
 正本: 本ファイル。上位方針: `docs/architecture/Cloudflare公開基盤仕様.md` §4/§5、`CLAUDE.md` §5。
 
 ## 1. 目的と決定事項
@@ -10,11 +10,13 @@
 | 公開 hostname | **`claude-startuptools.mirai-dx-platform.com`** |
 | 公開方式 | Cloudflare **Tunnel**（ホスト側の `127.0.0.1:3740` を公開 DNS へ出す）+ **Access** |
 | アプリ側 bind | **`127.0.0.1:3740` のまま**（LAN へは bind しない。公開面は Cloudflare エッジのみ） |
-| 入口認証 | **Cloudflare Access**（Google IdP）。許可は **`kensan1969@gmail.com` のみ** |
+| 入口認証 | **Cloudflare Access**（既定 IdP = One-time PIN 等）。許可は **`kensan1969@gmail.com` のみ** |
 | アプリ側 Basic 認証 | 任意（多層防御）。`STARTUP_WEB_PASSWORD` を env-file 0600 に置く場合のみ有効 |
 | 認可モデル | email 完全一致の `allow` 1 件 + catch-all `deny`。**ドメイン単位許可・ワイルドカード・IP 条件は禁止** |
 | service token | 既定 **無効**（自動化経路は開けない。必要になった時点で別 Approval） |
-| トンネル名 / unit | 既存ホスト慣例に合わせ **`claude-startuptools`** / **`claude-startuptools-cloudflared.service`**、config は `~/.cloudflared/claude-startuptools-config.yml` |
+| トンネル名 / unit | 既存ホスト慣例に合わせ **`claude-startuptools`** / systemd --user **`claude-startuptools-cloudflared.service`**（`~/.config/systemd/user/`）、config は `~/.cloudflared/claude-startuptools-config.yml` |
+| ブラウザターミナル | 同一 hostname の path `/terminal` を ttyd（`127.0.0.1:3741`）へ。Access は hostname 単位で保護。設計は `WEB_TERMINAL.md` |
+| 公開ルート | **ClaudeOS Console WebUI**（設計プロトタイプ）。OpenDesign プロジェクト `ee1e2a6f` の `tools/serve.mjs` を systemd --user `claude-startuptools-webui.service`（`127.0.0.1:4612`）で配信。Node コンソール（`127.0.0.1:3740`）は loopback 運用のまま残す |
 
 設計値（repo 管理・適用前）:
 
@@ -42,7 +44,7 @@
    │ https://claude-startuptools.mirai-dx-platform.com
    ▼
 Cloudflare エッジ
-   ├─ Access application  … 未認証は Google ログインへ / 許可外メールは拒否 (403)
+   ├─ Access application  … 未認証はログインへ / 許可外メールは拒否 (403)
    └─ Tunnel (cloudflared) … エッジ → ホストの loopback
         ▼
   127.0.0.1:3740  systemd --user `claudeos-web-startup.service`
@@ -86,27 +88,25 @@ cloudflared tunnel --config ~/.cloudflared/claude-startuptools-config.yml ingres
 # 4. DNS route（← 人間 Y/N。新規 CNAME が作られる）
 cloudflared tunnel route dns claude-startuptools claude-startuptools.mirai-dx-platform.com
 
-# 5. トンネル常駐化（既存慣例に合わせた専用 systemd unit）
-sudo tee /etc/systemd/system/claude-startuptools-cloudflared.service >/dev/null <<'UNIT'
+# 5. トンネル常駐化（既存慣例どおり systemd --user。sudo 不要）
+tee ~/.config/systemd/user/claude-startuptools-cloudflared.service >/dev/null <<'UNIT'
 [Unit]
 Description=ClaudeOS Web Startup Console Cloudflare Tunnel (claude-startuptools.mirai-dx-platform.com)
-After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/cloudflared tunnel --config /home/kensan/.cloudflared/claude-startuptools-config.yml run claude-startuptools
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config %h/.cloudflared/claude-startuptools-config.yml tunnel run
 Restart=on-failure
 RestartSec=5
-User=kensan
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 UNIT
-sudo systemctl daemon-reload && sudo systemctl enable --now claude-startuptools-cloudflared.service
+systemctl --user daemon-reload && systemctl --user enable --now claude-startuptools-cloudflared.service
 
 # 6. Access application + policy（← 人間 Y/N。認可モデル変更）
 #    config/cloudflare/web-startup-access-policy.json の設計値を API / Dashboard で適用する。
-#    <GOOGLE_IDP_ID> は account 固有値へ置換（既存 hostname の Access app 設定を流用してよい）。
+#    allowed_idps は空のまま（既定 IdP = One-time PIN 等。本アカウントに Google IdP は無い）。
 #    CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN は環境変数から読む。
 ```
 
@@ -152,15 +152,42 @@ curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/a
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq -c '.result[] | {name,decision,include}' | sort
 ```
 
-## 6. Rollback
+### 5.1 適用結果（read-back / 2026-09-24）
+
+| 検証 | 結果 |
+|---|---|
+| a. 未認証 → Access ログインへ 302（`...cloudflareaccess.com/cdn-cgi/access/login/...`、`auth_status=NONE`, `service_token_status=false`） | **PASS** |
+| b. 許可メール（`kensan1969@gmail.com`）でログイン後 → 200 | **NOT RUN（人間）** — 対話ログインが必要 |
+| c. 許可外アカウント → 403 | **NOT RUN（人間）** — 対話ログインが必要 |
+| d. origin は `127.0.0.1:3740` のみ（LAN 非公開） | **PASS** |
+| e. Access policy read-back = `allow(kensan1969@gmail.com, precedence1)` → `deny(everyone, precedence2)`、`allowed_idps=[]`, `session_duration=8h` | **PASS** |
+| ログイン画面 | **PASS** — "Log in to ClaudeOS Web Startup Console" / Cloudflare + Email(One-time PIN) |
+| トンネル常駐 | systemd --user `claude-startuptools-cloudflared.service` active（コネクタ 4 本登録） |
+
+### 5.2 適用時の落とし穴（記録）
+
+`cloudflared tunnel route dns <name> <hostname>` は名前解決を誤り、**別トンネル**（既存の `onegate`）を
+指す CNAME を作成した。適用時は作成された CNAME の `.cfargotunnel.com` が `cloudflared tunnel list` の
+該当 tunnel ID と一致するか必ず read-back し、不一致なら DNS レコードを正しい ID へ修正する。
+
+```bash
+# 作成した tunnel id と DNS のターゲットを照合 (一致しなければ API / Dashboard で修正)
+cloudflared tunnel list --output json | jq -r '.[] | select(.name=="claude-startuptools") | .id'
+dig +short CNAME @1.1.1.1 claude-startuptools.mirai-dx-platform.com
+```
+
+なお、レコード追加直後はローカル resolv（systemd-resolved）が旧 NXDOMAIN を否定的キャッシュし、
+`ENOTFOUND` のまま見えることがある。`resolvectl flush-caches` で解消する。
+
+## 6. ロールバック
 
 ```bash
 # 1. Access policy / application を無効化または削除 (先に入口を閉じる)
 curl -sS -X DELETE "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$APP_ID" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 # 2. トンネル停止
-sudo systemctl disable --now cloudflared
-cloudflared tunnel delete claudeos-web-startup      # DNS レコードも消える
+systemctl --user disable --now claude-startuptools-cloudflared.service
+cloudflared tunnel delete claude-startuptools      # DNS レコードも消える
 # 3. コンソール常駐の解除 (loopback 運用に戻す / 完全停止)
 bash bin/web-startup-service.sh --unregister
 bash bin/web-startup.sh --stop
@@ -181,19 +208,20 @@ bash bin/web-startup.sh --stop
 
 | 項目 | 状態 |
 |---|---|
-| Cloudflare への適用（tunnel create / DNS route / Access policy） | **NOT RUN**（人間 Y/N 待ち） |
+| Cloudflare への適用（tunnel create / DNS route / Access policy） | **適用済み（2026-09-24、人間 Y/N）** |
 | `cloudflared` の導入 | **完了済み**（`/usr/local/bin/cloudflared`、`cert.pem` あり） |
 | ingress 設定の検証 | **PASS**（`cloudflared tunnel --config … ingress validate` → OK） |
-| 実 hostname での外形確認 | NOT RUN（適用後に §5 を実施） |
+| 実 hostname での外形確認 | **PASS（a/d/e）** / b・c は対話ログインのため人間確認待ち（§5.1） |
 | アプリ側 Basic 認証 | 任意・未設定（設定する場合は人間が env-file を作成） |
 | 残リスク | ①Access を迂回して loopback へ到達できるのはホスト上のユーザのみ（攻撃面はホスト権限に集約）②このコンソールは Claude 起動権限を持つため、Access アカウントの侵害＝ホストでの Claude 起動と等価。MFA は IdP 側の設定に依存する ③本ホストは既存トンネルが多数稼働しており、Access 設定を流用する際に既存アプリのポリシーを誤って広げないこと（変更は approval 対象） |
 
 ## 9. Approval PR チェックリスト
 
-- [ ] hostname は `claude-startuptools.mirai-dx-platform.com` で一致
-- [ ] Access policy は `allow: email == kensan1969@gmail.com` 1 件 + `deny: everyone`（順序 = allow → deny）
-- [ ] origin は `http://127.0.0.1:3740`（LAN bind なし・`ss` で確認）
-- [ ] 適用後の read-back を §5 のとおり実施し、結果を PR に貼付
-- [ ] rollback 手順（§6）を適用前に確認
-- [ ] secret / tunnel ID / account ID を PR・ログ・本文へ書いていない
+- [x] hostname は `claude-startuptools.mirai-dx-platform.com` で一致
+- [x] Access policy は `allow: email == kensan1969@gmail.com` 1 件 + `deny: everyone`（順序 = allow → deny）
+- [x] `allowed_idps` は空（既定 IdP）。Google IdP を前提にしない（本アカウントに Google IdP は無い）
+- [x] origin は `http://127.0.0.1:3740`（LAN bind なし・`ss` で確認）
+- [x] 適用後の read-back を §5 のとおり実施し、結果を §5.1 に記録
+- [x] rollback 手順（§6）を適用前に確認
+- [x] secret / tunnel ID / account ID を PR・ログ・本文へ書いていない
 - [ ] マージ判定: Y / N（人間）

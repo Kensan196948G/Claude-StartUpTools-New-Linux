@@ -65,6 +65,34 @@
   を含まない」「0.0.0.0 bind なし」「実 ID/secret なし」を満たすことを機械的に固定。
   `tests/bats/unit/web-startup-service.bats`（6）。
 
+### Added — Web ターミナル（ブラウザで ClaudeCode を操作、2026-09-24）
+
+- 🖥️ `bin/web-terminal.sh`: ttyd の子プロセスとして動く薄いアダプタ。既存 `claudeos-*` tmux セッションへ
+  attach、無ければ `bin/start-claude.sh --foreground --tmux` で新規起動。**任意シェルは開かず**、project は
+  config allowlist 完全一致のみ（セッション名は `ccsu_safe_name` から導出）。
+- 🌐 公開: 同一 hostname の path `/terminal` を ttyd（`127.0.0.1:3741`）へ。既存 Cloudflare Access
+  （`kensan1969@gmail.com` のみ）が hostname 単位でそのまま保護。ingress に `path: ^/terminal` を追加。
+- 🚀 常駐: systemd --user `claude-startuptools-ttyd.service`（loopback・`-b /terminal`・`-O`・`-W`・`-m 5`）。
+  ttyd は静的バイナリ 1.7.7（apt 版は libwebsockets evlib プラグイン欠落で起動不可）。
+- 🎛️ UI: `scripts/web/public` に「ブラウザターミナル」導線を追加。
+- 📝 `docs/architecture/WEB_TERMINAL.md`: 構成 / 安全設計 / 導入手順 / 検証 / 残リスク。
+- 🧪 `tests/bats/unit/web-terminal.bats`（6: allowlist 拒否・attach・新規起動・監査）。
+
+### Changed — Web スタートアップコンソール 公開を適用（Cloudflare Tunnel + Access、2026-09-24）
+
+- 🌐 hostname `claude-startuptools.mirai-dx-platform.com` を **本番適用**（人間 Y/N）。入口認証は Cloudflare Access で
+  **`kensan1969@gmail.com` のみ許可**（`allow` 1 件 → catch-all `deny`、`allowed_idps=[]`＝既定 IdP / One-time PIN）。
+  origin は `127.0.0.1:3740` のまま（LAN 非公開）。
+- 🔧 設計修正: 設計書は Google IdP 前提だったが、本アカウントに Google IdP が無いため既存アプリ慣例
+  （`allowed_idps: []` + email allow）へ修正（`config/cloudflare/web-startup-access-policy.json` /
+  `docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md` / `scripts/web/public-access-config.test.js`）。
+- 🚀 常駐化: systemd --user `claudeos-web-startup.service`（origin）と
+  `claude-startuptools-cloudflared.service`（tunnel、`~/.cloudflared/claude-startuptools-config.yml`）。
+- ⚠️ 適用時の知見: `cloudflared tunnel route dns` が別トンネルを指す CNAME を作成したため DNS を read-back して
+  修正（`WEB_STARTUP_PUBLIC_ACCESS.md` §5.2 に記録）。
+- 🧪 検証: 未認証 302 → Access ログイン / origin loopback のみ / policy read-back 一致は **PASS**。
+  許可メールでのログイン後 200 と非許可 403 は対話ログインが必要なため人間確認待ち（§5.1）。
+
 ### Added — Managed Agents 実行基盤 P0（ClaudeOS v11 移行 開始、2026-09-09）
 
 - 🏗️ `config/managed-agents.json.template`: 記録用プレースホルダから**実行可能設定契約**へ昇格

@@ -69,8 +69,9 @@ function isLoopback(host) {
 
 /**
  * validateProject — プロジェクト名の検証。
- *   config から列挙した allowed に完全一致する場合のみ許可する (allowlist)。
- *   パス操作・シェル解釈に関わる文字はここで全て落ちる。
+ *   allowed (config 登録 + projectsDir 配下の実在フォルダ) に完全一致する場合のみ許可する。
+ *   パス操作・シェル解釈に関わる文字はここで全て落ちる (allowed の中身が広がっても、
+ *   `..`・改行・先頭 `-` はここで拒否される)。
  */
 function validateProject(name, allowed) {
   if (typeof name !== 'string' || name.length === 0 || name.length > 200) {
@@ -136,6 +137,9 @@ function validateDuration(duration, mode, limits) {
 /** buildLaunchArgs — bin/start-claude.sh の引数組み立て (順序は CLI の期待どおり) */
 function buildLaunchArgs(o) {
   const args = ['--project', o.project, '--' + o.mode];
+  // Web には TTY が無い。foreground を素で起動すると TUI が端末を得られず即座に落ち、
+  // ブラウザターミナルからも見えない。tmux を介して起動し CLI 端末から attach できるようにする。
+  if (o.mode === 'foreground') args.push('--tmux');
   if (o.goal) args.push('--goal', o.goal);
   if (o.intent) args.push('--intent', o.intent);
   if (o.duration !== undefined && o.duration !== null) args.push('--duration', String(o.duration));
@@ -168,9 +172,16 @@ function parseState(text) {
   return { ok: true, value: data };
 }
 
-/** projectNames — state から allowlist を作る */
+/**
+ * projectNames — state から allowlist を作る。
+ *   config 登録済み (projects) に加えて、projectsDir 配下に実在する全フォルダ
+ *   (all_folders) を含める。Web UI / ブラウザターミナルから「フォルダ以下すべて」を
+ *   起動対象にできるようにするためで、パス操作・シェル解釈の拒否は validateProject 側に残る。
+ */
 function projectNames(state) {
-  return ((state && state.projects) || []).map(p => p.name);
+  const names = ((state && state.projects) || []).map(p => p.name);
+  const extra = (state && Array.isArray(state.all_folders)) ? state.all_folders : [];
+  return Array.from(new Set([...names, ...extra]));
 }
 
 /** resolveLogFile — ログ閲覧のパス検証 (~/.claudeos 配下のみ) */
@@ -515,6 +526,29 @@ function createServer(cfg) {
     });
   }
 
+  /**
+   * handleAudit — 変更系操作の監査ログ (JSON Lines) の末尾を返す。
+   *   UI が「最近の操作」とログ・監査の表を実データで描けるようにするための読み取り専用 API。
+   *   パスは AUDIT_LOG 固定で、リクエストからパスを受け取らない。
+   */
+  async function handleAudit(res, url) {
+    const raw = parseInt(url.searchParams.get('lines') || '50', 10);
+    const lines = Math.min(Math.max(Number.isFinite(raw) ? raw : 50, 1), 500);
+    let text = '';
+    try {
+      text = fs.readFileSync(AUDIT_LOG, 'utf8');
+    } catch {
+      return json(res, 200, { ok: true, file: AUDIT_LOG, lines, entries: [], note: '監査ログはまだありません' });
+    }
+    const entries = [];
+    for (const row of text.split('\n')) {
+      const t = row.trim();
+      if (!t) continue;
+      try { entries.push(JSON.parse(t)); } catch { /* 壊れた行は捨てる (記録は best-effort) */ }
+    }
+    return json(res, 200, { ok: true, file: AUDIT_LOG, lines, entries: entries.slice(-lines) });
+  }
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
     const pn = url.pathname;
@@ -555,6 +589,7 @@ function createServer(cfg) {
       }
 
       if (pn === '/api/startup/log' && req.method === 'GET') return handleLog(req, res, url);
+      if (pn === '/api/startup/audit' && req.method === 'GET') return handleAudit(res, url);
 
       if (req.method === 'POST' && pn === '/api/startup/plan') {
         const b = await readBody(req);

@@ -1680,7 +1680,9 @@ if (require.main === module) {
     res.end(buildHtml());
   });
 
-  server.listen(PORT, '0.0.0.0', () => {
+  // HOST 未指定なら従来どおり全インターフェース (LAN から見える運用)。
+  // 別サービスから loopback 経由で読ませる場合は HOST=127.0.0.1 を指定する。
+  server.listen(PORT, process.env.HOST || '0.0.0.0', () => {
     const lanIp = Object.values(os.networkInterfaces()).flat()
       .find(i => i && i.family === 'IPv4' && !i.internal)?.address || '(unavailable)';
     console.log(`[Dashboard] Local: http://localhost:${PORT}`);

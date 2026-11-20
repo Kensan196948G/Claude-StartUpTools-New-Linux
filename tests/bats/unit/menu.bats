@@ -369,3 +369,21 @@ JSON
   run bash -c 'source "'"$SCRIPT"'"; CCSU_ASSUME_YES=1 menu__ask_goal < /dev/null'
   [ -z "$output" ]
 }
+@test "menu__ask_goal: 番号選択 (Primary/Specialized/0=auto)・範囲外は警告して空" {
+  run bash -c 'source "'"$SCRIPT"'"; printf "1\n" | menu__ask_goal 2>/dev/null'
+  [ "$output" = "development" ]
+  run bash -c 'source "'"$SCRIPT"'"; printf "6\n" | menu__ask_goal 2>/dev/null'
+  [ "$output" = "production-release" ]
+  run bash -c 'source "'"$SCRIPT"'"; printf "11\n" | menu__ask_goal 2>/dev/null'
+  [ "$output" = "pr-babysit" ]
+  run bash -c 'source "'"$SCRIPT"'"; printf "0\n" | menu__ask_goal 2>/dev/null'
+  [ "$output" = "auto" ]
+  run bash -c 'source "'"$SCRIPT"'"; printf "99\n" | menu__ask_goal 2>&1'
+  [[ "$output" == *"不明な Goal 番号: 99"* ]]
+}
+@test "menu__ask_goal: 一覧表示は英語(日本語)併記で番号付き" {
+  run bash -c 'source "'"$SCRIPT"'"; printf "\n" | menu__ask_goal 2>&1 1>/dev/null'
+  [[ "$output" == *"1) development (開発)"* ]]
+  [[ "$output" == *"6) production-release (本番リリース)"* ]]
+  [[ "$output" == *"0) auto"* ]]
+}

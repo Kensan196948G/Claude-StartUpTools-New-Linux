@@ -1,7 +1,7 @@
 # Cloudflare Tunnel 設定 (cloudflared) — Web スタートアップコンソール公開用
 #
 # 適用は人間の Y/N 後（docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md §4）。
-# このファイルは repo 管理下のテンプレートで、実機では ~/.cloudflared/config.yml へ
+# このファイルは repo 管理下のテンプレートで、実機では ~/.cloudflared/claude-startuptools-config.yml へ
 # コピーして <TUNNEL_ID> を埋める。値はここに書かない (secret/ID を commit しない)。
 #
 # 設計方針 (docs/architecture/Cloudflare公開基盤仕様.md §5):
@@ -12,10 +12,10 @@
 #
 # 手順 (人間が実行):
 #   cloudflared tunnel login
-#   cloudflared tunnel create claudeos-web-startup      # → <TUNNEL_ID> を控える
-#   cp config/cloudflare/web-startup-tunnel.yml ~/.cloudflared/config.yml   # <TUNNEL_ID> を置換
-#   cloudflared tunnel route dns claudeos-web-startup claude-startuptools.mirai-dx-platform.com
-#   cloudflared tunnel run claudeos-web-startup
+#   cloudflared tunnel create claude-startuptools      # → <TUNNEL_ID> を控える
+#   cp config/cloudflare/web-startup-tunnel.yml ~/.cloudflared/claude-startuptools-config.yml   # <TUNNEL_ID> を置換
+#   cloudflared tunnel route dns claude-startuptools claude-startuptools.mirai-dx-platform.com
+#   cloudflared tunnel --config ~/.cloudflared/claude-startuptools-config.yml run
 
 tunnel: <TUNNEL_ID>
 credentials-file: /home/kensan/.cloudflared/<TUNNEL_ID>.json
@@ -30,11 +30,20 @@ originRequest:
   noTLSVerify: false
 
 ingress:
-  # Web スタートアップコンソール (bin/web-startup.sh --start が 127.0.0.1:3740 で待ち受ける)。
-  # Access application はこの hostname に対して作成する
+  # ブラウザターミナル (ttyd + bin/web-terminal.sh)。path 前方一致で /terminal を保持して 3741 へ。
+  # 同一 hostname なので既存 Access application がそのまま保護する。
+  - hostname: claude-startuptools.mirai-dx-platform.com
+    path: ^/terminal
+    service: http://127.0.0.1:3741
+
+  # 公開ルートは ClaudeOS Console WebUI (設計プロトタイプ)。
+  # 実体: OpenDesign プロジェクト ee1e2a6f の tools/serve.mjs を systemd --user
+  # claude-startuptools-webui.service が 127.0.0.1:4612 で待ち受ける。
+  # Node コンソール (bin/web-startup.sh --start, 127.0.0.1:3740) は loopback 運用のまま残す。
+  # Access application はこの hostname 単位で / と /terminal の両方を保護する
   # (config/cloudflare/web-startup-access-policy.json)。
   - hostname: claude-startuptools.mirai-dx-platform.com
-    service: http://127.0.0.1:3740
+    service: http://127.0.0.1:4612
 
   # 既存の別サービスがある場合はここへ追記する (このテンプレートは単一サービスのみ)。
 

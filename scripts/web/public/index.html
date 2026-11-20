@@ -12,7 +12,10 @@
     <h1>🌐 ClaudeCode スタートアップツール <span class="sub">Web コンソール</span></h1>
     <div class="hint" id="meta">読み込み中…</div>
   </div>
-  <div class="badges" id="badges"></div>
+  <div class="head-right">
+    <a class="badge info" href="/terminal/" target="_blank" rel="noopener">🖥️ ブラウザターミナル</a>
+    <div class="badges" id="badges"></div>
+  </div>
 </header>
 
 <main>
@@ -31,8 +34,9 @@
       <h2>📺 実行中セッション (<span id="sess-count">0</span>)</h2>
       <div id="sessions"><div class="hint">なし</div></div>
       <div class="row" style="margin-top:10px">
-        <span class="hint">接続は tmux / claude 側で行います:</span>
-        <span class="mono att" id="attach-hint">tmux attach -t claudeos-&lt;project&gt;</span>
+        <span class="hint">ブラウザで操作:</span>
+        <a class="badge info" href="/terminal/" target="_blank" rel="noopener">🖥️ ターミナルを開く</a>
+        <span class="hint">ローカル端末: <span class="mono att" id="attach-hint">tmux attach -t claudeos-&lt;project&gt;</span></span>
       </div>
     </section>
 

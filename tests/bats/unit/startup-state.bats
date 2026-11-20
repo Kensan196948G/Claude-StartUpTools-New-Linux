@@ -34,6 +34,12 @@ teardown() { _bats_common_teardown; }
   [ "$(echo "$output" | jq -r '.projects[0].running')" = "false" ]
 }
 
+@test "startup-state: all_folders は .git の無いフォルダも含める (フォルダ以下すべて)" {
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '[.all_folders[]] | sort | join(",")')" = "Alpha-App,Beta-Site,NotARepo" ]
+}
+
 @test "startup-state: Goal Router の Primary/Specialized と limits を返す" {
   run bash "$SCRIPT"
   [ "$(echo "$output" | jq -r '.goals.primary | length')" -eq 5 ]
