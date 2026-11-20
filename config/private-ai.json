@@ -1,0 +1,21 @@
+{
+  "schema": "claudeos.private-ai/v1",
+  "version": "2026-09-25",
+  "note": "ローカル隔離推論の許可リスト。外部 API へは出さない前提で、loopback の Ollama だけを使う。",
+  "host": "127.0.0.1:11434",
+  "allowed_hosts": ["127.0.0.1:11434", "localhost:11434", "[::1]:11434"],
+  "models": [
+    "qwen2.5:0.5b",
+    "qwen2.5:1.5b",
+    "llama3.2:1b",
+    "gemma2:2b"
+  ],
+  "max_prompt_bytes": 32768,
+  "timeout_seconds": 120,
+  "log_file": "~/.claudeos/logs/private-ai.jsonl",
+  "egress_policy": {
+    "mode": "loopback-only",
+    "enforced_by": "host allowlist + env -i (子プロセスへ継承する環境変数を最小化)",
+    "note": "完全なネットワーク遮断は netns/unshare が必要。ここでは loopback 以外の宛先を拒否し、環境変数の継承を止める"
+  }
+}

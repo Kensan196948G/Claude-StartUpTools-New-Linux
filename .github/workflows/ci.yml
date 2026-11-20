@@ -35,3 +35,15 @@ jobs:
 
       - name: Run shell lint
         run: npm run lint
+
+      - name: Adversarial probe (policy surface)
+        # Agent ポリシーの攻撃耐性を期待判定と突き合わせる (自作ハーネス)
+        run: bash bin/adversarial-probe.sh run --json
+
+      - name: Agent policy matrix
+        # deny-by-default の判定分布を記録する (回帰の目視用)
+        run: bash bin/policy-check.sh matrix --json | jq -c '[.[]|.decision]|group_by(.)|map({(.[0]):length})|add'
+
+      - name: Formal verification (TLA+/TLC)
+        # run-ledger の状態機械モデルをモデル検査する。tla2tools.jar は初回のみ取得
+        run: bash scripts/tools/tla-check.sh run --json
