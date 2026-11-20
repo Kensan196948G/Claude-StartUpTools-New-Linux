@@ -250,6 +250,39 @@ function auditLine(entry) {
 // ---------------------------------------------------------------------------
 
 /** runScript — 子プロセス実行 (完了待ち)。stdout/stderr を返す */
+/**
+ * runCmd — 外部コマンドを shell を介さず 1 回だけ実行する (読み取り専用 API 用)。
+ * 引数は配列で渡し、文字列連結によるシェル解釈を起こさない。上限時間で SIGKILL する。
+ */
+function runCmd(cmd, args, opts) {
+  const o = opts || {};
+  return new Promise((resolve) => {
+    let out = '', err = '', done = false;
+    let child;
+    try {
+      child = spawn(cmd, args, { cwd: o.cwd || REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      return resolve({ exitCode: 127, stdout: '', stderr: String(e && e.message) });
+    }
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { child.kill('SIGKILL'); } catch { /* noop */ }
+      resolve({ exitCode: 124, stdout: out, stderr: err + '\n(timeout)' });
+    }, o.timeoutMs || 8000);
+    child.stdout.on('data', d => { out += d; });
+    child.stderr.on('data', d => { err += d; });
+    child.on('error', e => {
+      if (done) return; done = true; clearTimeout(timer);
+      resolve({ exitCode: 127, stdout: out, stderr: err + '\n' + String(e && e.message) });
+    });
+    child.on('close', code => {
+      if (done) return; done = true; clearTimeout(timer);
+      resolve({ exitCode: code, stdout: out, stderr: err });
+    });
+  });
+}
+
 function runScript(script, args, opts) {
   const o = opts || {};
   return new Promise((resolve) => {
@@ -526,6 +559,75 @@ function createServer(cfg) {
     });
   }
 
+  /** handleCronOps — crontab の内容を読むだけ (追加・削除はしない) */
+  async function handleCronOps(res) {
+    const r = await runCmd('crontab', ['-l'], { timeoutMs: 5000 });
+    if (r.exitCode !== 0) {
+      return json(res, 200, {
+        ok: true, available: false, count: 0, entries: [],
+        note: 'crontab を取得できません', stderr: String(r.stderr || '').slice(0, 300),
+      });
+    }
+    const entries = [];
+    r.stdout.split('\n').forEach((line) => {
+      const t = line.trim();
+      if (!t || t.startsWith('#') === false && t.indexOf('=') === 0) return;
+      const disabled = t.startsWith('#');
+      const body = disabled ? t.replace(/^#(?:DISABLED-\d+)?#?\s*/, '') : t;
+      const m = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(body);
+      if (!m) return;
+      entries.push({
+        disabled,
+        schedule: [m[1], m[2], m[3], m[4], m[5]].join(' '),
+        minute: m[1], hour: m[2], dom: m[3], month: m[4], dow: m[5],
+        command: m[6].trim(),
+      });
+    });
+    return json(res, 200, { ok: true, available: true, count: entries.length, entries });
+  }
+
+  /** handleSystemdOps — systemd --user のサービス状態を読むだけ */
+  async function handleSystemdOps(res) {
+    const r = await runCmd('systemctl',
+      ['--user', 'list-units', '--type=service', '--all', '--no-legend', '--plain'],
+      { timeoutMs: 8000 });
+    if (r.exitCode !== 0) {
+      return json(res, 200, {
+        ok: true, available: false, count: 0, units: [],
+        note: 'systemctl --user を実行できません', stderr: String(r.stderr || '').slice(0, 300),
+      });
+    }
+    const units = [];
+    r.stdout.split('\n').forEach((line) => {
+      const t = line.trim();
+      if (!t || !/^claude/i.test(t)) return;   // このプロジェクトの unit のみ
+      const f = t.split(/\s+/);
+      units.push({
+        name: f[0], load: f[1], active: f[2], sub: f[3],
+        description: f.slice(4).join(' '),
+      });
+    });
+    return json(res, 200, { ok: true, available: true, count: units.length, units });
+  }
+
+  /** handleAgentsOps — Agent Teams 使用状況 (state.json 由来) を JSON で返す */
+  async function handleAgentsOps(res) {
+    const tool = path.join(REPO_ROOT, 'scripts', 'tools', 'agent-teams-status.js');
+    const r = await runCmd(process.execPath, [tool, '--json'], { cwd: REPO_ROOT, timeoutMs: 10000 });
+    if (r.exitCode !== 0) {
+      return json(res, 200, {
+        ok: true, available: false, data: null,
+        note: 'agent-teams-status を実行できません', stderr: String(r.stderr || '').slice(0, 300),
+      });
+    }
+    let data = null;
+    try { data = JSON.parse(r.stdout); } catch { data = null; }
+    if (!data) {
+      return json(res, 200, { ok: true, available: false, data: null, note: 'JSON を解釈できません' });
+    }
+    return json(res, 200, { ok: true, available: true, data });
+  }
+
   /**
    * handleAudit — 変更系操作の監査ログ (JSON Lines) の末尾を返す。
    *   UI が「最近の操作」とログ・監査の表を実データで描けるようにするための読み取り専用 API。
@@ -611,6 +713,11 @@ function createServer(cfg) {
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
         return handleApplyAll(res, b.value, remote);
       }
+
+      /* 読み取り専用の運用情報 (cron / systemd / agents)。値は実測で、書き込みは一切しない。 */
+      if (req.method === 'GET' && pn === '/api/ops/cron') return handleCronOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/systemd') return handleSystemdOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/agents') return handleAgentsOps(res);
 
       /**
        * ルート直下は統合コンソール v2 (public/v2.html) を返す。
