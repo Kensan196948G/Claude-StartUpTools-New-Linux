@@ -11,6 +11,90 @@
   "negative_patterns": [],
   "entries": [
     {
+      "id": "rb-2026-09-24T11-59-20-ud8y",
+      "timestamp": "2026-09-24T11:59:20.826Z",
+      "project": "Claude-StartUpTools-New-Linux",
+      "phase": "Idle",
+      "problem_pattern": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "approach": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "tags": [
+        "pr",
+        "docs"
+      ],
+      "outcome": "success",
+      "success_count": 15,
+      "failure_count": 0,
+      "stable_achieved": true,
+      "ci_passed": true,
+      "consecutive_success": 3,
+      "confidence": 1,
+      "used_count": 14,
+      "last_used": "2026-09-24T21:07:27.715Z"
+    },
+    {
+      "id": "rb-2026-09-27T08-25-37-zai9",
+      "timestamp": "2026-09-27T08:25:37.733Z",
+      "project": "Claude-StartUpTools-New-Linux",
+      "phase": "Idle",
+      "problem_pattern": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "approach": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "tags": [
+        "pr",
+        "docs"
+      ],
+      "outcome": "success",
+      "success_count": 1,
+      "failure_count": 0,
+      "stable_achieved": true,
+      "ci_passed": true,
+      "consecutive_success": 3,
+      "confidence": 0.95,
+      "used_count": 0,
+      "last_used": "2026-09-27T08:25:37.733Z"
+    },
+    {
+      "id": "rb-2026-09-13T07-31-53-7mww",
+      "timestamp": "2026-09-13T07:31:53.505Z",
+      "project": "Claude-StartUpTools-New-Linux",
+      "phase": "Idle",
+      "problem_pattern": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "approach": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "tags": [
+        "pr",
+        "docs"
+      ],
+      "outcome": "success",
+      "success_count": 64,
+      "failure_count": 0,
+      "stable_achieved": true,
+      "ci_passed": true,
+      "consecutive_success": 3,
+      "confidence": 0.49,
+      "used_count": 63,
+      "last_used": "2026-09-13T12:31:17.218Z"
+    },
+    {
+      "id": "rb-2026-09-11T05-15-01-fcqs",
+      "timestamp": "2026-09-11T05:15:01.841Z",
+      "project": "Claude-StartUpTools-New-Linux",
+      "phase": "Idle",
+      "problem_pattern": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "approach": "PR #58 merge 完了。AI組織設計・進歩測定・自己改善ガード docs 追加 + /measure コマンド新設 + state.json metrics ブロック追加。",
+      "tags": [
+        "pr",
+        "docs"
+      ],
+      "outcome": "success",
+      "success_count": 2,
+      "failure_count": 0,
+      "stable_achieved": true,
+      "ci_passed": true,
+      "consecutive_success": 3,
+      "confidence": 0.41,
+      "used_count": 1,
+      "last_used": "2026-09-11T05:16:27.452Z"
+    },
+    {
       "id": "rb-2026-05-27T10-35-24-kncy",
       "timestamp": "2026-05-27T10:35:24.996Z",
       "project": "ClaudeCode-StartUpTools-New",
@@ -29,7 +113,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 1,
+      "confidence": 0.15,
       "used_count": 10,
       "last_used": "2026-05-27T11:45:27.559Z"
     },
@@ -52,7 +136,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 1,
+      "confidence": 0.15,
       "used_count": 8,
       "last_used": "2026-05-28T23:52:49.167Z"
     },
@@ -75,7 +159,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 1,
+      "confidence": 0.15,
       "used_count": 28,
       "last_used": "2026-05-29T23:56:05.464Z"
     },
@@ -98,7 +182,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 1,
+      "confidence": 0.15,
       "used_count": 1,
       "last_used": "2026-05-30T00:20:41.943Z"
     },
@@ -119,7 +203,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 3,
-      "confidence": 0.95,
+      "confidence": 0.15,
       "used_count": 0,
       "last_used": "2026-05-30T04:55:33.240Z"
     },
@@ -141,7 +225,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 3,
-      "confidence": 0.95,
+      "confidence": 0.15,
       "used_count": 0,
       "last_used": "2026-05-30T05:47:13.739Z"
     },
@@ -162,7 +246,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 3,
-      "confidence": 0.95,
+      "confidence": 0.15,
       "used_count": 0,
       "last_used": "2026-05-30T06:40:00.722Z"
     },
@@ -185,7 +269,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.57,
+      "confidence": 0.15,
       "used_count": 12,
       "last_used": "2026-05-20T07:13:25.498Z"
     },
@@ -208,7 +292,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.42,
+      "confidence": 0.15,
       "used_count": 23,
       "last_used": "2026-05-16T07:09:28.043Z"
     },
@@ -231,7 +315,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.36,
+      "confidence": 0.15,
       "used_count": 31,
       "last_used": "2026-05-13T05:19:20.458Z"
     },
@@ -254,7 +338,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.35,
+      "confidence": 0.15,
       "used_count": 29,
       "last_used": "2026-05-12T23:59:05.186Z"
     },
@@ -277,7 +361,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.34,
+      "confidence": 0.15,
       "used_count": 21,
       "last_used": "2026-05-12T11:18:38.046Z"
     },
@@ -300,7 +384,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.33,
+      "confidence": 0.15,
       "used_count": 11,
       "last_used": "2026-05-11T12:29:59.083Z"
     },
@@ -323,7 +407,7 @@
       "stable_achieved": true,
       "ci_passed": true,
       "consecutive_success": 5,
-      "confidence": 0.31,
+      "confidence": 0.15,
       "used_count": 2,
       "last_used": "2026-05-10T02:35:22.623Z"
     },

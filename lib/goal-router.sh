@@ -59,6 +59,24 @@ goal_router__is_specialized() {
 }
 goal_router__is_goal() { goal_router__is_primary "$1" || goal_router__is_specialized "$1"; }
 
+# goal_router__label_ja <goal> — メニュー表示用の短い日本語ラベル (英語名と併記する前提)
+goal_router__label_ja() {
+  case "$1" in
+    development)         printf '開発' ;;
+    mvp-release)         printf 'MVPリリース' ;;
+    assessment)          printf '評価' ;;
+    deep-debug)          printf '詳細デバッグ' ;;
+    product-assurance)   printf '品質保証' ;;
+    production-release)  printf '本番リリース' ;;
+    hotfix)              printf '緊急修正' ;;
+    security-emergency)  printf 'セキュリティ緊急対応' ;;
+    refactoring)         printf 'リファクタリング' ;;
+    safe-auto-merge)     printf '安全自動マージ' ;;
+    pr-babysit)          printf 'PR見守り' ;;
+    *)                   printf '' ;;
+  esac
+}
+
 # goal_router__primary_for <specialized> — Specialized 単独指定時の既定 Primary (§5 推奨マッピング)
 goal_router__primary_for() {
   case "$1" in

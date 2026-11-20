@@ -1,0 +1,119 @@
+{
+  "schema": "claudeos.agent-policy/v1",
+  "version": "2026-09-25",
+  "note": "Agent ごとの IAM 相当ポリシー。判定は deny-by-default。人間の承認 (Approval PR / 承認トークン) が必要な操作は approval_required に列挙する。",
+  "default_decision": "deny",
+  "identity_key_file": "~/.claudeos/policy/identity.key",
+  "token_ttl_seconds": 900,
+  "approver_agents": ["cto", "security"],
+  "audit_file": "~/.claudeos/logs/policy-audit.jsonl",
+  "action_risk": {
+    "read:*": "low",
+    "inspect:*": "low",
+    "plan:*": "low",
+    "test:*": "low",
+    "edit:*": "medium",
+    "pr:create": "medium",
+    "pr:comment": "low",
+    "run:*": "medium",
+    "pr:merge": "high",
+    "db:migrate": "high",
+    "db:write": "high",
+    "deploy:*": "high",
+    "systemd:restart": "high",
+    "cloudflare:*": "high",
+    "policy:write": "high",
+    "screen:capture": "medium",
+    "screen:input": "high",
+    "network:egress": "high",
+    "model:pull": "high",
+    "run:inference": "medium",
+    "secret:read": "critical",
+    "secret:print": "critical",
+    "secret:export": "critical",
+    "main:push": "critical",
+    "db:drop": "critical"
+  },
+  "risk_order": ["low", "medium", "high", "critical"],
+  "hard_deny": [
+    "secret:print",
+    "secret:export",
+    "main:push",
+    "db:drop",
+    "cloudflare:dns-write"
+  ],
+  "agents": {
+    "cto": {
+      "role": "統括・優先順位・Phase Gate・リリース判定",
+      "max_risk": "high",
+      "allow": ["read:*", "inspect:*", "plan:*", "test:*", "run:*", "pr:create", "pr:comment", "policy:read"],
+      "approval_required": ["deploy:*", "db:migrate", "cloudflare:*", "pr:merge", "systemd:restart"]
+    },
+    "developer": {
+      "role": "実装・リファクタリング",
+      "max_risk": "medium",
+      "allow": ["read:*", "inspect:*", "plan:*", "test:*", "edit:*", "run:*", "pr:create", "pr:comment"],
+      "approval_required": ["pr:merge", "db:migrate"]
+    },
+    "qa": {
+      "role": "テスト・回帰確認",
+      "max_risk": "medium",
+      "allow": ["read:*", "inspect:*", "test:*", "run:*", "pr:comment"],
+      "approval_required": []
+    },
+    "ops": {
+      "role": "Supervisor / cron / tmux / CI",
+      "max_risk": "high",
+      "allow": ["read:*", "inspect:*", "run:*", "test:*", "pr:comment", "systemd:restart"],
+      "approval_required": ["deploy:*", "cloudflare:*", "db:migrate"]
+    },
+    "security": {
+      "role": "Secrets / 権限 / 破壊的操作の確認",
+      "max_risk": "critical",
+      "allow": ["read:*", "inspect:*", "plan:*", "policy:read", "pr:comment"],
+      "approval_required": ["policy:write", "secret:read"]
+    },
+    "improver": {
+      "role": "Eval 駆動の自己改善提案 (main 反映は Approval PR 対象)",
+      "max_risk": "medium",
+      "allow": ["read:*", "inspect:*", "plan:*", "test:*", "run:*"],
+      "approval_required": ["edit:*", "pr:create"],
+      "deny": ["deploy:*", "db:migrate", "secret:*"]
+    },
+    "self-heal": {
+      "role": "ログ→原因分析→修正提案 (本番適用は人間ゲート)",
+      "max_risk": "medium",
+      "allow": ["read:*", "inspect:*", "test:*", "run:*", "plan:*"],
+      "approval_required": ["edit:*"],
+      "deny": ["deploy:*", "systemd:restart", "db:*", "secret:*"]
+    },
+    "adversarial-probe": {
+      "role": "Prompt Injection / Tool 攻撃耐性の検証",
+      "max_risk": "medium",
+      "allow": ["read:*", "inspect:*", "test:*", "run:*", "policy:read"],
+      "approval_required": [],
+      "deny": ["edit:*", "deploy:*", "secret:*", "pr:create"]
+    },
+    "research": {
+      "role": "文献・証拠の収集と仮説整理",
+      "max_risk": "low",
+      "allow": ["read:*", "inspect:*", "plan:*", "pr:comment"],
+      "approval_required": ["run:*"],
+      "deny": ["edit:*", "deploy:*", "secret:*"]
+    },
+    "computer-use": {
+      "role": "GUI 操作 (画面観測 / 入力)",
+      "max_risk": "medium",
+      "allow": ["read:*", "inspect:*"],
+      "approval_required": ["screen:capture", "screen:input"],
+      "deny": ["deploy:*", "secret:*", "pr:merge"]
+    },
+    "private-ai": {
+      "role": "ローカル隔離推論 (Ollama / loopback 限定)",
+      "max_risk": "low",
+      "allow": ["read:*", "inspect:*", "run:inference"],
+      "approval_required": ["model:pull"],
+      "deny": ["network:egress", "secret:*", "edit:*"]
+    }
+  }
+}

@@ -121,11 +121,17 @@ bash bin/web-startup-service.sh --register   # systemd --user で常駐 (loopbac
 
 - Web サーバは TTY を持たないため、**`foreground`（L1）はデスクトップ端末がある環境でのみ選択可**です
   （`team`（tmux 4分割）/ `background`（Supervisor）は常に利用可）。接続は `tmux attach -t claudeos-<project>`。
+- 🖥️ **ブラウザターミナル**: `https://claude-startuptools.mirai-dx-platform.com/terminal/` を開くとブラウザ内で実端末が動き、
+  既存 `claudeos-*` セッションへ接続（無ければ新規起動）できます。詳細: [`docs/architecture/WEB_TERMINAL.md`](docs/architecture/WEB_TERMINAL.md)
 - 変更系操作は `~/.claudeos/logs/web-startup-audit.log` に記録されます。
 - 設計・API・安全統制の詳細: [`docs/architecture/WEB_STARTUP_TOOL.md`](docs/architecture/WEB_STARTUP_TOOL.md)
-- 外部公開（Cloudflare Tunnel + Access で `kensan1969@gmail.com` のみ許可）は**設計のみ**用意しています。
-  適用は人間の Y/N 後: [`docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md`](docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md)
-  （設計値: `config/cloudflare/web-startup-{tunnel.yml,access-policy.json}`）
+- 外部公開（Cloudflare Tunnel + Access で `kensan1969@gmail.com` のみ許可）は **2026-09-24 に適用済み**。
+  入口は `https://claude-startuptools.mirai-dx-platform.com`（Cloudflare Access ログイン必須）。
+  公開ルートは **ClaudeOS Console WebUI**（OpenDesign の設計プロトタイプ。systemd --user
+  `claude-startuptools-webui.service` / `127.0.0.1:4612`）、`/terminal` は ttyd（`127.0.0.1:3741`）。
+  この Node コンソール（`127.0.0.1:3740`）は loopback 運用のまま残しています。
+  手順・read-back: [`docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md`](docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md)
+  （設定: `config/cloudflare/web-startup-{tunnel.yml,access-policy.json}`）
 
 ## 🔁 Supervisor全適用
 
@@ -328,6 +334,17 @@ bash bin/autonomy.sh start --all --dry-run
 | 🌐 | `start --all --dry-run` | 全適用対象とskip理由 |
 | 🖥️ | `tmux-runner.bats` | セッション起動・命名規則・メタデータ付与 |
 | 🔐 | Security Scan | gitleaks |
+| 🛡️ | `bash bin/adversarial-probe.sh run --json` | Agent ポリシーの攻撃耐性（自作ハーネス、期待判定と突き合わせ） |
+| 🧮 | `bash bin/policy-check.sh matrix --json` | deny-by-default の判定分布（198 判定） |
+| 📐 | `bash scripts/tools/tla-check.sh run --json` | run-ledger 状態機械の TLA+ モデル検査（TLC） |
+
+## 🧱 Runtime Foundations（B 判定 13 項目）
+
+この環境で自前実装可能と判定した 13 項目（Long-Horizon / Durable Execution / Computer Use /
+Multimodal Computer Use / Synthetic Data / Agentic SWE 大規模改修 / Self-Healing /
+Self-Improving Harness / AI Scientist / Formal Verification / Private AI /
+Agent Identity・Policy Engine / Adversarial Agent Testing）の実装と検証は
+`docs/architecture/RUNTIME_FOUNDATIONS.md` にまとめています（実装・テスト・正直な限界を含む）。
 
 ## 🎨 表示ポリシー
 

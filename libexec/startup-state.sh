@@ -60,6 +60,30 @@ _tmux_sessions() {
   "$TMUX_BIN" ls 2>/dev/null | grep '^claudeos-' | cut -d: -f1 || true
 }
 
+# _all_folders — projectsDir 直下と、その直下 (深さ2) の全フォルダ名 (1行1件)。
+#   Web UI / ブラウザターミナルで「フォルダ以下すべて」を選べるようにするための一覧で、
+#   config の登録・Git 有無・localExcludes では絞らない。隠しフォルダと node_modules だけを外す
+#   (ソース内部まで降りると数千件になり、選ぶための一覧にならない)。
+#   ここでは supervisor / tmux の探索を行わない (プロジェクトごとの _project_json は重いため、
+#   詳細は従来どおり登録済み projects 側で返す)。
+_all_folders() {
+  local base; base="$(config_projects_dir)"
+  [[ -d "$base" ]] || return 0
+  local d sd name sname
+  for d in "$base"/*/; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+    [[ "$name" == .* || "$name" == "node_modules" ]] && continue
+    printf '%s\n' "$name"
+    for sd in "$d"/*/; do
+      [[ -d "$sd" ]] || continue
+      sname="$(basename "$sd")"
+      [[ "$sname" == .* || "$sname" == "node_modules" ]] && continue
+      printf '%s/%s\n' "$name" "$sname"
+    done
+  done
+}
+
 # _project_json <name> — 1 プロジェクト分の JSON オブジェクト
 _project_json() {
   local name="$1"
@@ -180,7 +204,8 @@ main() {
   done
   goals_json="$(jq -n --argjson primary "$pj" --argjson specialized "$sj" '{primary:$primary,specialized:$specialized}')"
 
-  local groups_json; groups_json="$(config_project_groups | jq -R . | jq -s .)"
+  local groups_json all_folders_json; groups_json="$(config_project_groups | jq -R . | jq -s .)"
+  all_folders_json="$(_all_folders | jq -R . | jq -s .)"
   local tmux_json headless_json fg_json
   tmux_json="$(_tmux_sessions | jq -R . | jq -s .)"
   headless_json="$(_running_from_dir "$SUP_DIR" | jq -R . | jq -s .)"
@@ -192,6 +217,7 @@ main() {
     --arg config_path "$CCSU_CONFIG_PATH" \
     --arg host "$(hostname)" \
     --argjson groups "$groups_json" \
+    --argjson all_folders "$all_folders_json" \
     --argjson projects "$projects_json" \
     --argjson goals "$goals_json" \
     --argjson tmux "$tmux_json" \
@@ -203,7 +229,7 @@ main() {
     --argjson default_session_minutes "$(config_get '.supervisor.defaults.sessionMinutes' "$(config_get '.cron.defaultDurationMinutes' '300')")" \
     --argjson foreground_minutes "$(config_get '.supervisor.defaults.foregroundSessionMinutes' '0')" \
     '{generated_at:$generated_at,host:$host,projects_dir:$projects_dir,config_path:$config_path,
-      groups:$groups,projects:$projects,goals:$goals,
+      groups:$groups,all_folders:$all_folders,projects:$projects,goals:$goals,
       sessions:{tmux:$tmux,headless:$headless,foreground:$foreground,history:$history,
                 count:(($tmux|length)+($headless|length)+($foreground|length))},
       limits:{max_sessions:$max_sessions,max_session_minutes:$max_session_minutes,

@@ -44,6 +44,12 @@ test('validateProject: allowlist 内のみ許可', () => {
   assert.equal(srv.validateProject(42, ALLOWED).error, 'PROJECT_INVALID');
 });
 
+test('projectNames: 登録済みと all_folders の和集合 (フォルダ以下すべてを起動可能に)', () => {
+  const names = srv.projectNames({ projects: [{ name: 'A' }], all_folders: ['A', 'B', 'Group/C'] });
+  assert.deepEqual([...names].sort(), ['A', 'B', 'Group/C']);
+  assert.deepEqual(srv.projectNames({ projects: [{ name: 'A' }] }), ['A']);
+});
+
 test('validateProject: allowed が配列でなければ拒否 (fail-closed)', () => {
   assert.equal(srv.validateProject('Alpha-App', undefined).ok, false);
   assert.equal(srv.validateProject('Alpha-App', []).ok, false);
@@ -89,9 +95,10 @@ test('buildLaunchArgs: start-claude.sh の契約どおりの順序', () => {
   assert.deepEqual(
     srv.buildLaunchArgs({ project: 'Alpha-App', mode: 'background', goal: 'hotfix', intent: 'CI を直して', duration: 300 }),
     ['--project', 'Alpha-App', '--background', '--goal', 'hotfix', '--intent', 'CI を直して', '--duration', '300']);
+  // foreground は Web に TTY が無いため tmux を介す (CLI 端末から attach できるようにする)
   assert.deepEqual(
     srv.buildLaunchArgs({ project: 'Alpha-App', mode: 'foreground', duration: 0, dryRun: true }),
-    ['--project', 'Alpha-App', '--foreground', '--duration', '0', '--dry-run']);
+    ['--project', 'Alpha-App', '--foreground', '--tmux', '--duration', '0', '--dry-run']);
 });
 
 test('buildStopArgs / buildApplyAllArgs', () => {

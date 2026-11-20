@@ -116,7 +116,13 @@ _all_env() { cat "$CLAUDE_ENV_DIR"/env-* 2>/dev/null; }
 @test "並列: CTO/QA 双方が -p / stream-json / permission-mode auto で起動し skip-permissions は付かない" {
   run bash "$LP" Demo --roles cto,qa --stagger 0 --duration 1
   [ "$status" -eq 0 ]
-  # 2 ロール分の argv ファイルが生成される
+  # 2 ロール分の argv ファイルが生成される。
+  # 起動は背景で走るため、遅いランナー (CI の 2 vCPU) では直後の count が 1 のままになる。
+  # argv が揃うまで上限付きで待ってから数える (表明は「ちょうど 2」のまま変えない)。
+  for _ in $(seq 1 50); do
+    [ "$(ls "$CLAUDE_ARGV_DIR"/argv-* 2>/dev/null | wc -l)" -ge 2 ] && break
+    sleep 0.1
+  done
   run bash -c 'ls "'"$CLAUDE_ARGV_DIR"'"/argv-* | wc -l'
   [ "$output" -eq 2 ]
   # 全 argv に必須フラグが含まれる

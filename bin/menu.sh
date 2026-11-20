@@ -147,6 +147,8 @@ show_menu() {
     "18  🐘 Local PostgreSQL 運用診断 (health / backup / drill)" \
     "PD  🌐 Projects Dashboard (進捗 WebUI)" \
     "MC  🎛️  Mission Control (統合管理)" \
+    "WS  🚀 Web スタートアップコンソール 起動/状態 (bin/web-startup.sh)" \
+    "WX  🛑 Web スタートアップコンソール 停止" \
     "DR  📌 Dashboard を自動起動に登録 (systemd/cron)" \
     "DU  🗑️  Dashboard 自動起動を解除"; do
     printf '    %s%s%s\n' "$C_MAGENTA" "$item" "$C_RESET"
@@ -202,19 +204,46 @@ confirm_yes_no() {
   [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
 }
 
-# menu__ask_goal — v10 Goal Router の手動 override 入力。
-#   Enter = 自動判定 (前回の固定があればそれを維持) / 名前 = その Goal で固定 / auto = 固定解除して再判定。
+# menu__ask_goal — v10 Goal Router の手動 override 入力 (番号選択制 + 英語/日本語併記)。
+#   Enter = 自動判定 (前回の固定があればそれを維持) / 番号または名前 = その Goal で固定 / auto = 固定解除して再判定。
+#   数字・Goal 名の直接入力 (自由記入) はどちらも受理する。
 #   stdout には選択値のみ (案内は stderr)。CCSU_ASSUME_YES=1 や stdin 閉塞時は空 (自動判定)。
 menu__ask_goal() {
   [[ "${CCSU_ASSUME_YES:-0}" == "1" ]] && return 0
   # 対話端末かパイプ入力があるときだけ問い合わせる (cron / headless / stdin 閉塞ではハングさせず自動判定)
   [[ -t 0 || -p /dev/stdin ]] || return 0
-  local ans
-  printf '  🎯 Goal Router: Enter=自動判定 / 名前で固定 (%s / %s) / auto=固定解除\n' \
-    "${GOAL_ROUTER_PRIMARY_GOALS[*]}" "${GOAL_ROUTER_SPECIALIZED_GOALS[*]}" >&2
-  read -rp "  Goal [自動]: " ans || ans=""
-  ans="${ans// /}"; ans="${ans,,}"
+  local ans i n label
+  local all_goals=("${GOAL_ROUTER_PRIMARY_GOALS[@]}" "${GOAL_ROUTER_SPECIALIZED_GOALS[@]}")
+
+  printf '\n  🎯 Goal Router / ゴールルーター\n' >&2
+  printf '     Primary / 基本ゴール\n' >&2
+  for ((i = 0; i < ${#GOAL_ROUTER_PRIMARY_GOALS[@]}; i++)); do
+    n="${GOAL_ROUTER_PRIMARY_GOALS[$i]}"; label="$(goal_router__label_ja "$n")"
+    printf '       %2d) %s (%s)\n' "$((i + 1))" "$n" "$label" >&2
+  done
+  printf '     Specialized / 専用ゴール\n' >&2
+  for ((i = 0; i < ${#GOAL_ROUTER_SPECIALIZED_GOALS[@]}; i++)); do
+    n="${GOAL_ROUTER_SPECIALIZED_GOALS[$i]}"; label="$(goal_router__label_ja "$n")"
+    printf '       %2d) %s (%s)\n' "$((${#GOAL_ROUTER_PRIMARY_GOALS[@]} + i + 1))" "$n" "$label" >&2
+  done
+  printf '        0) auto — 固定解除して自動判定 / Reset to auto-detect\n' >&2
+  printf '     番号・名前のいずれでも入力可 / Enter a number or a goal name directly\n' >&2
+  read -rp "  Goal番号または名前 [Enter=Auto/自動判定]: " ans || ans=""
+  ans="${ans// /}"
   [[ -z "$ans" ]] && return 0
+
+  if [[ "$ans" =~ ^[0-9]+$ ]]; then
+    if [[ "$ans" == "0" ]]; then
+      printf 'auto'; return 0
+    elif ((ans >= 1 && ans <= ${#all_goals[@]})); then
+      printf '%s' "${all_goals[$((ans - 1))]}"; return 0
+    else
+      log_warn "不明な Goal 番号: $ans (自動判定で起動します)"
+      return 0
+    fi
+  fi
+
+  ans="${ans,,}"
   if [[ "$ans" == "auto" ]] || goal_router__is_goal "$ans"; then
     printf '%s' "$ans"
   else
@@ -223,12 +252,12 @@ menu__ask_goal() {
   return 0
 }
 
-# menu__ask_intent — ユーザー要求 (任意)。Router の Evidence (新指示 = reroute 条件) になる。
+# menu__ask_intent — ユーザー要求 (任意)。Router の Evidence (新指示 = reroute 条件) になる。自由記入。
 menu__ask_intent() {
   [[ "${CCSU_ASSUME_YES:-0}" == "1" ]] && return 0
   [[ -t 0 || -p /dev/stdin ]] || return 0
   local ans
-  read -rp "  📝 要求 (任意、例: CI が失敗しているので直して / Enter で省略): " ans || ans=""
+  read -rp "  📝 Request / 要求 (optional・任意、例: CI が失敗しているので直して / Enter で省略): " ans || ans=""
   printf '%s' "$ans"
   return 0
 }
@@ -503,6 +532,8 @@ menu_loop() {
       MC) run_menu_script "$BIN/start-dashboard.sh" --no-browser ;;
       DR) run_menu_script "$BIN/dashboard-service.sh" --register --run-now ;;
       DU) run_menu_script "$BIN/dashboard-service.sh" --unregister ;;
+      WS) run_menu_script "$BIN/web-startup.sh" --start ;;
+      WX) run_menu_script "$BIN/web-startup.sh" --stop ;;
       0)  exit 0 ;;
       *)  printf '%s  無効な入力です。%s\n' "$C_RED" "$C_RESET"; sleep 1 ;;
     esac
