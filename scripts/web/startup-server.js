@@ -612,6 +612,20 @@ function createServer(cfg) {
         return handleApplyAll(res, b.value, remote);
       }
 
+      /**
+       * ルート直下は統合コンソール v2 (public/v2.html) を返す。
+       * 旧コンソールは /index.html で引き続き参照できるようにし、
+       * ファイルを 1 つに保つ (v2.html が正本)。
+       */
+      if ((req.method === 'GET' || req.method === 'HEAD') && pn === '/') {
+        const v2File = path.join(PUBLIC_DIR, 'v2.html');
+        return fs.readFile(v2File, (e, data) => {
+          if (e) { res.writeHead(404); return res.end('404'); }
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+          res.end(req.method === 'HEAD' ? undefined : data);
+        });
+      }
+
       if (req.method === 'GET' || req.method === 'HEAD') {
         const file = resolveStaticPath(pn);
         if (!file) { res.writeHead(404); return res.end('404'); }

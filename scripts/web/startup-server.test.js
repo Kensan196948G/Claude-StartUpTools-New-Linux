@@ -238,9 +238,13 @@ test('HTTP: /api/health と /api/startup/state', async () => {
 
 test('HTTP: 静的配信 (index.html / app.js) とトラバーサル拒否', async () => {
   await withServer({}, async (port) => {
+    // ルートは統合コンソール v2、旧コンソールは /index.html で残す
     const idx = await req(port, 'GET', '/');
     assert.equal(idx.status, 200);
-    assert.match(idx.body, /Web スタートアップコンソール/);
+    assert.match(idx.body, /統合コンソール/);
+    const legacy = await req(port, 'GET', '/index.html');
+    assert.equal(legacy.status, 200);
+    assert.match(legacy.body, /Web スタートアップコンソール/);
     const js = await req(port, 'GET', '/app.js');
     assert.equal(js.status, 200);
     const bad = await req(port, 'GET', '/../startup-server.js');
