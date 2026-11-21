@@ -674,6 +674,88 @@ function createServer(cfg) {
     return json(res, 200, { ok: true, available: true, count: units.length, units });
   }
 
+  /* ---------------------------------------------------------------------
+   * 診断・品質・DevOps・SecOps の読み取り専用 API
+   *   「実行して結果を表示する」画面のため、許可したコマンドだけを実行する。
+   *   任意コマンドは受け付けない (allowlist)。
+   * ------------------------------------------------------------------- */
+
+  /** 実行を許可する診断スクリプト (libexec/diag-*.sh)。名前は allowlist のキー。 */
+  const DIAG_SCRIPTS = {
+    'all-tools': 'diag-all-tools.sh',
+    'architecture': 'diag-architecture.sh',
+    'claude-compat': 'diag-claude-compat.sh',
+    'control-plane': 'diag-control-plane.sh',
+    'mcp-health': 'diag-mcp-health.sh',
+    'mounts': 'diag-mounts.sh',
+    'postgres': 'diag-postgres.sh',
+    'worktree': 'diag-worktree.sh',
+    'agent-teams': 'diag-agent-teams.sh',
+  };
+
+  /** handleDiagOps — ?name=<key> で許可された診断スクリプトを 1 つ実行する */
+  async function handleDiagOps(res, url) {
+    const name = String(url.searchParams.get('name') || 'all-tools');
+    const script = DIAG_SCRIPTS[name];
+    if (!script) {
+      return json(res, 400, { ok: false, error: 'UNKNOWN_DIAG', allowed: Object.keys(DIAG_SCRIPTS) });
+    }
+    const r = await runScript(path.join('libexec', script), [], { cwd: conf.root, timeoutMs: 60000 });
+    return json(res, 200, {
+      ok: true, name, script: 'libexec/' + script,
+      exitCode: r.exitCode, output: String(r.stdout || '') + String(r.stderr || ''),
+    });
+  }
+
+  /** handleReleaseCheckOps — release-check.sh の --dry-run のみ (重い実行はしない) */
+  async function handleReleaseCheckOps(res) {
+    const r = await runScript('bin/release-check.sh', ['--dry-run'], { cwd: conf.root, timeoutMs: 90000 });
+    return json(res, 200, {
+      ok: r.exitCode === 0, exitCode: r.exitCode, mode: 'dry-run',
+      output: String(r.stdout || '') + String(r.stderr || ''),
+      note: '実チェックの実行は API 未対応 (時間がかかるため)。--dry-run の解決コマンドのみ返す。',
+    });
+  }
+
+  /** handleDevopsOps — 実測できる読み取り専用の事実だけを返す */
+  async function handleDevopsOps(res) {
+    const [head, branch, timers, dbs] = await Promise.all([
+      runCmd('git', ['-C', conf.root, 'rev-parse', '--short', 'HEAD'], { timeoutMs: 8000 }),
+      runCmd('git', ['-C', conf.root, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 8000 }),
+      runCmd('systemctl', ['--user', 'list-timers', '--no-legend', '--plain'], { timeoutMs: 8000 }),
+      runCmd('psql', ['-lqt'], { timeoutMs: 10000 }),
+    ]);
+    const timerLines = String(timers.stdout || '').split('\n').filter((l) => l.trim()).length;
+    const dbLines = String(dbs.stdout || '').split('\n').map((l) => l.split('|')[0].trim()).filter(Boolean).length;
+    return json(res, 200, {
+      ok: true, available: true,
+      release: { head: String(head.stdout || '').trim(), branch: String(branch.stdout || '').trim() },
+      infra: { user_timers: timers.exitCode === 0 ? timerLines : null },
+      data: { databases: dbs.exitCode === 0 ? dbLines : null },
+      metrics: { node: process.version, uptime_s: Math.round(process.uptime()) },
+      note: '読み取り専用。デプロイ・再起動・DB 変更は行わない。',
+    });
+  }
+
+  /** handleSecopsOps — ツールの有無と直近レポートの有無だけを返す */
+  async function handleSecopsOps(res) {
+    const gl = await runCmd('gitleaks', ['version'], { timeoutMs: 5000 });
+    const repoAudit = path.join(conf.root, 'reports', 'audit');
+    let auditFiles = 0;
+    try { auditFiles = fs.readdirSync(repoAudit).length; } catch { auditFiles = 0; }
+    return json(res, 200, {
+      ok: true, available: true,
+      tools: {
+        gitleaks: { present: gl.exitCode === 0, version: String(gl.stdout || '').trim().slice(0, 80) || null },
+        audit_scan: { command: 'npm run audit:scan', present: true },
+        supervisor_audit: { command: 'bash bin/supervisor-audit.sh report', present: fs.existsSync(path.join(conf.root, 'bin', 'supervisor-audit.sh')) },
+        cmdb_scan: { command: 'npm run cmdb:scan', present: true },
+      },
+      reports: { audit_files: auditFiles },
+      note: '実行はしていない (有無の確認のみ)。スキャン実行は API 未対応。',
+    });
+  }
+
   /**
    * handleManagedAgentsOps — Managed Agents の実状態を読むだけ。
    *   config/roster はリポジトリ、registry/ledger/decisions は ~/.claudeos/managed-agents。
@@ -882,6 +964,10 @@ function createServer(cfg) {
       if (req.method === 'GET' && pn === '/api/ops/agents') return handleAgentsOps(res);
       if (req.method === 'GET' && pn === '/api/ops/agent-catalog') return handleAgentCatalogOps(res);
       if (req.method === 'GET' && pn === '/api/ops/managed-agents') return handleManagedAgentsOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/diag') return handleDiagOps(res, url);
+      if (req.method === 'GET' && pn === '/api/ops/release-check') return handleReleaseCheckOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/devops') return handleDevopsOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/secops') return handleSecopsOps(res);
 
       /**
        * ルート直下は統合コンソール v2 (public/v2.html) を返す。
