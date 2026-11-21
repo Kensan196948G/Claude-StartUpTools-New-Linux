@@ -106,3 +106,24 @@ CONSOLE_URL=<url> node scripts/e2e/console.e2e.js
 
 実測: `GET /cdn-cgi/access/logout?returnTo=%2F` → 400、
 `?returnTo=https%3A%2F%2F<host>%2F` → 302。
+
+## 総合 E2E（16 項目）と、実セッション E2E の未達理由
+
+`npm run test:e2e:console` は 16 項目を検査する（品質ワークベンチを含む）。
+ライブ `http://127.0.0.1:3740` で **16/16 PASS**。
+
+### 実セッション起動→停止の E2E は未達（調査結果）
+
+隔離環境（一時 projectsDir / config / HOME / fake claude）で通しの検証を試みたが、次の 2 点で成立しなかった。
+
+1. **background（supervisor）モードが隔離環境で起動しない**
+   `start-claude.sh` は `cron-launcher.sh` を `$CCSU_HOME` へ配備するが、参照は `$HOME/.claudeos/cron-launcher.sh`。
+   両者が一致しないと `cron-launcher.sh が見つかりません` で supervisor 起動に失敗する。
+2. **foreground + fake claude では tmux セッションが残らない**
+   起動前に `claude --help` によるケイパビリティ探索が走り、fake claude では
+   「起動した」表示の直後にセッションが消える。実バイナリを要する。
+
+→ 実セッションの通し E2E には、(a) 上記パス不整合の修正、または
+(b) `$HOME/.claudeos` を隔離できる仕組み（`CLAUDEOS_HOME` の完全統一）が必要。
+停止 API は `state.projects[].running`（supervisor 由来）を要求するため、
+background が動かない限り停止の通し検証もできない。
