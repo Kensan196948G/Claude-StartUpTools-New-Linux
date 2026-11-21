@@ -156,6 +156,11 @@ supervisor JSON も `status=running` になるが、次の 2 点で停止でき�
   supervisor プロセスが抜けていると `running=false` になる。
 - 停止 API は `running=true` を前提にしているため、この状態では **409 NOT_RUNNING** を返す。
 
-→ 停止の判定を「supervisor の pid」だけでなく「tmux セッション / supervisor status」も見るように
-直す必要がある。本 PR では**発見と再現テストの追加まで**とし、修正は別途行う。
-（テストは現状この箇所で FAIL する。既知不具合の検出器として残している）
+→ 修正の第 1 段として次を入れた:
+- `state.projects[].running` を「supervisor status が running」**または「tmux セッションが実在」**で true にした
+- `autonomy.sh stop` は supervisor が無くても tmux セッションがあれば停止する
+
+ただし隔離環境（fake claude / headless）では tmux セッションが作られないため、
+`session-start-stop.e2e.sh` は依然 `running` の検査で FAIL する。
+残る論点は「supervisor が status=running を書いた直後に pid が生存していない」ケースで、
+supervisor のプロセスモデル側の調査が必要。テストは検出器として残している。
