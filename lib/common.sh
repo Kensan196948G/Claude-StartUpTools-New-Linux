@@ -74,7 +74,19 @@ require_cmd() {
 }
 
 # --- プロジェクト名を tmux/ファイル安全な文字列へ (cron-launcher.sh の SAFE_PROJECT と同一規則) ---
-ccsu_safe_name() { printf '%s' "$1" | tr -c 'A-Za-z0-9_-' '_'; }
+#   tr はサブシェル + プロセス起動になる。ASCII だけの名前なら bash の文字列置換で
+#   同じ結果になる (ASCII ではバイト単位と文字単位が一致する) ため、その場合だけ速い経路を使う。
+#   マルチバイトを含む場合は tr のバイト単位挙動を保つため従来どおり tr に渡す
+#   (既存のセッション名・ログファイル名との互換を壊さない)。
+ccsu_safe_name() {
+  local s="$1"
+  if [[ "$s" != *[![:ascii:]]* ]]; then
+    s="${s//[^A-Za-z0-9_-]/_}"
+    printf '%s' "$s"
+    return 0
+  fi
+  printf '%s' "$s" | tr -c 'A-Za-z0-9_-' '_'
+}
 
 # --- クロスセッションメッセージング用セッション名 (claude v2.1.196+ の --name) ---
 #   claudeos-<safe>[-<役割>]。役割は CCSU_SESSION_ROLE (例: cto / backend / frontend / qa)。

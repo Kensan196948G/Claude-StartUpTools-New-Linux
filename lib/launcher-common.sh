@@ -20,7 +20,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/config-loader.sh"
 launcher__project_list() { config_project_list; }
 
 # launcher__project_dir <project> — プロジェクトの絶対パス
-launcher__project_dir() { printf '%s/%s' "$(config_projects_dir)" "$1"; }
+#   config_projects_dir は結果をキャッシュしているが、$( ) のサブシェルは残る。
+#   キャッシュ済みならそれを直接使ってサブシェルを避ける。
+launcher__project_dir() {
+  if [[ -n "${_CCSU_PROJECTS_DIR_CACHE:-}" ]]; then
+    printf '%s/%s' "$_CCSU_PROJECTS_DIR_CACHE" "$1"
+    return 0
+  fi
+  printf '%s/%s' "$(config_projects_dir)" "$1"
+}
 
 # launcher__project_exists <project> — ディレクトリが存在すれば 0
 launcher__project_exists() { [[ -d "$(launcher__project_dir "$1")" ]]; }

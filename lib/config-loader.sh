@@ -59,14 +59,27 @@ config_project_groups() {
 #   worktree/submodule の .git ファイルも Git リポジトリとして扱う。
 #   ファイル・非 Git ディレクトリ・隠しエントリは除外。出力は名前を 1 行 1 件 (名前順)。
 #   ※ */ グロブがディレクトリのみ・隠し除外を満たすため、.md/.sh/.json 等は自然に落ちる。
+#   プロジェクトごとに呼ばれるため、localExcludes と root の実パスは 1 回だけ求めて使い回す
+#   (以前は 1 件ごとに jq と cd サブシェルを 2 つ起動していた)。
+_CCSU_LOCAL_EXCLUDES=""
+_CCSU_LOCAL_EXCLUDES_LOADED=0
+_CCSU_ROOT_REAL=""
 config_project_excluded() {
   local name="$1" dir="$2" x
-  if [[ -d "$dir" ]] && [[ "$(cd "$dir" && pwd -P)" == "$(cd "$CCSU_ROOT" && pwd -P)" ]]; then
+  if [[ -z "${_CCSU_ROOT_REAL:-}" ]]; then
+    _CCSU_ROOT_REAL="$(cd "$CCSU_ROOT" 2>/dev/null && pwd -P || printf '%s' "$CCSU_ROOT")"
+  fi
+  if [[ -d "$dir" ]] && [[ "$(cd "$dir" && pwd -P)" == "$_CCSU_ROOT_REAL" ]]; then
     return 0
   fi
+  if [[ "${_CCSU_LOCAL_EXCLUDES_LOADED:-0}" != "1" ]]; then
+    _CCSU_LOCAL_EXCLUDES_LOADED=1
+    _CCSU_LOCAL_EXCLUDES="$(jq -r '.localExcludes[]? // empty' "$CCSU_CONFIG_PATH" 2>/dev/null || true)"
+  fi
+  [[ -z "$_CCSU_LOCAL_EXCLUDES" ]] && return 1
   while IFS= read -r x; do
-    [[ "$x" == "$name" ]] && return 0
-  done < <(jq -r '.localExcludes[]? // empty' "$CCSU_CONFIG_PATH" 2>/dev/null || true)
+    [[ -n "$x" && "$x" == "$name" ]] && return 0
+  done <<< "$_CCSU_LOCAL_EXCLUDES"
   return 1
 }
 
@@ -85,7 +98,7 @@ config_project_list() {
       for sd in "$gd"/*/; do
         [[ -d "$sd" ]] || continue
         [[ -e "${sd}.git" ]] || continue
-        sname="$(basename "$sd")"
+        sname="${sd%/}"; sname="${sname##*/}"
         config_project_excluded "${g}/${sname}" "$sd" && continue
         printf '%s/%s\n' "$g" "$sname"
       done
@@ -96,7 +109,7 @@ config_project_list() {
   local d name
   for d in "$base"/*/; do
     [[ -d "$d" ]] || continue         # マッチ無し時の literal "*/" 対策
-    name="$(basename "$d")"
+    name="${d%/}"; name="${name##*/}"
     config_project_excluded "$name" "$d" && continue
     if [[ -e "${d}.git" ]]; then
       printf '%s\n' "$name"
