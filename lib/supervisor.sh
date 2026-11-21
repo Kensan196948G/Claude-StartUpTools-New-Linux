@@ -36,7 +36,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/json.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/credits.sh"
 
 SUP_DIR="${CCSU_SUP_DIR:-$CCSU_HOME/supervisor}"
-SUP_CRON_LAUNCHER="${CCSU_SUP_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
+# 配備先 (lib/deploy-launcher.sh) は $CCSU_HOME 配下。参照だけ $HOME/.claudeos 固定だと
+# 隔離環境 (CCSU_HOME を変えた場合) で「配備したのに見つからない」になるため揃える。
+SUP_CRON_LAUNCHER="${CCSU_SUP_CRON_LAUNCHER:-${CCSU_HOME:-$HOME/.claudeos}/cron-launcher.sh}"
 SUP_TMUX_BIN="${CCSU_TMUX_BIN:-tmux}"
 
 sup__config_default() {

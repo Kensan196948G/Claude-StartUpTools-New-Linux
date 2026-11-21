@@ -23,7 +23,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/json.sh"
 
 CRON_ENTRY_PREFIX="${CCSU_CRON_PREFIX:-CLAUDEOS}"
-CRON_LAUNCHER_PATH="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
+# 配備先は $CCSU_HOME 配下。参照を $HOME/.claudeos 固定にすると隔離環境で一致しない。
+CRON_LAUNCHER_PATH="${CCSU_CRON_LAUNCHER:-${CCSU_HOME:-$HOME/.claudeos}/cron-launcher.sh}"
 CRON_LOGS_DIR="${CCSU_CRON_LOGS_DIR:-$HOME/.claudeos/logs}"
 CRONTAB_BIN="${CCSU_CRONTAB_BIN:-crontab}"
 CRON_MAX_DURATION_MIN="${CCSU_CRON_MAX_DURATION_MIN:-$(json_get "$CCSU_CONFIG_PATH" '.cron.maxDurationMinutes' '300')}"
