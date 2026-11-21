@@ -267,6 +267,14 @@ function record(screen, ok, detail) {
       firstProj ? `計画ボタンあり(disabled=${launchBtn && launchBtn.disabled}) / API ok=${planApi && planApi.ok} exit=${planApi && planApi.exitCode}` : 'プロジェクトが無いため未実施');
     await shot('13-launch-plan');
 
+    // 13) ログアウトボタン (存在のみ。押すとセッションが切れるため実行しない)
+    const logoutBtn = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => /ログアウト/.test(x.innerText || ''));
+      return b ? { text: b.innerText.trim(), title: b.title || '' } : null;
+    });
+    record('ログアウト', !!logoutBtn, logoutBtn ? `ボタンあり (${logoutBtn.title})` : 'ボタンが無い');
+    await shot('14-logout');
+
     // 8) コンソールエラー (外部フォント等の想定内は除外)
     const unexpected = consoleErrors.filter((e) => !/fonts\.gstatic|net::ERR_|Failed to load resource/i.test(e));
     record('console error', unexpected.length === 0, unexpected.length ? unexpected[0].slice(0, 120) : 'なし');
