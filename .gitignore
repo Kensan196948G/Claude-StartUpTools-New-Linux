@@ -135,6 +135,13 @@ scripts/claudeos-back/
 *.jpg
 .playwright-mcp/
 
+# README 用の図・スクリーンショット・デモ動画は追跡する（docs/assets 配下のみ例外）
+!docs/assets/**/*.png
+!docs/assets/**/*.jpg
+!docs/assets/**/*.jpeg
+!docs/assets/**/*.gif
+!docs/assets/**/*.mp4
+
 # 認証・資格情報（絶対にコミットしない）
 .credentials.json
 **/credentials.json

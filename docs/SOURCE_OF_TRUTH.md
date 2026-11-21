@@ -16,6 +16,7 @@
 | パス | 分類 | 備考 |
 |---|---|---|
 | `README.md` | Source | Linux版の入口説明 |
+| `docs/assets/` | Source | README 用の図・スクリーンショット・デモ動画（撮影方法は `docs/assets/README.md`） |
 | `bin/` | Source | 起動、監視、Supervisor、cron、運用メニュー |
 | `lib/` | Source | 共通関数、設定、JSON、tmux、Supervisor補助 |
 | `libexec/` | Source | 診断・補助実行スクリプト |

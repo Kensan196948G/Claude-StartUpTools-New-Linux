@@ -9,5 +9,8 @@
   "MD031": false,
   "MD032": false,
   "MD037": false,
-  "MD040": false
+  "MD040": false,
+  "MD033": {
+    "allowed_elements": ["a", "b", "br", "details", "div", "img", "p", "sub", "summary", "sup"]
+  }
 }

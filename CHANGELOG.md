@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added — README をアイコン・デモ動画・アニメーションで刷新（2026-11-22）
+
+- 🎬 `docs/assets/demo/claudeos-demo.{mp4,gif}`: 統合コンソールの 10 秒デモ。隔離したデモ環境（demo-* 3 プロジェクト）で実際の UI を操作して撮影。
+  カーソルとキャプションは撮影用の注釈で、画面の状態は加工していない。
+- 🧭 `docs/assets/demo/{architecture,modes,supervisor-loop}.svg`: 全体像・3 起動モード・Supervisor の判定ループを表すアニメーション SVG（GitHub で再生可）。
+- 🖼️ `docs/assets/screens/*.png`: 統合コンソールの画面（起動・セッション監視・Supervisor 全適用・診断・品質・監査）。
+- 📘 `README.md`: 「30 秒でわかる」「3 ステップ」「画面ギャラリー」「用語集」「FAQ」の順に再構成し、表とアイコン中心へ変更。
+  実測値（`npm test` 1418 件 / 敵対プローブ 18 件 / policy 198 判定 / TLA+ verified）を検証表へ明記。
+- 📏 `docs/assets/README.md`: 素材の一覧と撮影・再現手順（Playwright + ffmpeg）を記録。
+- 🔧 `.gitignore` / `.gitattributes`: `docs/assets/` 配下の図・動画だけを追跡し、バイナリとして扱う例外を追加。
+- 🧹 `.markdownlint.json`: README で使う GitHub の HTML（`details` / `summary` / `img` / `p` など）を許可。
+- ✅ `docs/`: バージョン・Agents 数のドリフト（43→44 体、44→46 コマンド）を実ファイルに合わせて解消。
+
 ### Added — Managed Agents の入口（起動メニュー `MA` と `/managed-agents` skill、2026-10-10）
 
 - 🚪 `bin/managed-agents.sh ask`: 依頼の共通入口。タスク ID の採番、role の既定種別、Agent Router の判定、実行をまとめて行う。

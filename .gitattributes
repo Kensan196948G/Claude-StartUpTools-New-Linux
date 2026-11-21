@@ -13,3 +13,9 @@
 # Other Unix-only files
 Makefile text eol=lf
 *.mk text eol=lf
+
+# README 用の図・スクリーンショット・デモ動画はバイナリ（改行変換しない）
+*.gif binary
+*.mp4 binary
+*.png binary
+*.svg text eol=lf
