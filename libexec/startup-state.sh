@@ -41,13 +41,15 @@ _pid_alive() {
 
 # _running_from_dir <dir> — status=running かつ PID 生存の project 名 (1行1件)
 _running_from_dir() {
-  local dir="$1" f proj pid
+  local dir="$1" f line status proj pid
   [[ -d "$dir" ]] || return 0
+  # 1 ファイルあたり jq を 3 回起動していたのを 1 回にまとめる (@tsv で 3 値同時取得)。
   for f in "$dir"/*.json; do
     [[ -f "$f" ]] || continue
-    [[ "$(json_get "$f" '.status' '')" == "running" ]] || continue
-    proj="$(json_get "$f" '.project' '')"
-    pid="$(json_get "$f" '.pid' '0')"
+    line="$(jq -r '[.status // "", .project // "", .pid // "0"] | @tsv' "$f" 2>/dev/null || true)"
+    [[ -n "$line" ]] || continue
+    IFS=$'\t' read -r status proj pid <<< "$line"
+    [[ "$status" == "running" ]] || continue
     [[ -n "$proj" ]] || continue
     _pid_alive "$pid" || continue
     printf '%s\n' "$proj"
@@ -55,9 +57,20 @@ _running_from_dir() {
 }
 
 # _tmux_sessions — 実行中 claudeos-* tmux セッション名 (1行1件)
+# _tmux_sessions — claudeos-* セッション名 (1行1件)。
+#   _project_json からプロジェクトごとに呼ばれるため、結果を 1 回だけ取って使い回す。
+_TMUX_SESSIONS_CACHE=""
+_TMUX_SESSIONS_DONE=0
+tmux_sessions_reset() { _TMUX_SESSIONS_CACHE=""; _TMUX_SESSIONS_DONE=0; }
 _tmux_sessions() {
-  has_cmd "$TMUX_BIN" || return 0
-  "$TMUX_BIN" ls 2>/dev/null | grep '^claudeos-' | cut -d: -f1 || true
+  if [[ "$_TMUX_SESSIONS_DONE" != "1" ]]; then
+    _TMUX_SESSIONS_DONE=1
+    if has_cmd "$TMUX_BIN"; then
+      _TMUX_SESSIONS_CACHE="$("$TMUX_BIN" ls 2>/dev/null | grep '^claudeos-' | cut -d: -f1 || true)"
+    fi
+  fi
+  [[ -n "$_TMUX_SESSIONS_CACHE" ]] && printf '%s\n' "$_TMUX_SESSIONS_CACHE"
+  return 0
 }
 
 # _all_folders — projectsDir 直下と、その直下 (深さ2) の全フォルダ名 (1行1件)。
@@ -70,14 +83,15 @@ _all_folders() {
   local base; base="$(config_projects_dir)"
   [[ -d "$base" ]] || return 0
   local d sd name sname
+  # basename は 1 件ごとにサブシェルを起こすため使わない (370 件規模で数秒差が出る)。
   for d in "$base"/*/; do
     [[ -d "$d" ]] || continue
-    name="$(basename "$d")"
+    name="${d%/}"; name="${name##*/}"
     [[ "$name" == .* || "$name" == "node_modules" ]] && continue
     printf '%s\n' "$name"
     for sd in "$d"/*/; do
       [[ -d "$sd" ]] || continue
-      sname="$(basename "$sd")"
+      sname="${sd%/}"; sname="${sname##*/}"
       [[ "$sname" == .* || "$sname" == "node_modules" ]] && continue
       printf '%s/%s\n' "$name" "$sname"
     done
