@@ -480,3 +480,39 @@ test('HTTP: /api/ops/* は GET 以外を受け付けない (読み取り専用)'
     }
   });
 });
+
+/* -------------------------------------------------------- SubAgent カタログ API ---
+ * config/agent-catalog.json を読むだけで、編集はしない。
+ * 実データがあれば counts を返し、無ければ available:false + 理由を返す（嘘の 0 を返さない）。
+ */
+test('HTTP: GET /api/ops/agent-catalog は実カタログの件数を返す', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-root-'));
+  fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'config', 'agent-catalog.json'), JSON.stringify({
+    schemaVersion: 1,
+    first_class: [{ name: 'cto', purpose: '統括', model: 'inherit' }],
+    catalog: [{ name: 'architect', when: '設計時' }],
+    merge: { 'code-reviewer': ['a', 'b'] },
+    remove_candidate: { planner: 'native Plan subagent' },
+  }));
+  await withServer({ root }, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/agent-catalog');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.available, true);
+    assert.deepEqual(r.json.counts, { first_class: 1, catalog: 1, merge: 1, remove_candidate: 1 });
+    assert.equal(r.json.first_class[0].name, 'cto');
+    assert.equal(r.json.catalog[0].name, 'architect');
+  });
+});
+
+test('HTTP: GET /api/ops/agent-catalog はカタログ不在でも嘘をつかない', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-none-'));
+  await withServer({ root }, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/agent-catalog');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.available, false);
+    assert.ok(r.json.note, '理由を返す');
+  });
+});
