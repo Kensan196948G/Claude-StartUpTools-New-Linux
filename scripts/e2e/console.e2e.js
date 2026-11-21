@@ -22,6 +22,8 @@ const path = require('path');
 const http = require('http');
 
 const BASE = process.env.CONSOLE_URL || 'http://127.0.0.1:3740';
+// CI などプロジェクトが 0 件の環境でも「API と一致していること」を検査できるようにする
+const ALLOW_EMPTY = process.env.E2E_ALLOW_EMPTY === '1';
 const OUT_DIR = path.join(__dirname, '..', '..', 'reports', 'e2e', new Date().toISOString().replace(/[:.]/g, '-'));
 const results = [];
 
@@ -91,7 +93,8 @@ function record(screen, ok, detail) {
     const m = home.match(/プロジェクト\s*\n?\s*(\d+)\s*\/\s*(\d+)\s*件/);
     const total = m ? Number(m[2]) : 0;
     const matchesApi = apiFolders ? total === apiFolders : total > 0;
-    record('起動(概要)', matchesApi && !home.includes('サンプルデータ · 実起動しません'),
+    const nonEmptyOk = ALLOW_EMPTY ? true : total > 0;
+    record('起動(概要)', nonEmptyOk && matchesApi && !home.includes('サンプルデータ · 実起動しません'),
       (m ? `プロジェクト ${m[1]}/${m[2]} 件` : 'プロジェクト件数が読めない') +
       (apiFolders ? ` (API ${apiFolders})` : '') + (matchesApi ? '' : ' ← API と不一致'));
     await shot('01-launch');
@@ -107,7 +110,10 @@ function record(screen, ok, detail) {
     await page.waitForFunction(() => /claude-[a-z-]+\.service/.test((document.querySelector('#dc-root') || document.body).innerText || ''), null, { timeout: 15000 }).catch(() => {});
     const sd = await bodyText();
     const units = [...new Set(sd.match(/claude-[a-z-]+\.service/g) || [])];
-    record('Systemd', okNav2 && units.length > 0 && /ACTIVE|INACTIVE/.test(sd), `unit ${units.length} 件`);
+    const sdApi = await getJson('/api/ops/systemd');
+    const sdAvailable = !!(sdApi && sdApi.available);
+    record('Systemd', okNav2 && (sdAvailable ? (units.length > 0 && /ACTIVE|INACTIVE/.test(sd)) : true),
+      sdAvailable ? `unit ${units.length} 件` : 'この環境では未取得 (available:false) — 空表示で整合');
     await shot('03-systemd');
 
     // 3) Agent Teams (実行 → 実 API)

@@ -47,3 +47,54 @@ jobs:
       - name: Formal verification (TLA+/TLC)
         # run-ledger の状態機械モデルをモデル検査する。tla2tools.jar は初回のみ取得
         run: bash scripts/tools/tla-check.sh run --json
+
+  e2e-console:
+    # 統合コンソールを実ブラウザで検証する (画面ごとに API の実値と DOM を突き合わせる)。
+    # CI にはプロジェクトが無いため E2E_ALLOW_EMPTY=1 で「0 件でも API と一致していること」を検査する。
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install tools for the console server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq tmux cron
+
+      - name: Install Playwright (not saved to package.json)
+        # 依存ゼロの方針を保つため --no-save。ブラウザは chromium のみ。
+        run: |
+          npm install --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+
+      - name: Start the console server
+        run: |
+          node scripts/web/startup-server.js --port 3740 --host 127.0.0.1 --allow-no-auth > /tmp/console.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3740/api/health > /dev/null 2>&1; then echo "server up"; break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3740/api/health || { cat /tmp/console.log; exit 1; }
+
+      - name: Run Playwright console checks
+        env:
+          CONSOLE_URL: http://127.0.0.1:3740
+          E2E_ALLOW_EMPTY: "1"
+        run: node scripts/e2e/console.e2e.js
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-console
+          path: reports/e2e/
+          if-no-files-found: ignore
+
+      - name: Show server log on failure
+        if: failure()
+        run: cat /tmp/console.log || true
