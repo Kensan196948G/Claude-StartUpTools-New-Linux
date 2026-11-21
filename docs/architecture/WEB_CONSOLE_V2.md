@@ -91,3 +91,18 @@ CONSOLE_URL=<url> node scripts/e2e/console.e2e.js
 | state の cold 短縮 | **未達**。主コストは 190 プロジェクト分の `_project_json`（1 件あたり十数回の jq）。1 秒台には一括化が必要 |
 | `_all_folders` の `find` 化 | 撤回。symlink 配下の欠落・隠しディレクトリ配下の混入で一覧の意味が変わる |
 | 実セッションの起動・停止 E2E | 未実施（計画 = dry-run までを検証） |
+
+## ログアウト（2026-11-21 追加）
+
+ヘッダー右上（テーマ切替の隣）に「ログアウト」ボタンがある。Cloudflare Access の
+セッションを終了させる。
+
+- 遷移先: `<アプリ側ドメイン>/cdn-cgi/access/logout?returnTo=<絶対 URL を URL エンコード>`
+- **チームドメイン（`*.cloudflareaccess.com`）ではなくアプリ側ドメインを使う**。
+  チームドメインだとブラウザにそのドメインの Cookie が無く `No Access cookie found` になる。
+- `returnTo` は**絶対 URL** をエンコードして渡す。相対（`/`）だと実測で **400**、絶対だと **302**。
+- ループバック（127.0.0.1 / localhost）では Access を使っていないため遷移せず、
+  「ログアウトは不要」と通知する（存在しないパスへ飛ばさない）。
+
+実測: `GET /cdn-cgi/access/logout?returnTo=%2F` → 400、
+`?returnTo=https%3A%2F%2F<host>%2F` → 302。
