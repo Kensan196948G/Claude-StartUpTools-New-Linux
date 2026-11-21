@@ -164,3 +164,28 @@ supervisor JSON も `status=running` になるが、次の 2 点で停止でき�
 `session-start-stop.e2e.sh` は依然 `running` の検査で FAIL する。
 残る論点は「supervisor が status=running を書いた直後に pid が生存していない」ケースで、
 supervisor のプロセスモデル側の調査が必要。テストは検出器として残している。
+
+## supervisor のプロジェクト解決（調査結果 2026-11-21）
+
+隔離環境で `autonomy.sh start <p>` を実行すると、supervisor は起動するが
+セッションが即終了し、`running` が false になる。実測ログ:
+
+```
+ℹ️ [supervisor] 🚀 start: p1 @ ...
+❌ プロジェクトディレクトリが存在しません: /tmp/p1d/home/Projects/p1
+   (実際のプロジェクトは /tmp/p1d/projects/p1、config の .projects で指定)
+```
+
+| 観点 | 実測 |
+|---|---|
+| supervisor JSON | `status=running` / `pid=$$`（setsid 本体。値は正しい） |
+| pid 生存 | 起動直後は生存、数秒後に消える |
+| 原因 | supervisor 経由のプロジェクト解決が **`$HOME/Projects` へフォールバック**し、`config` の `.projects` を使っていない |
+| 結果 | ディレクトリ不在 → セッション 0 秒終了 → supervisor が再試行/終了 → `running=false` |
+
+つまり「状態管理（state / 停止 API）」ではなく **supervisor 側のパス解決**の問題で、
+`AI_STARTUP_CONFIG_PATH` で config を差し替えた環境では supervisor が正しいプロジェクトを見つけられない。
+
+→ 修正方針: supervisor（`sup__loop` / `start-claude.sh` / `supman__apply` の呼び出し連鎖）が
+`launcher__project_dir` ではなく `$HOME/Projects` 既定値で解決している箇所を特定し、
+`config_projects_dir` に統一する。既定環境（`$HOME/Projects` が実在）では表面化しない。
