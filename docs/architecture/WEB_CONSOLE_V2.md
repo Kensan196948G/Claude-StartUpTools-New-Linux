@@ -163,3 +163,27 @@ CONSOLE_URL=http://127.0.0.1:3740 node scripts/e2e/console.e2e.js
 - 外部フォント等の想定内のエラーは除外し、それ以外の console error が 0 であることを確認する。
 
 実測: 9/9 PASS（起動 370/370・Systemd 5 unit・SubAgent 9/9/6・Managed ledger 3・Cron 56 件・監査・console error 0）。
+
+## 診断 / DevOps / SecOps の接続（2026-11-21 追加）
+
+「実行して結果を出す」画面のため、**許可したコマンドだけを実行する allowlist 方式**にした。
+任意コマンドは受け付けない。
+
+| API | 内容 | 実測 |
+|---|---|---|
+| `GET /api/ops/diag?name=<key>` | `libexec/diag-*.sh` の 9 本から 1 本を実行（60 秒上限） | `all-tools` が exit 0 |
+| `GET /api/ops/release-check` | `bin/release-check.sh --dry-run` のみ | FAIL（worktree が dirty のため。実測どおり） |
+| `GET /api/ops/devops` | git HEAD / user timer 数 / DB 数 / node 版 | head=9c715e1, timers=84, DB=408 |
+| `GET /api/ops/secops` | ツールの有無とレポート数（**実行はしない**） | gitleaks=なし |
+
+- 診断画面: メニュー番号を API のキーへ対応付け、**実出力**を表示する。未対応の項目は「未接続」と明示。
+- SecOps: スキャンは実行せず**有無の確認のみ**（gitleaks 未導入のため）。
+- DevOps: 配備・再起動・DB 変更は行わず**現状値のみ**。
+
+## 品質ワークベンチ（未接続・理由）
+
+この画面は `bin/release-check.sh` の実行結果を検査項目ごとに表示する作りだが、
+本 PR では**接続していない**。理由は、実チェック（test/lint/build）の実行が数分かかり、
+同期 HTTP で返すには長すぎるため。API 側は `--dry-run` のみ対応済み。
+実接続にはバックグラウンドジョブ化（開始 → 進捗取得）が必要で、別 PR の範囲とする。
+現状は設計どおり「サンプルの失敗結果」を表示し、画面にもその旨が出る。

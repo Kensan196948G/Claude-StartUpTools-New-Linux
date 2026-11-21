@@ -576,3 +576,43 @@ test('HTTP: GET /api/ops/cron はスナップショットを優先して返す',
     fs.unlinkSync(snapFile);
   }
 });
+
+/* --------------------------------------------------- 診断 / DevOps / SecOps ---
+ * 実行系の画面は「許可したコマンドだけを実行する」allowlist 方式。
+ * 任意コマンドを受け付けないこと、実測値を返すことを固定する。
+ */
+test('HTTP: GET /api/ops/diag は許可した診断だけを実行する', async () => {
+  await withServer({}, async (port) => {
+    const ok = await req(port, 'GET', '/api/ops/diag?name=all-tools');
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json.ok, true);
+    assert.equal(typeof ok.json.output, 'string');
+    assert.ok(ok.json.output.length > 0, '診断の出力が空でない');
+
+    const bad = await req(port, 'GET', '/api/ops/diag?name=rm-rf');
+    assert.equal(bad.status, 400, 'allowlist 外は実行しない');
+    assert.equal(bad.json.error, 'UNKNOWN_DIAG');
+    assert.ok(Array.isArray(bad.json.allowed) && bad.json.allowed.length > 0);
+  });
+});
+
+test('HTTP: GET /api/ops/devops は読み取り専用の実測値を返す', async () => {
+  await withServer({}, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/devops');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(typeof r.json.release.head, 'string');
+    assert.ok(!/deploy|restart/i.test(r.json.note || ''), 'デプロイ等を行わないことを明記');
+  });
+});
+
+test('HTTP: GET /api/ops/secops はツールの有無を返す（実行はしない）', async () => {
+  await withServer({}, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/secops');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(typeof r.json.tools, 'object');
+    assert.equal(typeof r.json.tools.gitleaks.present, 'boolean');
+    assert.ok(/有無の確認のみ/.test(r.json.note || ''), '実行しないことを明記');
+  });
+});
