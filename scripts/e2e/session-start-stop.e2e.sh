@@ -82,7 +82,7 @@ RUNNING="$(printf '%s' "$STATE" | jq -r --arg p "$PROJ" '(.state.projects // [])
 if [[ "$RUNNING" == "true" ]]; then pass "state.projects[].running = true"; else fail "state 上 running にならない"; fi
 
 STOP="$(curl -s -X POST -H 'content-type: application/json' \
-  -d "{\"project\":\"$PROJ\",\"confirm\":true}" --max-time 120 "$API/api/startup/stop")"
+  -d "{\"project\":\"$PROJ\",\"confirm\":true,\"force\":true}" --max-time 120 "$API/api/startup/stop")"
 if [[ "$(printf '%s' "$STOP" | jq -r '.ok // false')" == "true" ]]; then pass "停止 API (ok=true)"; else fail "停止 API: $(printf '%s' "$STOP" | head -c 200)"; fi
 
 GONE=0
