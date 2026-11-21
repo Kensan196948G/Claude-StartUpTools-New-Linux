@@ -656,6 +656,67 @@ function createServer(cfg) {
   }
 
   /**
+   * handleManagedAgentsOps — Managed Agents の実状態を読むだけ。
+   *   config/roster はリポジトリ、registry/ledger/decisions は ~/.claudeos/managed-agents。
+   *   config が無い場合は available:false とし、他は読めた分だけ返す (嘘の 0 件を返さない)。
+   */
+  async function handleManagedAgentsOps(res) {
+    const readJson = (p) => {
+      try { return { ok: true, value: JSON.parse(fs.readFileSync(p, 'utf8')) }; }
+      catch (e) { return { ok: false, error: String(e && e.code || e && e.message || e).slice(0, 120) }; }
+    };
+    const readJsonl = (p, limit) => {
+      try {
+        const lines = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean);
+        const rows = [];
+        for (const l of lines) { try { rows.push(JSON.parse(l)); } catch { /* 壊れた行は捨てる */ } }
+        return { ok: true, rows: rows.slice(-limit), total: rows.length };
+      } catch (e) { return { ok: false, rows: [], total: 0, error: String(e && e.code || e).slice(0, 120) }; }
+    };
+
+    const stateDir = path.join(CLAUDEOS_HOME, 'managed-agents');
+    const cfg = readJson(path.join(conf.root, 'config', 'managed-agents.json'));
+    const roster = readJson(path.join(conf.root, 'config', 'managed-agents-roster.json'));
+    const registry = readJson(path.join(stateDir, 'registry.json'));
+    const ledger = readJsonl(path.join(stateDir, 'ledger.jsonl'), 2000);
+    const decisions = readJsonl(path.join(stateDir, 'decisions.jsonl'), 2000);
+
+    const now = new Date();
+    const ym = now.toISOString().slice(0, 7);
+    const ymd = now.toISOString().slice(0, 10);
+    let monthCents = 0, todayCount = 0;
+    ledger.rows.forEach((r) => {
+      const ts = String(r.ts || '');
+      if (r.type === 'reserve' || typeof r.cents === 'number') {
+        if (ts.slice(0, 7) === ym && typeof r.cents === 'number') monthCents += r.cents;
+      }
+      if (ts.slice(0, 10) === ymd) todayCount += 1;
+    });
+
+    const log = ledger.rows.slice(-10).reverse().map((r) => ({
+      t: String(r.ts || '').replace('T', ' ').slice(0, 19),
+      role: r.role || '—',
+      prompt: [r.type, r.task_id, r.task_class].filter(Boolean).join(' · ') || '—',
+      result: (typeof r.cents === 'number' ? r.cents + '¢' : '—'),
+    }));
+
+    const registryAgents = (registry.ok && registry.value && registry.value.agents) ? Object.keys(registry.value.agents) : [];
+    const rosterAgents = (roster.ok && roster.value && roster.value.agents) ? Object.keys(roster.value.agents) : [];
+
+    return json(res, 200, {
+      ok: true,
+      available: !!(cfg.ok || roster.ok || registry.ok || ledger.ok),
+      config: { available: cfg.ok, mode: cfg.ok ? (cfg.value.mode || cfg.value.managedMode || 'unknown') : null,
+                note: cfg.ok ? null : 'config/managed-agents.json がありません' },
+      roster: { available: roster.ok, count: rosterAgents.length, agents: rosterAgents },
+      registry: { available: registry.ok, count: registryAgents.length, agents: registryAgents },
+      usage: { month_cents: monthCents, today_count: todayCount,
+               ledger_total: ledger.total, decisions_total: decisions.total },
+      log,
+    });
+  }
+
+  /**
    * handleAgentCatalogOps — SubAgent カタログ (config/agent-catalog.json) を読むだけ。
    *   first_class(常時配布) / catalog(必要時読込) / merge(統合) / remove_candidate(削除候補)
    *   をそのまま返し、件数も添える。編集は一切しない。
@@ -801,6 +862,7 @@ function createServer(cfg) {
       if (req.method === 'GET' && pn === '/api/ops/systemd') return handleSystemdOps(res);
       if (req.method === 'GET' && pn === '/api/ops/agents') return handleAgentsOps(res);
       if (req.method === 'GET' && pn === '/api/ops/agent-catalog') return handleAgentCatalogOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/managed-agents') return handleManagedAgentsOps(res);
 
       /**
        * ルート直下は統合コンソール v2 (public/v2.html) を返す。
