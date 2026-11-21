@@ -116,40 +116,38 @@ _project_json() {
 
   local sup_json="null" fg_json="null"
   if [[ -n "$sup_file" ]]; then
-    local sup_status sup_pid sup_alive="false"
-    sup_status="$(json_get "$sup_file" '.status' 'unknown')"
-    sup_pid="$(json_get "$sup_file" '.pid' '0')"
-    _pid_alive "$sup_pid" && sup_alive="true"
-    sup_json="$(jq -n \
-      --arg file "$sup_file" \
-      --arg status "$sup_status" \
-      --arg pid "$sup_pid" \
-      --argjson alive "$sup_alive" \
-      --arg started_at "$(json_get "$sup_file" '.started_at' '')" \
-      --arg ended_at "$(json_get "$sup_file" '.ended_at' '')" \
-      --arg day "$(json_get "$sup_file" '.day' '')" \
-      --argjson restarts_today "$(json_get "$sup_file" '.restarts_today' '0')" \
-      --argjson minutes_today "$(json_get "$sup_file" '.minutes_today' '0')" \
-      --arg last_reason "$(json_get "$sup_file" '.last_reason' '')" \
-      --arg cost "$(json_get "$sup_file" '.last_session_cost_usd' '0')" \
-      --arg month "$(json_get "$sup_file" '.month_spent_usd' '0')" \
-      '{file:$file,status:$status,pid:$pid,alive:$alive,started_at:$started_at,ended_at:$ended_at,
-        day:$day,restarts_today:$restarts_today,minutes_today:$minutes_today,
-        last_reason:$last_reason,last_session_cost_usd:$cost,month_spent_usd:$month}')"
+    local sup_tsv sup_alive="false"
+    # 12 回の json_get (jq 起動) を 1 回の jq にまとめる。存在しないキーは空で埋める。
+    sup_tsv="$(jq -r '[.status // "unknown", .pid // "0", .started_at // "", .ended_at // "",
+                      .day // "", (.restarts_today // 0), (.minutes_today // 0),
+                      .last_reason // "", (.last_session_cost_usd // 0), (.month_spent_usd // 0)]
+                     | @tsv' "$sup_file" 2>/dev/null || true)"
+    if [[ -n "$sup_tsv" ]]; then
+      local sup_status sup_pid sup_started sup_ended sup_day sup_restarts sup_minutes sup_reason sup_cost sup_month
+      IFS=$'\t' read -r sup_status sup_pid sup_started sup_ended sup_day sup_restarts sup_minutes sup_reason sup_cost sup_month <<< "$sup_tsv"
+      _pid_alive "$sup_pid" && sup_alive="true"
+      sup_json="$(jq -n \
+        --arg file "$sup_file" --arg status "$sup_status" --arg pid "$sup_pid" --argjson alive "$sup_alive" \
+        --arg started_at "$sup_started" --arg ended_at "$sup_ended" --arg day "$sup_day" \
+        --argjson restarts_today "${sup_restarts:-0}" --argjson minutes_today "${sup_minutes:-0}" \
+        --arg last_reason "$sup_reason" --arg cost "${sup_cost:-0}" --arg month "${sup_month:-0}" \
+        '{file:$file,status:$status,pid:$pid,alive:$alive,started_at:$started_at,ended_at:$ended_at,
+          day:$day,restarts_today:$restarts_today,minutes_today:$minutes_today,
+          last_reason:$last_reason,last_session_cost_usd:$cost,month_spent_usd:$month}')"
+    fi
   fi
   if [[ -n "$fg_file" ]]; then
-    local fg_status fg_pid fg_alive="false"
-    fg_status="$(json_get "$fg_file" '.status' 'unknown')"
-    fg_pid="$(json_get "$fg_file" '.pid' '0')"
-    _pid_alive "$fg_pid" && fg_alive="true"
-    fg_json="$(jq -n \
-      --arg file "$fg_file" \
-      --arg status "$fg_status" \
-      --arg pid "$fg_pid" \
-      --argjson alive "$fg_alive" \
-      --arg started_at "$(json_get "$fg_file" '.started_at' '')" \
-      --arg mode "$(json_get "$fg_file" '.mode' '')" \
-      '{file:$file,status:$status,pid:$pid,alive:$alive,started_at:$started_at,mode:$mode}')"
+    local fg_tsv fg_alive="false"
+    fg_tsv="$(jq -r '[.status // "unknown", .pid // "0", .started_at // "", .mode // ""] | @tsv' "$fg_file" 2>/dev/null || true)"
+    if [[ -n "$fg_tsv" ]]; then
+      local fg_status fg_pid fg_started fg_mode
+      IFS=$'\t' read -r fg_status fg_pid fg_started fg_mode <<< "$fg_tsv"
+      _pid_alive "$fg_pid" && fg_alive="true"
+      fg_json="$(jq -n \
+        --arg file "$fg_file" --arg status "$fg_status" --arg pid "$fg_pid" --argjson alive "$fg_alive" \
+        --arg started_at "$fg_started" --arg mode "$fg_mode" \
+        '{file:$file,status:$status,pid:$pid,alive:$alive,started_at:$started_at,mode:$mode}')"
+    fi
   fi
 
   local tmux_name="claudeos-$safe" tmux_hit="false"
