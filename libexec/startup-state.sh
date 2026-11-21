@@ -199,6 +199,12 @@ _project_tsv() {
       local sup_status sup_pid sup_started sup_ended sup_day sup_restarts sup_minutes sup_reason sup_cost sup_month
       IFS=$'\t' read -r sup_status sup_pid sup_started sup_ended sup_day sup_restarts sup_minutes sup_reason sup_cost sup_month <<< "$sup_tsv"
       _pid_alive "$sup_pid" && sup_alive="true"
+      # 数値でない値が混ざっても --argjson で落ちないようにする
+      # (落ちると projects 全体が空になり、running 判定も停止 API も壊れる)
+      [[ "$sup_restarts" =~ ^[0-9]+$ ]] || sup_restarts=0
+      [[ "$sup_minutes" =~ ^[0-9]+$ ]] || sup_minutes=0
+      [[ "$sup_cost" =~ ^[0-9.]+$ ]] || sup_cost=0
+      [[ "$sup_month" =~ ^[0-9.]+$ ]] || sup_month=0
       sup_json="$(jq -cn --arg file "$sup_file" --arg status "$sup_status" --arg pid "$sup_pid" --argjson alive "$sup_alive" \
         --arg started_at "$sup_started" --arg ended_at "$sup_ended" --arg day "$sup_day" \
         --argjson restarts_today "${sup_restarts:-0}" --argjson minutes_today "${sup_minutes:-0}" \
