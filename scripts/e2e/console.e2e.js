@@ -237,6 +237,36 @@ function record(screen, ok, detail) {
       planBtn ? `計画ボタンあり / requiresConfirm=${applyContract && applyContract.requiresConfirm}` : '計画ボタンが無い');
     await shot('12-applyall');
 
+    // 12) 起動フロー (計画 = --dry-run のみ。実起動・停止は実施しない)
+    //     UI のタイミングに依存せず、画面の要素と API 契約を突き合わせる。
+    const st2 = await getJson('/api/startup/state');
+    const firstProj = st2 && st2.state && Array.isArray(st2.state.all_folders) && st2.state.all_folders.length
+      ? st2.state.all_folders[0] : null;
+    // \b は日本語に効かないため単純一致にする (サイドバーが DOM 先頭なので起動画面へ戻る)
+    const okNav12 = await nav(/起動/);
+    await page.waitForTimeout(1500);
+    const launchBtn = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => /計画/.test(x.innerText || ''));
+      return b ? { label: b.innerText.trim(), disabled: !!b.disabled } : null;
+    });
+    let planApi = null;
+    if (firstProj) {
+      try {
+        const r = await fetch(BASE + '/api/startup/plan', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ project: firstProj, mode: 'background', goal: 'auto', duration: 300 }),
+        });
+        planApi = await r.json();
+      } catch { planApi = null; }
+    }
+    // 計画ボタンはプロジェクト未選択だと disabled のため、存在のみを条件にする
+    // (計画の実効性は API 契約で検査する)
+    const launchOk = okNav12 && !!launchBtn
+      && (!firstProj || (!!planApi && planApi.ok === true && typeof planApi.plan === 'string' && planApi.plan.length > 0));
+    record('起動フロー(計画)', launchOk,
+      firstProj ? `計画ボタンあり(disabled=${launchBtn && launchBtn.disabled}) / API ok=${planApi && planApi.ok} exit=${planApi && planApi.exitCode}` : 'プロジェクトが無いため未実施');
+    await shot('13-launch-plan');
+
     // 8) コンソールエラー (外部フォント等の想定内は除外)
     const unexpected = consoleErrors.filter((e) => !/fonts\.gstatic|net::ERR_|Failed to load resource/i.test(e));
     record('console error', unexpected.length === 0, unexpected.length ? unexpected[0].slice(0, 120) : 'なし');

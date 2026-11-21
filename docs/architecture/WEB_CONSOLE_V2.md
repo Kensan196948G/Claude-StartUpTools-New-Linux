@@ -1,230 +1,93 @@
-# Web コンソール v2（統合コンソール）
+# 統合コンソール（Web コンソール v2）運用ガイド
 
-`scripts/web/public/v2.html` は、ClaudeOS の統合コンソール（13 画面）を 1 ファイルに
-まとめた UI である。元は Anthropic design-component 形式の設計成果物で、次の構造を持つ。
+ClaudeOS の起動・監視・運用を 1 画面に集約した Web UI。設計成果物（単一 HTML）を基に、
+**全 13 画面を実 API へ接続**している。実行できない操作は「未接続」と明示し、
+成功したように見せない方針。
 
-| 要素 | 中身 |
+## 1. 配信と認証
+
+| 項目 | 内容 |
 |---|---|
-| `<script type="__bundler/template">` | 画面マークアップ + `class Component extends DCLogic`（状態と操作） |
-| `<script type="__bundler/manifest">` | React / dc-runtime / フォント（gzip + base64） |
-| ローダ | manifest を展開して template を描画する |
+| 配信 | `scripts/web/startup-server.js`（systemd --user `claudeos-web-startup`、127.0.0.1:3740） |
+| ルート | `/` → `public/v2.html`（統合コンソール）。旧コンソールは `/index.html` |
+| 公開 | Cloudflare Tunnel → 同ホスト loopback。入口は Cloudflare Access（email 1 件 allow + catch-all deny） |
+| 端末 | `/terminal` → ttyd（127.0.0.1:3741）。Access が同一 hostname を保護 |
+| ファイル | `public/v2.html` は `__bundler/template` に画面＋コンポーネントを持つ単一ファイル |
 
-配信は既存の `startup-server.js` の静的配信にそのまま乗る（同一オリジン）。
+## 2. 画面別ガイド
+
+| 画面 | データ源 | できること | 制約 |
+|---|---|---|---|
+| **起動** | `GET /api/startup/state`（`all_folders`） | プロジェクト選択 → 計画（`POST /api/startup/plan`）→ 起動（`/launch`、`confirm:true`） | 実起動は tmux セッションを作る |
+| **セッション監視** | 同上 `sessions` | 稼働状況の表示、停止（`/api/startup/stop`） | — |
+| **Supervisor 全適用** | `POST /api/startup/apply-all`（confirm 無し） | **計画のみ**取得 | 実適用は画面から不可（CLI で人間が実行） |
+| **Cron** | `GET /api/ops/cron` | crontab の一覧表示 | スナップショット経由。追加/削除/run-now は未接続 |
+| **Systemd** | `GET /api/ops/systemd` | unit の状態・有効化状態・ExecStart 表示 | 起動/停止等は未接続（読み取り専用） |
+| **Agent Teams** | `GET /api/ops/agents` | 使用状況 JSON の表示 | history/diag/migrate は未接続 |
+| **SubAgent** | `GET /api/ops/agent-catalog` | カタログ KPI・一覧・統合・削除候補の表示 | 昇格/降格・Issue 化は未接続 |
+| **Managed Agents** | `GET /api/ops/managed-agents` | roster/registry/台帳・当月使用量 | 設定が無ければ「未設定」。依頼送信は未接続 |
+| **診断・ツール** | `GET /api/ops/diag?name=` | 診断スクリプト 9 本の実行と出力表示 | allowlist 外は不可。未対応メニューは未接続 |
+| **品質ワークベンチ** | `POST/GET /api/ops/release-check` | release-check をジョブ実行し結果を反映 | 実チェックは数分。ジョブは同時 1 本 |
+| **DevOps** | `GET /api/ops/devops` | git HEAD / timer 数 / DB 数 の現状値 | 配備・再起動・DB 変更は未接続 |
+| **SecOps** | `GET /api/ops/secops` | ツール有無（gitleaks 等）の確認 | スキャン実行は未接続 |
+| **監査ログ** | `GET /api/startup/audit` | 変更系操作の監査ログ表示 | — |
+
+## 3. API 一覧（読み取り専用を含む）
 
 ```
-http://127.0.0.1:3740/v2.html
+GET  /api/health
+GET  /api/startup/state            POST /api/startup/plan | launch | stop | apply-all
+GET  /api/startup/log | /audit
+GET  /api/ops/systemd | cron | agents | agent-catalog | managed-agents
+GET  /api/ops/diag?name=<key>       (allowlist: all-tools, mounts, mcp-health, agent-teams,
+                                     worktree, architecture, claude-compat, postgres, control-plane*)
+POST /api/ops/release-check/start   GET /api/ops/release-check
+GET  /api/ops/devops | secops
 ```
 
-同一オリジンなので `/api/startup/*` を CORS なしで直接叩ける。
+`/api/startup/state` は 20 秒 TTL のキャッシュを持つ（`STARTUP_STATE_CACHE_MS`）。
+起動・停止・計画・全適用の直後に無効化する。実測 cold 3.5–10 秒 / warm 0.004 秒。
 
-## 実データに接続している範囲
+## 4. Cron スナップショット方式
 
-設計成果物は状態がすべてサンプル値で、起動も「実起動しません」と表示するプロトタイプだった。
-`__bundler/template` のデータ層だけを実 API に差し替えてある（manifest・ローダは無変更）。
-
-| 機能 | 接続先 | 状態 |
-|---|---|---|
-| プロジェクト一覧 | `GET /api/startup/state` の `all_folders` | 実データ |
-| セッション（稼働） | 同上 `sessions` | 実データ |
-| 監査ログ | `GET /api/startup/audit?lines=200` | 実データ |
-| 計画（--dry-run） | `POST /api/startup/plan` | 実実行 |
-| 起動 | `POST /api/startup/launch`（`confirm: true`） | 実実行 |
-| 停止 | `POST /api/startup/stop` | 実実行 |
-| 状態の自動更新 | 15 秒間隔で state + audit を再取得 | 実データ |
-
-実装上の要点:
-
-- `refreshLive()` が state と audit を取得して `realProjects` / `sessions` / `audit` を更新する。
-- `projectNames()` は `realProjects` があればそれを使い、無ければ従来のサンプルへフォールバックする。
-- 計画・起動・停止は `livePost()` で実 API を叩き、結果を通知と監査欄へ反映して再取得する。
-- 失敗時は API の `error` / `stderr` をそのまま通知に出す（成功に見せない）。
-- ヘッダのバッジは「起動・停止・監査は実データ / 一部画面は未接続」に変更した。
-
-## まだ接続していない範囲（設計は 100% 描画される）
-
-Cron スケジュール、Systemd 起動管理、Agent Teams 管理、SubAgent 管理、Managed Agents、
-診断・ツール、品質ワークベンチ、DevOps、SecOps は、**画面は設計どおり描画されるが
-データは設計成果物のサンプル値のまま**である。これらは対応する API がまだ無いため、
-実データへ繋ぐには次のいずれかが必要になる。
-
-1. `startup-server.js` に読み取り専用 API を追加する（cron: `crontab`、systemd: `systemctl --user`、
-   agents: `scripts/tools/agent-teams-status.js`、managed: `scripts/tools/managed-agents.js`、品質: dsh-qa のデータ）
-2. 実データが無いものは「未取得」と明示してサンプル値を出さない
-
-現状は 1 が未実装のため、当該画面はサンプル値で描画される。**実データと誤認しないよう
-バッジで区別している**が、画面単位の表示は今後「未取得」へ寄せる必要がある（バックログ）。
-
-## 検証
-
-- `scripts/web/console-v2.test.js`: template が JSON として読めること、実 API への参照、
-  偽装タイマーの不在、サンプル表記の不在を固定する（5 テスト）。
-- ブラウザ実測: `http://127.0.0.1:3740/v2.html` で 369 プロジェクト・監査 35 件を表示、
-  計画実行で `POST /api/startup/plan` が 200 / `exitCode 0`、実 dry-run 出力を画面表示。
-
-## 読み取り専用の運用情報 API（2026-11-21 追加）
-
-`startup-server.js` に、書き込みを行わない運用情報の取得 API を追加した。
-いずれも `spawn(cmd, args)` を配列引数で呼び、シェル解釈を介さない。
-
-| API | 取得元 | 返すもの |
-|---|---|---|
-| `GET /api/ops/systemd` | `systemctl --user list-units --type=service` | `claude*` unit の name / load / active / sub / description |
-| `GET /api/ops/cron` | `crontab -l` | 5 フィールドのスケジュール・コマンド・無効化フラグ |
-| `GET /api/ops/agents` | `scripts/tools/agent-teams-status.js --json` | Agent Teams 使用状況（state.json 由来） |
-
-設計方針: **取得できなければ `available: false` と理由 (`note` / `stderr`) を返し、
-空配列を「0 件」と偽らない**。取得できない環境（CI・権限なし）でも HTTP 200 と `ok: true` を保ち、
-UI 側が「未取得」と「0 件」を区別できるようにする。
-
-### 既知の制約: cron が取得できない理由
-
-このホストでは `claudeos-web-startup.service` が `NoNewPrivileges=yes` で動いており、
-`crontab` が spool (`/var/spool/cron/crontabs/<user>`, `drwx-wx--T root:crontab`) を読むための
-setgid 昇格が阻害される。そのためサービス文脈では `crontab -l` が
-`crontabs/<user>/: fopen: Permission denied` で失敗し、API は `available: false` を返す。
-
-対応方針（いずれも未実施）:
-
-1. `NoNewPrivileges` を外す — 硬化を弱めるため非推奨
-2. プロジェクト側の cron 管理（`bin/cron-schedule.sh`）が保持する定義を取得元にする
-3. 特権ヘルパー（root 側で crontab を読む小さな unit）を用意し、その出力を読む
-
-現状は 2 が最短。UI の Cron 画面はサンプル値のままなので、2 を実装してから接続する。
-
-## 画面の実データ接続（2026-11-21 追加）
-
-`/api/ops/*` を使い、未接続だった 2 画面を実データへ繋いだ。
-
-| 画面 | 接続内容 |
-|---|---|
-| Systemd 起動管理 | `GET /api/ops/systemd` の実 unit（name / active / enabled / ExecStart）で台帳を描画。15 秒ごとに更新 |
-| Agent Teams 管理 | 「使用状況を表示」の実行で `GET /api/ops/agents` を叩き、返った JSON をそのまま出力欄に表示 |
-
-### Systemd 画面は読み取り専用
-
-設計には起動/停止・自動起動切替・登録解除・一括起動のボタンがあるが、これらは
-**API 化していない**（実機の `systemctl` を操作する書き込み経路を持たない）。
-そのため押しても状態を変えず、次の通知を出して「何も変更していない」ことを明示する。
-
-> この画面は読み取り専用です。実機の systemctl 操作は未接続のため、何も変更していません。
-
-### Agent Teams 画面の未接続項目
-
-`history` / `diag` / `migrate` の 3 操作は API 化していないため、実行すると
-「この操作は未接続です（CLI 出力を API 化していません）」と表示する。
-`status` のみ実 API に接続している。
-
-## state 取得のキャッシュ（2026-11-21 追加）
-
-`libexec/startup-state.sh` は projectsDir 配下の全フォルダを走査するため、
-370 件規模で**実測 12 秒**かかり、出力は約 120KB だった。UI は 15 秒ごとに取得するため、
-そのままでは常時 CPU を使い続ける。
-
-`startup-server.js` に短命キャッシュを入れた。
-
-| 項目 | 値 |
-|---|---|
-| 既定 TTL | **20 秒**（`STARTUP_STATE_CACHE_MS` で変更可） |
-| 無効化 | 起動・停止・計画・全適用の実行直後に `invalidateState()` |
-| 実測 | 1 回目 11.9 秒 / 2 回目以降 **0.005 秒** |
-
-TTL を 8 秒にすると走査（12 秒）より短くヒットしないため、20 秒にしてある。
-
-## Cron 画面の実データ（2026-11-21 追加）
-
-`claudeos-web-startup.service` は `NoNewPrivileges=yes` で動くため、`crontab` が spool を読むための
-setgid 昇格ができず `crontab -l` が失敗する。硬化を弱めずに実データを出すため、
-**ユーザー文脈のタイマーがスナップショットを書き、API がそれを読む**方式にした。
+`claudeos-web-startup.service` は `NoNewPrivileges=yes` のため `crontab` の setgid 昇格ができず、
+サービス文脈の `crontab -l` は失敗する。硬化を弱めずに実データを出すため、
+**ユーザー文脈のタイマーがスナップショットを書き、API がそれを読む**。
 
 | 要素 | 役割 |
 |---|---|
-| `bin/cron-snapshot.sh` | `crontab -l` を解析し `$CLAUDEOS_HOME/cron-snapshot.json` へ書く（5 フィールド + コマンド + 無効フラグ） |
-| `config/systemd/user/claude-startuptools-cron-snapshot.{service,timer}` | 5 分ごとにスナップショットを更新（`NoNewPrivileges=no` が必要） |
-| `GET /api/ops/cron` | スナップショットを優先。無ければ直接 `crontab -l` を試す。`source` でどちらかを返す |
+| `bin/cron-snapshot.sh` | `crontab -l` を解析 → `$CLAUDEOS_HOME/cron-snapshot.json` |
+| `config/systemd/user/claude-startuptools-cron-snapshot.{service,timer}` | 5 分ごとに更新（この unit のみ `NoNewPrivileges=no`、`PrivateTmp` 不可） |
 
-UI は crontab の各エントリを表示する。crontab はプロジェクト単位ではないため、
-「プロジェクト」列には**コマンド末尾の basename**（例 `backup.sh`）を出し、無効行は `（無効）` を付ける。
-追加・削除・run-now・一括起動は API 未実装のため**読み取り専用の通知**。
+> **注意**: スナップショット unit に `PrivateTmp=yes` を付けると `crontab -l` が**無言で 0 行**を返す
+> （サービスは成功扱い）。実測で切り分け済み。
 
-実測（このホスト）: 56 件（有効 8 / 無効 48）、`source=snapshot`。
-
-## Playwright による自動検証（2026-11-21 追加）
-
-`npm run test:e2e:console` で、統合コンソールの全画面を実ブラウザで検証する。
-
-```
-CONSOLE_URL=http://127.0.0.1:3740 node scripts/e2e/console.e2e.js
+有効化:
+```bash
+cp config/systemd/user/claude-startuptools-cron-snapshot.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now claude-startuptools-cron-snapshot.timer
 ```
 
-- 画面ごとに API の実値と DOM の表示を突き合わせる（例: プロジェクト件数が `all_folders` と一致するか、
-  SubAgent の KPI が `agent-catalog` の `counts` と一致するか）。
-- 初期描画は設計サンプル（22 件）のことがあるため、**API の件数と一致するまで待つ**。
-- スクリーンショットと `result.json` を `reports/e2e/<timestamp>/` に残す（git 管理外）。
-- 外部フォント等の想定内のエラーは除外し、それ以外の console error が 0 であることを確認する。
+## 5. 自動検証（Playwright）
 
-実測: 9/9 PASS（起動 370/370・Systemd 5 unit・SubAgent 9/9/6・Managed ledger 3・Cron 56 件・監査・console error 0）。
+```
+npm run test:e2e:console          # 既定 http://127.0.0.1:3740
+CONSOLE_URL=<url> node scripts/e2e/console.e2e.js
+```
 
-## 診断 / DevOps / SecOps の接続（2026-11-21 追加）
+- 画面ごとに **API の実値と DOM を突き合わせる**（件数・unit・KPI・台帳件数・計画の契約）
+- 初期描画は設計サンプル（22 件）のことがあるため、**API 件数と一致するまで待つ**
+- スクリーンショットと `result.json` を `reports/e2e/<timestamp>/` に保存（git 管理外）
+- 14 項目。CI では `e2e-console` ジョブが同じ検査を実行する（`E2E_ALLOW_EMPTY=1`）
 
-「実行して結果を出す」画面のため、**許可したコマンドだけを実行する allowlist 方式**にした。
-任意コマンドは受け付けない。
+## 6. 既知の制約・未達
 
-| API | 内容 | 実測 |
-|---|---|---|
-| `GET /api/ops/diag?name=<key>` | `libexec/diag-*.sh` の 9 本から 1 本を実行（60 秒上限） | `all-tools` が exit 0 |
-| `GET /api/ops/release-check` | `bin/release-check.sh --dry-run` のみ | FAIL（worktree が dirty のため。実測どおり） |
-| `GET /api/ops/devops` | git HEAD / user timer 数 / DB 数 / node 版 | head=9c715e1, timers=84, DB=408 |
-| `GET /api/ops/secops` | ツールの有無とレポート数（**実行はしない**） | gitleaks=なし |
-
-- 診断画面: メニュー番号を API のキーへ対応付け、**実出力**を表示する。未対応の項目は「未接続」と明示。
-- SecOps: スキャンは実行せず**有無の確認のみ**（gitleaks 未導入のため）。
-- DevOps: 配備・再起動・DB 変更は行わず**現状値のみ**。
-
-## 品質ワークベンチ（未接続・理由）
-
-この画面は `bin/release-check.sh` の実行結果を検査項目ごとに表示する作りだが、
-本 PR では**接続していない**。理由は、実チェック（test/lint/build）の実行が数分かかり、
-同期 HTTP で返すには長すぎるため。API 側は `--dry-run` のみ対応済み。
-実接続にはバックグラウンドジョブ化（開始 → 進捗取得）が必要で、別 PR の範囲とする。
-現状は設計どおり「サンプルの失敗結果」を表示し、画面にもその旨が出る。
-
-## 品質ワークベンチの接続（バックグラウンドジョブ、2026-11-21 追加）
-
-`bin/release-check.sh` の実チェック（test/lint/build）は数分かかり、同期 HTTP では返せない。
-そこで**ジョブ方式**にした。
-
-| API | 内容 |
+| 項目 | 状態 |
 |---|---|
-| `POST /api/ops/release-check/start` `{dry:true|false}` | ジョブを開始（同時 1 ジョブ。実行中なら既存を返す） |
-| `GET /api/ops/release-check` | 現在のジョブ状態（`status` / `exitCode` / `output` / `checks`） |
-
-- 出力行を QC のキーへ対応付ける（`❌`=NG / `✅`=OK / `⏭️`=SKIP）:
-  `git_state`←Git worktree, `readme`←README, `gitignore`←gitignore, `test`/`lint`/`build`←同名。
-- UI は開始後に **1.5 秒間隔でポーリング**し、結果を検査行へ反映する。
-- 出力に該当行が無い項目は `SKIP` + 「出力に該当行が見つかりません」と表示（推測で埋めない）。
-
-実測（worktree）: `--dry-run` で `git_state=NG`（未コミット変更）、`readme=OK`、`gitignore=OK`、
-`test/lint/build=SKIP`（dry-run のため）。画面にも同じ内容が表示された。
-
-## Supervisor 全適用（計画のみ、2026-11-21 追加）
-
-この画面は設計では**ローカル state を書き換えるだけの偽装**だった（`supervised[n] = true` にして
-「移行しました」と表示するのみ）。実 API へ繋ぎ直した。
-
-| 操作 | 挙動 |
-|---|---|
-| 「1. 計画を確認（--dry-run）」 | `POST /api/startup/apply-all` を **confirm 無し**で呼ぶ → 計画本文を取得 |
-| 「2. 全適用を実行（--yes）」 | **未接続**。成功に見せず、CLI での人間判断を促す通知のみ |
-
-サーバ側は `confirm !== true` なら計画だけを返し、`startDetached` を呼ばない（テストで固定）。
-全プロジェクトへの一括適用は影響が大きいため、画面からは実行できないようにしている。
-
-実測: 計画は `対象 164 件 / skip 26 件`、`exitCode 0` を返す。
-
-## state 短縮の追加調査（未達）
-
-cold 3.5 秒の内訳を再測定した。最大のコストは **`_project_json` を 190 プロジェクト分呼ぶこと**
-（1 プロジェクトあたり十数回の `jq` 起動）。`_all_folders` を `find` 1 回に置き換える案は
-**意味が変わる**（symlink 配下の欠落・隠しディレクトリ配下の混入）うえ速度も変わらなかったため撤回した。
-
-→ 1 秒台にするには `_project_json` の一括化（1 パスで TSV を作る等）が必要で、別 PR の範囲。
+| 品質チェックの実行 | ジョブ化済み。実チェックは数分かかる |
+| DevOps / SecOps の実行系 | 未接続（有無・現状値のみ） |
+| Cron の追加・削除・run-now | 未接続（読み取り専用） |
+| state の cold 短縮 | **未達**。主コストは 190 プロジェクト分の `_project_json`（1 件あたり十数回の jq）。1 秒台には一括化が必要 |
+| `_all_folders` の `find` 化 | 撤回。symlink 配下の欠落・隠しディレクトリ配下の混入で一覧の意味が変わる |
+| 実セッションの起動・停止 E2E | 未実施（計画 = dry-run までを検証） |

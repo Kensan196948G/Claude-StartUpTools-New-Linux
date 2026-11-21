@@ -24,15 +24,23 @@ config_get()     { json_get "$CCSU_CONFIG_PATH" "$1" "${2:-}"; }
 config_get_raw() { json_get_raw "$CCSU_CONFIG_PATH" "$1"; }
 
 # --- プロジェクトディレクトリ (ローカル一本化: projects 優先) ---
+#   1 プロジェクトごとに呼ばれるため、結果をメモ化する (config_get は毎回 jq を起動する)。
+_CCSU_PROJECTS_DIR_CACHE=""
 config_projects_dir() {
-  local base
-  base="$(config_get '.projects' '')"
-  if [[ -n "$base" ]]; then
-    printf '%s' "$base"
+  if [[ -n "${_CCSU_PROJECTS_DIR_CACHE:-}" ]]; then
+    printf '%s' "$_CCSU_PROJECTS_DIR_CACHE"
     return 0
   fi
-  base="$(config_get '.linuxBase' '')"
-  if [[ -n "$base" ]]; then printf '%s' "$base"; else config_get '.projectsDir' "$HOME/Projects"; fi
+  local base
+  base="$(config_get '.projects' '')"
+  if [[ -z "$base" ]]; then
+    base="$(config_get '.linuxBase' '')"
+  fi
+  if [[ -z "$base" ]]; then
+    base="$(config_get '.projectsDir' "$HOME/Projects")"
+  fi
+  _CCSU_PROJECTS_DIR_CACHE="$base"
+  printf '%s' "$base"
 }
 
 # --- 実行グループ (projectGroups) ---
