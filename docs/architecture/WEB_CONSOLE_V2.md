@@ -77,7 +77,7 @@ CONSOLE_URL=<url> node scripts/e2e/console.e2e.js
 ```
 
 - 画面ごとに **API の実値と DOM を突き合わせる**（件数・unit・KPI・台帳件数・計画の契約）
-- 初期描画は設計サンプル（22 件）のことがあるため、**API 件数と一致するまで待つ**
+- 取得前は「取得中…」を表示し、実データが届くと件数へ切り替わる（設計サンプルの名前は表示しない）。E2E は **API 件数と一致するまで待つ**
 - スクリーンショットと `result.json` を `reports/e2e/<timestamp>/` に保存（git 管理外）
 - 14 項目。CI では `e2e-console` ジョブが同じ検査を実行する（`E2E_ALLOW_EMPTY=1`）
 

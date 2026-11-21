@@ -79,7 +79,7 @@ function record(screen, ok, detail) {
     await page.waitForFunction(() => (document.body.innerText || '').includes('ClaudeOS スタートアップ'), null, { timeout: 25000 });
     await page.waitForFunction(() => /プロジェクト\s*\n?\s*\d+\s*\/\s*\d+\s*件/.test((document.querySelector('#dc-root') || document.body).innerText || ''), null, { timeout: 40000 })
       .catch(() => {});
-    // 初期描画は設計サンプル (22 件) のことがあるため、API の実件数と一致するまで待つ
+    // 取得前は「取得中」を表示するため、実データの件数が出るまで待つ (空環境は 0 件)
     const st = await getJson('/api/startup/state');
     const apiFolders = st && st.state && Array.isArray(st.state.all_folders) ? st.state.all_folders.length : null;
     if (apiFolders === null) record('起動(概要)', false, 'state API から all_folders を取得できない');
