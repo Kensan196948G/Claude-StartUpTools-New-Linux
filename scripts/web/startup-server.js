@@ -1031,6 +1031,18 @@ function createServer(cfg) {
       if (req.method === 'GET' && pn === '/api/ops/secops') return handleSecopsOps(res);
 
       /**
+       * 旧 UI (設計プロトタイプ) の画面 URL は単一ページへ集約したため、
+       * ブックマークからの流入が 404 にならないよう 302 で `/` へ送る。
+       * (ログイン後 Access を通過した直後に 404 になる混乱を避ける)
+       */
+      const LEGACY_SCREENS = ['/startup-console.html', '/session-monitor.html',
+                              '/logs-audit.html', '/mission-control.html'];
+      if ((req.method === 'GET' || req.method === 'HEAD') && LEGACY_SCREENS.includes(pn)) {
+        res.writeHead(302, { Location: '/', 'Cache-Control': 'no-store' });
+        return res.end();
+      }
+
+      /**
        * ルート直下は統合コンソール v2 (public/v2.html) を返す。
        * 旧コンソールは /index.html で引き続き参照できるようにし、
        * ファイルを 1 つに保つ (v2.html が正本)。
