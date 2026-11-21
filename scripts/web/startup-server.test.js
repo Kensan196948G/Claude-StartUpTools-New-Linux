@@ -516,3 +516,37 @@ test('HTTP: GET /api/ops/agent-catalog はカタログ不在でも嘘をつか�
     assert.ok(r.json.note, '理由を返す');
   });
 });
+
+/* ------------------------------------------------------ Managed Agents API ---
+ * config/roster はリポジトリ、registry/ledger/decisions は CLAUDEOS_HOME 配下。
+ * 読めた分だけ返し、config が無ければ available:false + 理由を返す（嘘をつかない）。
+ */
+test('HTTP: GET /api/ops/managed-agents は台帳から使用量と履歴を返す', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-root-'));
+  fs.mkdirSync(path.join(root, 'config'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'config', 'managed-agents-roster.json'),
+    JSON.stringify({ agents: { 'repository-review': {}, 'quality-assurance': {} } }));
+
+  const stateDir = path.join(process.env.CLAUDEOS_HOME, 'managed-agents');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const nowIso = new Date().toISOString();
+  fs.writeFileSync(path.join(stateDir, 'registry.json'),
+    JSON.stringify({ agents: { 'repository-review': { id: 'agent_x' } } }));
+  fs.writeFileSync(path.join(stateDir, 'ledger.jsonl'),
+    [JSON.stringify({ type: 'reserve', ts: nowIso, task_id: 't-1', cents: 50, role: 'repository-review' })].join('\n') + '\n');
+  fs.writeFileSync(path.join(stateDir, 'decisions.jsonl'), JSON.stringify({ ts: nowIso, kind: 'route' }) + '\n');
+
+  await withServer({ root }, async (port) => {
+    const r = await req(port, 'GET', '/api/ops/managed-agents');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.available, true);
+    assert.equal(r.json.roster.count, 2);
+    assert.equal(r.json.registry.count, 1);
+    assert.equal(r.json.usage.month_cents, 50, '台帳の cents を今月分で合計する');
+    assert.equal(r.json.usage.today_count, 1);
+    assert.equal(r.json.config.available, false, 'config が無ければ false');
+    assert.ok(r.json.config.note, '理由を返す');
+    assert.ok(Array.isArray(r.json.log) && r.json.log.length === 1);
+  });
+});
