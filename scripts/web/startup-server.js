@@ -707,14 +707,70 @@ function createServer(cfg) {
     });
   }
 
-  /** handleReleaseCheckOps — release-check.sh の --dry-run のみ (重い実行はしない) */
-  async function handleReleaseCheckOps(res) {
-    const r = await runScript('bin/release-check.sh', ['--dry-run'], { cwd: conf.root, timeoutMs: 90000 });
-    return json(res, 200, {
-      ok: r.exitCode === 0, exitCode: r.exitCode, mode: 'dry-run',
-      output: String(r.stdout || '') + String(r.stderr || ''),
-      note: '実チェックの実行は API 未対応 (時間がかかるため)。--dry-run の解決コマンドのみ返す。',
+  /**
+   * release-check のバックグラウンドジョブ。
+   *   実チェック (test/lint/build) は数分かかるため同期 HTTP では返さない。
+   *   start でジョブを起こし、GET で状態と結果を返す (UI はポーリング)。
+   *   同時に 1 ジョブだけ。二重起動は既存ジョブを返す。
+   */
+  let rcJob = null;
+
+  /** release-check の出力行を QC のキーへ対応付ける (❌=NG / ✅=OK / ⏭️=SKIP) */
+  function parseReleaseChecks(output) {
+    const KEYS = [
+      ['git_state', /git\s*worktree/i],
+      ['readme', /readme/i],
+      ['gitignore', /gitignore/i],
+      ['test', /\btest\b/i],
+      ['lint', /\blint\b/i],
+      ['build', /\bbuild\b/i],
+    ];
+    const checks = {};
+    String(output || '').split('\n').forEach((line) => {
+      const mark = /❌/.test(line) ? 'NG' : (/✅/.test(line) ? 'OK' : (/⏭/.test(line) ? 'SKIP' : null));
+      if (!mark) return;
+      const hit = KEYS.find(([, re]) => re.test(line));
+      if (!hit) return;
+      if (checks[hit[0]]) return;                 // 最初の一致を採用
+      checks[hit[0]] = { v: mark, d: line.replace(/^\s*[❌✅⏭]️?\s*/, '').trim().slice(0, 160) };
     });
+    return checks;
+  }
+
+  /** handleReleaseCheckStart — ジョブを開始する (POST) */
+  async function handleReleaseCheckStart(res, body) {
+    const dry = !!(body && body.dry);
+    if (rcJob && rcJob.status === 'running') {
+      return json(res, 200, { ok: true, alreadyRunning: true, job: rcJob });
+    }
+    rcJob = { id: 'rc-' + Date.now().toString(36), mode: dry ? 'dry-run' : 'run',
+              status: 'running', startedAt: new Date().toISOString(),
+              finishedAt: null, exitCode: null, output: '', checks: {} };
+    const job = rcJob;
+    const args = dry ? ['--dry-run'] : [];
+    runScript('bin/release-check.sh', args, { cwd: conf.root, timeoutMs: 600000 })
+      .then((r) => {
+        job.output = String(r.stdout || '') + String(r.stderr || '');
+        job.exitCode = r.exitCode;
+        job.checks = parseReleaseChecks(job.output);
+        job.status = 'done';
+        job.finishedAt = new Date().toISOString();
+      })
+      .catch((e) => {
+        job.output = 'ジョブ実行に失敗: ' + String(e && e.message);
+        job.status = 'done';
+        job.exitCode = null;
+        job.finishedAt = new Date().toISOString();
+      });
+    return json(res, 200, { ok: true, job });
+  }
+
+  /** handleReleaseCheckOps — 現在のジョブ状態 (GET, ポーリング用) */
+  async function handleReleaseCheckOps(res) {
+    if (!rcJob) {
+      return json(res, 200, { ok: true, job: null, note: 'まだ実行していません。start で開始します。' });
+    }
+    return json(res, 200, { ok: true, job: rcJob });
   }
 
   /** handleDevopsOps — 実測できる読み取り専用の事実だけを返す */
@@ -965,6 +1021,11 @@ function createServer(cfg) {
       if (req.method === 'GET' && pn === '/api/ops/agent-catalog') return handleAgentCatalogOps(res);
       if (req.method === 'GET' && pn === '/api/ops/managed-agents') return handleManagedAgentsOps(res);
       if (req.method === 'GET' && pn === '/api/ops/diag') return handleDiagOps(res, url);
+      if (req.method === 'POST' && pn === '/api/ops/release-check/start') {
+        const b = await readBody(req);
+        if (!b.ok) return json(res, 400, { ok: false, error: b.error });
+        return handleReleaseCheckStart(res, b.value);
+      }
       if (req.method === 'GET' && pn === '/api/ops/release-check') return handleReleaseCheckOps(res);
       if (req.method === 'GET' && pn === '/api/ops/devops') return handleDevopsOps(res);
       if (req.method === 'GET' && pn === '/api/ops/secops') return handleSecopsOps(res);
