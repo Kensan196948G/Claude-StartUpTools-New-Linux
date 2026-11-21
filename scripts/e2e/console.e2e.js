@@ -93,11 +93,12 @@ function record(screen, ok, detail) {
     const home = await bodyText();
     const m = home.match(/プロジェクト\s*\n?\s*(\d+)\s*\/\s*(\d+)\s*件/);
     const total = m ? Number(m[2]) : 0;
-    const matchesApi = apiFolders ? total === apiFolders : total > 0;
+    // 0 件（実データが空）と「取得できなかった」を区別する。0 は falsy なので === null で判定する。
+    const matchesApi = apiFolders === null ? false : total === apiFolders;
     const nonEmptyOk = ALLOW_EMPTY ? true : total > 0;
     record('起動(概要)', nonEmptyOk && matchesApi && !home.includes('サンプルデータ · 実起動しません'),
       (m ? `プロジェクト ${m[1]}/${m[2]} 件` : 'プロジェクト件数が読めない') +
-      (apiFolders ? ` (API ${apiFolders})` : '') + (matchesApi ? '' : ' ← API と不一致'));
+      (apiFolders === null ? '' : ` (API ${apiFolders})`) + (matchesApi ? '' : ' ← API と不一致'));
     await shot('01-launch');
 
     // 1) セッション監視
