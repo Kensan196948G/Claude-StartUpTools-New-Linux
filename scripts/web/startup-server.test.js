@@ -639,3 +639,18 @@ test('HTTP: release-check はジョブとして開始し、状態を返す', asy
     assert.equal(typeof status.json.job.checks, 'object');
   });
 });
+
+/* ------------------------------------------- Supervisor 全適用 (計画のみ) ---
+ * 全プロジェクトへの一括適用は影響が大きいため、confirm 無しでは計画だけを返し、
+ * 実適用を開始しない。画面はこの契約に依存している。
+ */
+test('HTTP: apply-all は confirm 無しなら計画のみを返し、実行しない', async () => {
+  await withServer({}, async (port) => {
+    const r = await req(port, 'POST', '/api/startup/apply-all', {});
+    assert.equal(r.status, 200);
+    assert.equal(r.json.requiresConfirm, true, 'confirm 待ちであることを返す');
+    assert.equal(r.json.started, undefined, '実適用を開始していない');
+    assert.equal(typeof r.json.plan, 'string');
+    assert.ok(r.json.plan.length > 0, '計画の本文が空でない');
+  });
+});
