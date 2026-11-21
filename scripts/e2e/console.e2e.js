@@ -162,6 +162,47 @@ function record(screen, ok, detail) {
     record('ログ・監査', okNav7 && auditText.length > 200, okNav7 ? `本文 ${auditText.length} 文字` : 'ナビゲーション不可');
     await shot('08-audit');
 
+    // 8) 診断・ツール (実行 → 実 API の出力)
+    const okNav8 = await nav(/診断・ツール/);
+    await page.waitForTimeout(1200);
+    const ranDiag = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '実行');
+      if (!b) return false; b.click(); return true;
+    });
+    await page.waitForTimeout(6000);
+    const diagText = await bodyText();
+    const diagOk = okNav8 && ranDiag && /ツール確認・診断|claude\s+\//.test(diagText) && !/実機ではこのコマンドの出力をここに表示します/.test(diagText);
+    record('診断・ツール', diagOk, ranDiag ? '実行結果を確認' : '実行ボタンが無い');
+    await shot('09-diag');
+
+    // 9) DevOps (現状値の取得)
+    const dv = await getJson('/api/ops/devops');
+    const okNav9 = await nav(/DevOps/);
+    await page.waitForTimeout(1200);
+    const ranDv = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '実行');
+      if (!b) return false; b.click(); return true;
+    });
+    await page.waitForTimeout(4000);
+    const dvText = await bodyText();
+    const dvOk = okNav9 && ranDv && !!dv && /release|head|user_timers|databases/.test(dvText);
+    record('DevOps', dvOk, dv ? `head=${dv.release && dv.release.head} timers=${dv.infra && dv.infra.user_timers}` : 'API 応答なし');
+    await shot('10-devops');
+
+    // 10) SecOps (ツール有無の実測)
+    const sec = await getJson('/api/ops/secops');
+    const okNav10 = await nav(/SecOps/);
+    await page.waitForTimeout(1200);
+    const ranSec = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '実行');
+      if (!b) return false; b.click(); return true;
+    });
+    await page.waitForTimeout(3500);
+    const secText = await bodyText();
+    const secOk = okNav10 && ranSec && !!sec && /gitleaks|present|未接続/.test(secText);
+    record('SecOps', secOk, sec ? `gitleaks=${sec.tools && sec.tools.gitleaks && sec.tools.gitleaks.present ? 'あり' : 'なし'}` : 'API 応答なし');
+    await shot('11-secops');
+
     // 8) コンソールエラー (外部フォント等の想定内は除外)
     const unexpected = consoleErrors.filter((e) => !/fonts\.gstatic|net::ERR_|Failed to load resource/i.test(e));
     record('console error', unexpected.length === 0, unexpected.length ? unexpected[0].slice(0, 120) : 'なし');
