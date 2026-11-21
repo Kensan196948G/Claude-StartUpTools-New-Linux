@@ -216,6 +216,27 @@ function record(screen, ok, detail) {
     record('SecOps', secOk, sec ? `gitleaks=${sec.tools && sec.tools.gitleaks && sec.tools.gitleaks.present ? 'あり' : 'なし'}` : 'API 応答なし');
     await shot('11-secops');
 
+    // 11) Supervisor 全適用 (計画のみ — 実適用は未接続)
+    //     通知はトーストで消える/409 で揺れるため、画面の存在と API 契約を検査する。
+    const okNav11 = await nav(/Supervisor 全適用/);
+    await page.waitForTimeout(1500);
+    const planBtn = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => /計画/.test(x.innerText || ''));
+      return b ? { label: b.innerText.trim(), disabled: !!b.disabled } : null;
+    });
+    let applyContract = null;
+    try {
+      const r = await fetch(BASE + '/api/startup/apply-all', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+      applyContract = await r.json();
+    } catch { applyContract = null; }
+    const applyOk = okNav11 && !!planBtn && !planBtn.disabled
+      && !!applyContract && applyContract.requiresConfirm === true && applyContract.started === undefined;
+    record('Supervisor 全適用', applyOk,
+      planBtn ? `計画ボタンあり / requiresConfirm=${applyContract && applyContract.requiresConfirm}` : '計画ボタンが無い');
+    await shot('12-applyall');
+
     // 8) コンソールエラー (外部フォント等の想定内は除外)
     const unexpected = consoleErrors.filter((e) => !/fonts\.gstatic|net::ERR_|Failed to load resource/i.test(e));
     record('console error', unexpected.length === 0, unexpected.length ? unexpected[0].slice(0, 120) : 'なし');

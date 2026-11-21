@@ -205,3 +205,26 @@ CONSOLE_URL=http://127.0.0.1:3740 node scripts/e2e/console.e2e.js
 
 実測（worktree）: `--dry-run` で `git_state=NG`（未コミット変更）、`readme=OK`、`gitignore=OK`、
 `test/lint/build=SKIP`（dry-run のため）。画面にも同じ内容が表示された。
+
+## Supervisor 全適用（計画のみ、2026-11-21 追加）
+
+この画面は設計では**ローカル state を書き換えるだけの偽装**だった（`supervised[n] = true` にして
+「移行しました」と表示するのみ）。実 API へ繋ぎ直した。
+
+| 操作 | 挙動 |
+|---|---|
+| 「1. 計画を確認（--dry-run）」 | `POST /api/startup/apply-all` を **confirm 無し**で呼ぶ → 計画本文を取得 |
+| 「2. 全適用を実行（--yes）」 | **未接続**。成功に見せず、CLI での人間判断を促す通知のみ |
+
+サーバ側は `confirm !== true` なら計画だけを返し、`startDetached` を呼ばない（テストで固定）。
+全プロジェクトへの一括適用は影響が大きいため、画面からは実行できないようにしている。
+
+実測: 計画は `対象 164 件 / skip 26 件`、`exitCode 0` を返す。
+
+## state 短縮の追加調査（未達）
+
+cold 3.5 秒の内訳を再測定した。最大のコストは **`_project_json` を 190 プロジェクト分呼ぶこと**
+（1 プロジェクトあたり十数回の `jq` 起動）。`_all_folders` を `find` 1 回に置き換える案は
+**意味が変わる**（symlink 配下の欠落・隠しディレクトリ配下の混入）うえ速度も変わらなかったため撤回した。
+
+→ 1 秒台にするには `_project_json` の一括化（1 パスで TSV を作る等）が必要で、別 PR の範囲。
