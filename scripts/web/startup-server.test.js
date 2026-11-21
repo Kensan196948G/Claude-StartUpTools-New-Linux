@@ -654,3 +654,20 @@ test('HTTP: apply-all は confirm 無しなら計画のみを返し、実行し�
     assert.ok(r.json.plan.length > 0, '計画の本文が空でない');
   });
 });
+
+/* --------------------------------------------------- 旧 UI の画面 URL の扱い ---
+ * 旧設計プロトタイプは画面ごとに HTML があった。単一ページへ集約したため、
+ * ブックマークからの流入が 404 にならないよう 302 で `/` へ送る。
+ */
+test('HTTP: 旧画面 URL は 302 で / へリダイレクトする', async () => {
+  await withServer({}, async (port) => {
+    for (const p of ['/startup-console.html', '/session-monitor.html', '/logs-audit.html', '/mission-control.html']) {
+      const r = await req(port, 'GET', p);
+      assert.equal(r.status, 302, p + ' は 302');
+      assert.equal(r.headers && r.headers.location, '/', p + ' の遷移先は /');
+    }
+    // 旧コンソールは /index.html で引き続き参照できる (誤って潰さない)
+    const legacy = await req(port, 'GET', '/index.html');
+    assert.equal(legacy.status, 200);
+  });
+});
