@@ -4,7 +4,8 @@
 
 ### Added — README をアイコン・デモ動画・アニメーションで刷新（2026-11-22）
 
-- 🎬 `docs/assets/demo/claudeos-demo.{mp4,gif}`: 統合コンソールの 10 秒デモ。隔離したデモ環境（demo-* 3 プロジェクト）で実際の UI を操作して撮影。
+- 🎬 `docs/assets/demo/claudeos-demo.{mp4,gif}`: 統合コンソールの 30 秒デモ。隔離したデモ環境（demo-* 3 プロジェクト）で実際の UI を操作して撮影。
+  ポインタは矢印、押した位置は波紋で示す（いずれも撮影用の注釈）。
   カーソルとキャプションは撮影用の注釈で、画面の状態は加工していない。
 - 🧭 `docs/assets/demo/{architecture,modes,supervisor-loop}.svg`: 全体像・3 起動モード・Supervisor の判定ループを表すアニメーション SVG（GitHub で再生可）。
 - 🖼️ `docs/assets/screens/*.png`: 統合コンソールの画面（起動・セッション監視・Supervisor 全適用・診断・品質・監査）。

@@ -7,8 +7,8 @@
 
 | ファイル | 種類 | 内容 |
 |---|---|---|
-| `demo/claudeos-demo.mp4` | 動画（10 秒・音声なし・1280x800 / H.264） | 統合コンソールの操作（起動 → 計画 → 診断 → 品質 → 監査ログ） |
-| `demo/claudeos-demo.gif` | アニメーション（900px・10fps・ループ） | 上の動画のループ版（GitHub で自動再生される） |
+| `demo/claudeos-demo.mp4` | 動画（30 秒・音声なし・1280x800 / H.264） | 統合コンソールの操作（起動 → モード選択 → 計画 → 診断 → 品質 → 監査ログ） |
+| `demo/claudeos-demo.gif` | アニメーション（880px・9fps・ループ） | 上の動画のループ版（GitHub で自動再生される） |
 | `demo/architecture.svg` | アニメーション SVG | 全体アーキテクチャ（人 → 入口 → 起動 → Supervisor → Claude Code → GitHub / CI） |
 | `demo/modes.svg` | アニメーション SVG | 3 つの起動モード（L1 / T1 / S1）の違い |
 | `demo/supervisor-loop.svg` | アニメーション SVG | Supervisor の判定ループとガードレール |
@@ -29,18 +29,18 @@
    node scripts/web/startup-server.js --port 3840 --host 127.0.0.1 --allow-no-auth
    ```
 
-4. Playwright（Chromium）の `recordVideo` で操作を録画する。カーソル・キャプションは撮影用にページへ注入した注釈で、UI 自体は加工していない。
+4. Playwright（Chromium）の `recordVideo` で操作を録画する。**矢印ポインタ**・クリックの波紋・キャプションは撮影用にページへ注入した注釈で、UI 自体は加工していない。
 5. `ffmpeg` で MP4（H.264 / yuv420p）と GIF（パレット生成 → `paletteuse`）に変換する。
 
 ```bash
-# MP4（10 秒へトリム・等速化）
-ffmpeg -ss 2.60 -to 16.55 -i raw.webm \
-  -vf "setpts=(PTS-STARTPTS)/1.395,fps=25,scale=1280:800:flags=lanczos" \
+# MP4（30 秒へトリム・等速化）
+ffmpeg -ss 3.75 -to 34.72 -i raw.webm \
+  -vf "setpts=(PTS-STARTPTS)/1.0323,fps=25,scale=1280:800:flags=lanczos" \
   -c:v libx264 -preset slow -crf 22 -pix_fmt yuv420p -movflags +faststart -an claudeos-demo.mp4
 
 # GIF（パレット生成 → 適用）
 ffmpeg -i claudeos-demo.mp4 \
-  -vf "fps=10,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=80:stats_mode=full[p];[s1][p]paletteuse=dither=none:diff_mode=rectangle" \
+  -vf "fps=9,scale=880:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=72:stats_mode=full[p];[s1][p]paletteuse=dither=none:diff_mode=rectangle" \
   -loop 0 claudeos-demo.gif
 ```
 
