@@ -275,6 +275,27 @@ function record(screen, ok, detail) {
     record('ログアウト', !!logoutBtn, logoutBtn ? `ボタンあり (${logoutBtn.title})` : 'ボタンが無い');
     await shot('14-logout');
 
+    // 14) 品質ワークベンチ (release-check をジョブ実行し、結果が画面へ反映されること)
+    const okNav14 = await nav(/品質ワークベンチ/);
+    await page.waitForTimeout(1500);
+    // 開始 → ポーリング (ジョブは数秒〜数分)
+    const started = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => /計画|--dry-run/i.test(x.innerText || ''));
+      if (!b) return false; b.click(); return true;
+    });
+    let qwOk = false;
+    let qwNote = '開始ボタンが無い';
+    if (started) {
+      for (let i = 0; i < 40; i += 1) {
+        await page.waitForTimeout(1500);
+        const t = await bodyText();
+        if (/git 清潔性[\s\S]{0,80}(OK|NG|SKIP)/.test(t)) { qwOk = true; qwNote = '検査結果が画面へ反映'; break; }
+      }
+      if (!qwOk) qwNote = '結果が反映されない';
+    }
+    record('品質ワークベンチ', okNav14 && qwOk, qwNote);
+    await shot('15-quality');
+
     // 8) コンソールエラー (外部フォント等の想定内は除外)
     const unexpected = consoleErrors.filter((e) => !/fonts\.gstatic|net::ERR_|Failed to load resource/i.test(e));
     record('console error', unexpected.length === 0, unexpected.length ? unexpected[0].slice(0, 120) : 'なし');
