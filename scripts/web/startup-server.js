@@ -582,8 +582,27 @@ function createServer(cfg) {
     });
   }
 
-  /** handleCronOps — crontab の内容を読むだけ (追加・削除はしない) */
+  /**
+   * handleCronOps — crontab の内容を読むだけ (追加・削除はしない)。
+   *   このサービスは NoNewPrivileges=yes で動くため crontab の setgid 昇格ができず、
+   *   サービス文脈の `crontab -l` は失敗する。そこでユーザー文脈のタイマーが書く
+   *   スナップショット ($CLAUDEOS_HOME/cron-snapshot.json) を優先して読む。
+   *   スナップショットが無い/壊れている場合だけ、直接 crontab を試す。
+   */
   async function handleCronOps(res) {
+    const snapFile = path.join(CLAUDEOS_HOME, 'cron-snapshot.json');
+    try {
+      const snap = JSON.parse(fs.readFileSync(snapFile, 'utf8'));
+      if (snap && snap.ok && Array.isArray(snap.entries)) {
+        return json(res, 200, {
+          ok: true, available: true, source: 'snapshot',
+          generated_at: snap.generated_at || null,
+          count: snap.entries.length, entries: snap.entries,
+          note: 'ユーザータイマーが書いたスナップショット (NoNewPrivileges のため直接 crontab は読めない)',
+        });
+      }
+    } catch { /* スナップショット無し: 下の直接取得へ */ }
+
     const r = await runCmd('crontab', ['-l'], { timeoutMs: 5000 });
     if (r.exitCode !== 0) {
       return json(res, 200, {

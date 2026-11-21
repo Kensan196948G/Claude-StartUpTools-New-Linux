@@ -1,0 +1,13 @@
+# crontab のスナップショットを書く (Cron 画面用)。
+# claudeos-web-startup.service は NoNewPrivileges=yes のため crontab を読めない。
+# この unit はユーザー文脈で動くので読める。
+[Unit]
+Description=ClaudeOS crontab snapshot for Web console (Cron screen)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/Claude-StartUpTools-New-Linux
+ExecStart=/usr/bin/env bash /home/kensan/Projects/Claude-StartUpTools-New-Linux/bin/cron-snapshot.sh
+# crontab を読むために setgid 昇格が必要なので NoNewPrivileges は付けない
+NoNewPrivileges=no
+PrivateTmp=yes

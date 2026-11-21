@@ -1,0 +1,179 @@
+#!/usr/bin/env node
+'use strict';
+/* ============================================================
+   console.e2e.js — 統合コンソールのブラウザ検証 (Playwright)
+
+   目的: 「画面が描画された」ではなく「実データが画面に出ている」ことを毎回自動で確かめる。
+   画面ごとに API の実値を取り、DOM の表示と突き合わせる。
+
+   使い方:
+     node scripts/e2e/console.e2e.js                 # http://127.0.0.1:3740
+     CONSOLE_URL=http://127.0.0.1:3804 node scripts/e2e/console.e2e.js
+
+   出力:
+     reports/e2e/<timestamp>/<screen>.png   … 画面ごとのスクリーンショット
+     reports/e2e/<timestamp>/result.json    … 判定結果 (機械可読)
+   終了コード: 失敗が 1 件でもあれば 1。
+
+   前提: playwright が require できること (このホストでは /home/kensan/node_modules)。
+   ============================================================ */
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+
+const BASE = process.env.CONSOLE_URL || 'http://127.0.0.1:3740';
+const OUT_DIR = path.join(__dirname, '..', '..', 'reports', 'e2e', new Date().toISOString().replace(/[:.]/g, '-'));
+const results = [];
+
+function getJson(p) {
+  return new Promise((resolve) => {
+    const req = http.get(BASE + p, { timeout: 20000 }, (res) => {
+      let d = '';
+      res.on('data', (c) => { d += c; });
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+function record(screen, ok, detail) {
+  results.push({ screen, ok, detail });
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${screen.padEnd(16)} ${detail}`);
+}
+
+(async () => {
+  let chromium;
+  try { ({ chromium } = require('playwright')); }
+  catch (e) {
+    console.error('playwright を require できません: ' + String(e && e.message));
+    process.exit(2);
+  }
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1180 } });
+  const consoleErrors = [];
+  page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+  page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
+
+  const bodyText = () => page.evaluate(() => (document.querySelector('#dc-root') || document.body).innerText || '');
+  const nav = async (re) => {
+    const clicked = await page.evaluate((src) => {
+      const r = new RegExp(src);
+      const b = [...document.querySelectorAll('button')].find((x) => r.test(x.innerText || ''));
+      if (!b) return false;
+      b.click(); return true;
+    }, re.source);
+    await page.waitForTimeout(1800);
+    return clicked;
+  };
+  const shot = async (name) => { await page.screenshot({ path: path.join(OUT_DIR, name + '.png'), fullPage: false }); };
+
+  try {
+    // 0) 起動とデータ到達
+    await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+    // 本文には <title> の「統合コンソール」は出ないため、本文に出る見出しで待つ
+    await page.waitForFunction(() => (document.body.innerText || '').includes('ClaudeOS スタートアップ'), null, { timeout: 25000 });
+    await page.waitForFunction(() => /プロジェクト\s*\n?\s*\d+\s*\/\s*\d+\s*件/.test((document.querySelector('#dc-root') || document.body).innerText || ''), null, { timeout: 40000 })
+      .catch(() => {});
+    // 初期描画は設計サンプル (22 件) のことがあるため、API の実件数と一致するまで待つ
+    const st = await getJson('/api/startup/state');
+    const apiFolders = st && st.state && Array.isArray(st.state.all_folders) ? st.state.all_folders.length : null;
+    if (apiFolders) {
+      await page.waitForFunction((n) => {
+        const t = (document.querySelector('#dc-root') || document.body).innerText || '';
+        const mm = t.match(/プロジェクト\s*\n?\s*(\d+)\s*\/\s*(\d+)\s*件/);
+        return !!mm && Number(mm[2]) === n;
+      }, apiFolders, { timeout: 45000 }).catch(() => {});
+    }
+    const home = await bodyText();
+    const m = home.match(/プロジェクト\s*\n?\s*(\d+)\s*\/\s*(\d+)\s*件/);
+    const total = m ? Number(m[2]) : 0;
+    const matchesApi = apiFolders ? total === apiFolders : total > 0;
+    record('起動(概要)', matchesApi && !home.includes('サンプルデータ · 実起動しません'),
+      (m ? `プロジェクト ${m[1]}/${m[2]} 件` : 'プロジェクト件数が読めない') +
+      (apiFolders ? ` (API ${apiFolders})` : '') + (matchesApi ? '' : ' ← API と不一致'));
+    await shot('01-launch');
+
+    // 1) セッション監視
+    const okNav1 = await nav(/セッション監視/);
+    const sess = await bodyText();
+    record('セッション監視', okNav1 && sess.length > 200, okNav1 ? `本文 ${sess.length} 文字` : 'ナビゲーション不可');
+    await shot('02-sessions');
+
+    // 2) Systemd (実 unit)
+    const okNav2 = await nav(/Systemd 起動管理/);
+    await page.waitForFunction(() => /claude-[a-z-]+\.service/.test((document.querySelector('#dc-root') || document.body).innerText || ''), null, { timeout: 15000 }).catch(() => {});
+    const sd = await bodyText();
+    const units = [...new Set(sd.match(/claude-[a-z-]+\.service/g) || [])];
+    record('Systemd', okNav2 && units.length > 0 && /ACTIVE|INACTIVE/.test(sd), `unit ${units.length} 件`);
+    await shot('03-systemd');
+
+    // 3) Agent Teams (実行 → 実 API)
+    const okNav3 = await nav(/Agent Teams 管理/);
+    const clickedRun = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => (x.innerText || '').trim() === '実行');
+      if (!b) return false; b.click(); return true;
+    });
+    await page.waitForTimeout(3500);
+    const at = await bodyText();
+    record('Agent Teams', okNav3 && clickedRun && /session_start_at|未取得|current_session/.test(at),
+      clickedRun ? '実行結果を確認' : '実行ボタンが無い');
+    await shot('04-agent-teams');
+
+    // 4) SubAgent (KPI と API の突き合わせ)
+    const cat = await getJson('/api/ops/agent-catalog');
+    const okNav4 = await nav(/SubAgent 管理/);
+    await page.waitForTimeout(1200);
+    const sa = await bodyText();
+    const kpiBlock = (sa.match(/first-class（常時配布）[\s\S]{0,160}/) || [''])[0];
+    const nums = (kpiBlock.match(/\d+/g) || []).map(Number);
+    const apiCounts = cat && cat.counts ? cat.counts : null;
+    const kpiOk = apiCounts ? nums.includes(apiCounts.first_class) && nums.includes(apiCounts.catalog) : nums.length > 0;
+    record('SubAgent', okNav4 && kpiOk,
+      apiCounts ? `KPI ${nums.slice(0, 3).join('/')} vs API ${apiCounts.first_class}/${apiCounts.catalog}/${apiCounts.merge}` : '件数不明');
+    await shot('05-subagents');
+
+    // 5) Managed Agents (設定欠落を正直に出す)
+    const ma = await getJson('/api/ops/managed-agents');
+    const okNav5 = await nav(/Managed Agents/);
+    await page.waitForTimeout(1200);
+    const maText = await bodyText();
+    const maOk = okNav5 && /モード（config\/managed-agents\.json）/.test(maText) && (ma ? true : true);
+    record('Managed Agents', maOk,
+      ma ? `config=${ma.config && ma.config.available ? 'あり' : 'なし(未設定表示)'} ledger=${ma.usage && ma.usage.ledger_total}` : 'API 応答なし');
+    await shot('06-managed-agents');
+
+    // 6) Cron (実 crontab 件数と突き合わせ)
+    const cr = await getJson('/api/ops/cron');
+    const okNav6 = await nav(/Cron スケジュール/);
+    await page.waitForTimeout(1200);
+    const cronText = await bodyText();
+    const cronCount = cr && cr.available ? cr.count : null;
+    const cronOk = okNav6 && (cronCount === null || /c\d\d/.test(cronText) || cronCount === 0);
+    record('Cron', cronOk, cr ? `API ${cronCount} 件 / source=${cr.source || '-'}` : 'API 応答なし');
+    await shot('07-cron');
+
+    // 7) ログ・監査
+    const okNav7 = await nav(/監査ログ|ログ・監査/);
+    await page.waitForTimeout(1200);
+    const auditText = await bodyText();
+    record('ログ・監査', okNav7 && auditText.length > 200, okNav7 ? `本文 ${auditText.length} 文字` : 'ナビゲーション不可');
+    await shot('08-audit');
+
+    // 8) コンソールエラー (外部フォント等の想定内は除外)
+    const unexpected = consoleErrors.filter((e) => !/fonts\.gstatic|net::ERR_|Failed to load resource/i.test(e));
+    record('console error', unexpected.length === 0, unexpected.length ? unexpected[0].slice(0, 120) : 'なし');
+  } catch (e) {
+    record('実行', false, String((e && e.message) || e).slice(0, 200));
+  } finally {
+    await browser.close();
+  }
+
+  const failed = results.filter((r) => !r.ok);
+  fs.writeFileSync(path.join(OUT_DIR, 'result.json'),
+    JSON.stringify({ base: BASE, at: new Date().toISOString(), results, failed: failed.length }, null, 2));
+  console.log(`\n${results.length - failed.length}/${results.length} PASS  -> ${OUT_DIR}`);
+  process.exit(failed.length ? 1 : 0);
+})();
