@@ -169,6 +169,73 @@ _project_json() {
       tmux:{name:$tmux_name,active:$tmux},log_file:$log_file}'
 }
 
+# _project_tsv <name> — 1 プロジェクト分を TSV 1 行で返す。
+#   _project_json は 1 プロジェクトごとに jq -n を起動するため、190 件規模で数秒かかる。
+#   main はこちらを使って TSV を集め、最後に 1 回の jq で JSON 配列へ変換する。
+#   (JSON 断片は jq -c で 1 行にしてから埋め込む。タブ・改行は JSON 側でエスケープ済み)
+_project_tsv() {
+  local name="$1"
+  local dir group run_status safe
+  dir="$(launcher__project_dir "$name")"
+  run_status="$(launcher__project_run_status "$name")"
+  safe="$(ccsu_safe_name "$name")"
+  case "$name" in
+    */*) group="${name%%/*}" ;;
+    *)   group="" ;;
+  esac
+
+  local sup_file="" fg_file=""
+  [[ -f "$SUP_DIR/$safe.json" ]] && sup_file="$SUP_DIR/$safe.json"
+  [[ -f "$FG_DIR/$safe.json" ]]  && fg_file="$FG_DIR/$safe.json"
+
+  local sup_json="null" fg_json="null"
+  if [[ -n "$sup_file" ]]; then
+    local sup_tsv sup_alive="false"
+    sup_tsv="$(jq -r '[.status // "unknown", .pid // "0", .started_at // "", .ended_at // "",
+                      .day // "", (.restarts_today // 0), (.minutes_today // 0),
+                      .last_reason // "", (.last_session_cost_usd // 0), (.month_spent_usd // 0)]
+                     | @tsv' "$sup_file" 2>/dev/null || true)"
+    if [[ -n "$sup_tsv" ]]; then
+      local sup_status sup_pid sup_started sup_ended sup_day sup_restarts sup_minutes sup_reason sup_cost sup_month
+      IFS=$'\t' read -r sup_status sup_pid sup_started sup_ended sup_day sup_restarts sup_minutes sup_reason sup_cost sup_month <<< "$sup_tsv"
+      _pid_alive "$sup_pid" && sup_alive="true"
+      sup_json="$(jq -cn --arg file "$sup_file" --arg status "$sup_status" --arg pid "$sup_pid" --argjson alive "$sup_alive" \
+        --arg started_at "$sup_started" --arg ended_at "$sup_ended" --arg day "$sup_day" \
+        --argjson restarts_today "${sup_restarts:-0}" --argjson minutes_today "${sup_minutes:-0}" \
+        --arg last_reason "$sup_reason" --arg cost "${sup_cost:-0}" --arg month "${sup_month:-0}" \
+        '{file:$file,status:$status,pid:$pid,alive:$alive,started_at:$started_at,ended_at:$ended_at,
+          day:$day,restarts_today:$restarts_today,minutes_today:$minutes_today,
+          last_reason:$last_reason,last_session_cost_usd:$cost,month_spent_usd:$month}')"
+    fi
+  fi
+  if [[ -n "$fg_file" ]]; then
+    local fg_tsv fg_alive="false"
+    fg_tsv="$(jq -r '[.status // "unknown", .pid // "0", .started_at // "", .mode // ""] | @tsv' "$fg_file" 2>/dev/null || true)"
+    if [[ -n "$fg_tsv" ]]; then
+      local fg_status fg_pid fg_started fg_mode
+      IFS=$'\t' read -r fg_status fg_pid fg_started fg_mode <<< "$fg_tsv"
+      _pid_alive "$fg_pid" && fg_alive="true"
+      fg_json="$(jq -cn --arg file "$fg_file" --arg status "$fg_status" --arg pid "$fg_pid" --argjson alive "$fg_alive" \
+        --arg started_at "$fg_started" --arg mode "$fg_mode" \
+        '{file:$file,status:$status,pid:$pid,alive:$alive,started_at:$started_at,mode:$mode}')"
+    fi
+  fi
+
+  # tmux は 1 回だけ取った一覧を bash で照合する (grep を 1 プロジェクトごとに起動しない)
+  local tmux_name="claudeos-$safe" tmux_hit="false"
+  [[ $'\n'"$_TMUX_SESSIONS_CACHE"$'\n' == *$'\n'"$tmux_name"$'\n'* ]] && tmux_hit="true"
+
+  local log_file="$SUP_DIR/$safe.log"
+  [[ -f "$log_file" ]] || log_file="$CCSU_HOME/logs/${safe}.log"
+  local log_out=""
+  [[ -f "$log_file" ]] && log_out="$log_file"
+
+  local exists="false"; [[ -d "$dir" ]] && exists="true"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$name" "$dir" "$group" "$run_status" "$exists" "$sup_json" "$fg_json" "$tmux_name" "$tmux_hit" "$log_out"
+}
+
 # _goal_label <goal> — 表示ラベル。lib 側に日本語ラベル関数があれば使い、無ければ goal id。
 # (lib/goal-router.sh の関数追加は未コミット WIP と同居しうるため、存在確認してから呼ぶ。
 #  CI はコミット済みコードのみで動くので、無条件呼び出しは command not found →
@@ -198,11 +265,21 @@ _history_json() {
 }
 
 main() {
-  local projects_json="[]" p
-  while IFS= read -r p; do
+  # 190 件分の jq -n を避け、TSV を集めて最後に 1 回だけ jq で配列化する。
+  local projects_json="[]"
+  projects_json="$(config_project_list | while IFS= read -r p; do
     [[ -n "$p" ]] || continue
-    projects_json="$(jq -cn --argjson acc "$projects_json" --argjson item "$(_project_json "$p")" '$acc + [$item]')"
-  done < <(config_project_list || true)
+    _project_tsv "$p"
+  done | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(split("\t") | {
+      name: .[0], dir: .[1], group: .[2], run_status: .[3],
+      exists: (.[4] == "true"),
+      running: (.[3] == "running"),
+      supervisor: (.[5] | fromjson),
+      foreground: (.[6] | fromjson),
+      tmux: { name: .[7], active: (.[8] == "true") },
+      log_file: .[9]
+    })' || printf '[]')"
 
   local -a primary=() specialized=()
   primary=("${GOAL_ROUTER_PRIMARY_GOALS[@]}")
