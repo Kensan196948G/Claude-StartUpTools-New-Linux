@@ -8,6 +8,7 @@ Description=ClaudeOS crontab snapshot for Web console (Cron screen)
 Type=oneshot
 WorkingDirectory=%h/Projects/Claude-StartUpTools-New-Linux
 ExecStart=/usr/bin/env bash /home/kensan/Projects/Claude-StartUpTools-New-Linux/bin/cron-snapshot.sh
-# crontab を読むために setgid 昇格が必要なので NoNewPrivileges は付けない
+# crontab を読むために setgid 昇格が必要なので NoNewPrivileges は付けない。
+# PrivateTmp も付けない: crontab は /tmp 経由で spool を読むため、PrivateTmp=yes だと
+# `crontab -l` が **無言で 0 行** を返す (実測)。
 NoNewPrivileges=no
-PrivateTmp=yes
