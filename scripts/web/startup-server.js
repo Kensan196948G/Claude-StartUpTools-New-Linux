@@ -655,6 +655,43 @@ function createServer(cfg) {
     return json(res, 200, { ok: true, available: true, count: units.length, units });
   }
 
+  /**
+   * handleAgentCatalogOps — SubAgent カタログ (config/agent-catalog.json) を読むだけ。
+   *   first_class(常時配布) / catalog(必要時読込) / merge(統合) / remove_candidate(削除候補)
+   *   をそのまま返し、件数も添える。編集は一切しない。
+   */
+  async function handleAgentCatalogOps(res) {
+    const file = path.join(conf.root, 'config', 'agent-catalog.json');
+    let raw;
+    try { raw = fs.readFileSync(file, 'utf8'); } catch (e) {
+      return json(res, 200, {
+        ok: true, available: false,
+        note: 'config/agent-catalog.json を読めません',
+        detail: String(e && e.message).slice(0, 200),
+      });
+    }
+    let d;
+    try { d = JSON.parse(raw); } catch (e) {
+      return json(res, 200, { ok: true, available: false, note: 'JSON として解釈できません' });
+    }
+    const arr = (v) => (Array.isArray(v) ? v : []);
+    const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+    return json(res, 200, {
+      ok: true, available: true, file,
+      schema_version: d.schemaVersion == null ? null : d.schemaVersion,
+      first_class: arr(d.first_class),
+      catalog: arr(d.catalog),
+      merge: obj(d.merge),
+      remove_candidate: obj(d.remove_candidate),
+      counts: {
+        first_class: arr(d.first_class).length,
+        catalog: arr(d.catalog).length,
+        merge: Object.keys(obj(d.merge)).length,
+        remove_candidate: Object.keys(obj(d.remove_candidate)).length,
+      },
+    });
+  }
+
   /** handleAgentsOps — Agent Teams 使用状況 (state.json 由来) を JSON で返す */
   async function handleAgentsOps(res) {
     const tool = path.join(REPO_ROOT, 'scripts', 'tools', 'agent-teams-status.js');
@@ -763,6 +800,7 @@ function createServer(cfg) {
       if (req.method === 'GET' && pn === '/api/ops/cron') return handleCronOps(res);
       if (req.method === 'GET' && pn === '/api/ops/systemd') return handleSystemdOps(res);
       if (req.method === 'GET' && pn === '/api/ops/agents') return handleAgentsOps(res);
+      if (req.method === 'GET' && pn === '/api/ops/agent-catalog') return handleAgentCatalogOps(res);
 
       /**
        * ルート直下は統合コンソール v2 (public/v2.html) を返す。
