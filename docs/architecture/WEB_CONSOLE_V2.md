@@ -187,3 +187,21 @@ CONSOLE_URL=http://127.0.0.1:3740 node scripts/e2e/console.e2e.js
 同期 HTTP で返すには長すぎるため。API 側は `--dry-run` のみ対応済み。
 実接続にはバックグラウンドジョブ化（開始 → 進捗取得）が必要で、別 PR の範囲とする。
 現状は設計どおり「サンプルの失敗結果」を表示し、画面にもその旨が出る。
+
+## 品質ワークベンチの接続（バックグラウンドジョブ、2026-11-21 追加）
+
+`bin/release-check.sh` の実チェック（test/lint/build）は数分かかり、同期 HTTP では返せない。
+そこで**ジョブ方式**にした。
+
+| API | 内容 |
+|---|---|
+| `POST /api/ops/release-check/start` `{dry:true|false}` | ジョブを開始（同時 1 ジョブ。実行中なら既存を返す） |
+| `GET /api/ops/release-check` | 現在のジョブ状態（`status` / `exitCode` / `output` / `checks`） |
+
+- 出力行を QC のキーへ対応付ける（`❌`=NG / `✅`=OK / `⏭️`=SKIP）:
+  `git_state`←Git worktree, `readme`←README, `gitignore`←gitignore, `test`/`lint`/`build`←同名。
+- UI は開始後に **1.5 秒間隔でポーリング**し、結果を検査行へ反映する。
+- 出力に該当行が無い項目は `SKIP` + 「出力に該当行が見つかりません」と表示（推測で埋めない）。
+
+実測（worktree）: `--dry-run` で `git_state=NG`（未コミット変更）、`readme=OK`、`gitignore=OK`、
+`test/lint/build=SKIP`（dry-run のため）。画面にも同じ内容が表示された。

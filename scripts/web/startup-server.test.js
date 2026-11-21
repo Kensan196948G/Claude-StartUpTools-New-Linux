@@ -616,3 +616,26 @@ test('HTTP: GET /api/ops/secops はツールの有無を返す（実行はしな
     assert.ok(/有無の確認のみ/.test(r.json.note || ''), '実行しないことを明記');
   });
 });
+
+/* ------------------------------------------------- release-check バックグラウンドジョブ ---
+ * 実チェックは数分かかるため同期 HTTP では返さない。start でジョブを起こし、
+ * GET で状態を返す (UI はポーリング)。二重起動は既存ジョブを返す。
+ */
+test('HTTP: release-check はジョブとして開始し、状態を返す', async () => {
+  await withServer({}, async (port) => {
+    const start = await req(port, 'POST', '/api/ops/release-check/start', { dry: true });
+    assert.equal(start.status, 200);
+    assert.equal(start.json.ok, true);
+    assert.ok(start.json.job && start.json.job.id, 'job id を返す');
+    assert.ok(['running', 'done'].includes(start.json.job.status));
+
+    const again = await req(port, 'POST', '/api/ops/release-check/start', { dry: true });
+    assert.equal(again.status, 200);
+    assert.equal(again.json.job.id, start.json.job.id, '同時実行は既存ジョブを返す');
+
+    const status = await req(port, 'GET', '/api/ops/release-check');
+    assert.equal(status.status, 200);
+    assert.ok(status.json.job && typeof status.json.job === 'object');
+    assert.equal(typeof status.json.job.checks, 'object');
+  });
+});
