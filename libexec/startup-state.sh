@@ -274,7 +274,9 @@ main() {
     split("\n") | map(select(length > 0)) | map(split("\t") | {
       name: .[0], dir: .[1], group: .[2], run_status: .[3],
       exists: (.[4] == "true"),
-      running: (.[3] == "running"),
+      # supervisor が抜けていても tmux セッションが生きていれば「稼働中」として扱う
+      # (foreground 起動や supervisor 入れ替わりで running が false になるのを防ぐ)
+      running: ((.[3] == "running") or (.[8] == "true")),
       supervisor: (.[5] | fromjson),
       foreground: (.[6] | fromjson),
       tmux: { name: .[7], active: (.[8] == "true") },

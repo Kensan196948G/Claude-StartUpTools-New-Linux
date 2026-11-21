@@ -289,7 +289,19 @@ au__stop() {
   [[ -n "$project" ]] || { log_error "stop: <project> は必須"; return 1; }
 
   if ! sup__is_running "$project" && [[ ! -f "$(sup__state_file "$project")" ]]; then
+    # supervisor は無いが tmux セッションだけが残っている場合 (foreground 起動など) は
+    # そのセッションを止める。何も無ければ従来どおり警告して終わる。
+    local safe2; safe2="$(ccsu_safe_name "$project")"
+    local killed=0
+    if "$SUP_TMUX_BIN" has-session -t "claudeos-$safe2" 2>/dev/null; then
+      "$SUP_TMUX_BIN" kill-session -t "claudeos-$safe2" 2>/dev/null && killed=1
+    fi
+    "$SUP_TMUX_BIN" kill-session -t "_keeper_$safe2" 2>/dev/null || true
+    # 未稼働の警告は常に出す (呼び出し側の判定に使われている)。tmux を落とした場合だけ追記する。
     log_warn "supervisor は稼働していません: $project"
+    if [[ "$killed" == "1" ]]; then
+      log_ok "🛑 tmux セッションを停止しました: claudeos-$safe2"
+    fi
     return 0
   fi
   sup__request_stop "$project"
