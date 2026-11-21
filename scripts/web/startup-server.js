@@ -492,6 +492,9 @@ function createServer(cfg) {
     try {
       const args = buildLaunchArgs(v.value);
       const r = startDetached(BIN_START, args, { cwd: conf.root });
+      // 起動直後は state が古い (resolveContext が起動前の状態をキャッシュしている)。
+      // ここで捨てないと 20 秒間 running=false のままになり、直後の停止が 409 NOT_RUNNING になる。
+      invalidateState();
       appendAudit({ action: 'launch', project: v.value.project, mode: v.value.mode,
                     goal: v.value.goal, pid: r.pid, remote });
       return json(res, 200, {
