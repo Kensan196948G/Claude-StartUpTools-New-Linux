@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" width="1200" height="430" role="img" aria-label="3つの起動モード: L1 フォアグラウンド / T1 4役割一括 / S1 バックグラウンド自律">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#080d18"/><stop offset="1" stop-color="#101a2e"/></linearGradient>
+  <linearGradient id="chip1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c2b45"/><stop offset="1" stop-color="#111c2e"/></linearGradient>
+  <filter id="soft" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="3.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <style>
+    .t { font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif; }
+    .lane { stroke: #22344f; stroke-width: 8; stroke-linecap: round; }
+    .run { stroke: #58a6ff; stroke-width: 2; stroke-dasharray: 4 6; animation: dash 1.2s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -20; } }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+    .live { animation: blink 2.4s ease-in-out infinite; }
+  </style>
+</defs>
+<rect width="1200" height="430" rx="18" fill="url(#bg)"/>
+<rect x="0.6" y="0.6" width="1198.8" height="428.8" rx="18" fill="none" stroke="#1d2c47"/>
+<text class="t" x="34" y="46" font-size="22" font-weight="700" fill="#eaf2ff">3つの起動モード</text>
+<text class="t" x="34" y="70" font-size="13" fill="#8ea6c8">用途で選ぶ。迷ったら S1（バックグラウンド自律）で、人間は結果だけ確認する。</text>
+
+<g>
+<rect x="30" y="104" width="246" height="64" rx="14" fill="#f4b942" opacity=".10"/>
+<rect x="30" y="104" width="4" height="64" rx="2" fill="#f4b942"/>
+<text class="t" x="50" y="144" font-size="22">🖥️</text>
+<text class="t" x="82" y="131" font-size="15" font-weight="700" fill="#eaf2ff">L1 · フォアグラウンド</text>
+<text class="t" x="82" y="152" font-size="11" fill="#93a9c8">その場で対話しながら進める</text>
+<line class="lane" x1="300" y1="136" x2="1010" y2="136"/>
+<line class="run" x1="300" y1="136" x2="1010" y2="136"/>
+<circle r="6" fill="#f4b942" filter="url(#soft)"><animateMotion dur="2.6s" begin="0.00s" repeatCount="indefinite" path="M300,136 L1010,136"/></circle>
+<circle r="6" fill="#f4b942" filter="url(#soft)"><animateMotion dur="2.6s" begin="1.30s" repeatCount="indefinite" path="M300,136 L1010,136"/></circle>
+<rect x="1008" y="123" width="26" height="26" rx="7" fill="#0d1829" stroke="#f4b942" stroke-width="1.4"/>
+<text class="t" x="1021" y="141" font-size="12" text-anchor="middle" fill="#dce8f8">■</text>
+<text class="t" x="1044" y="140" font-size="11" fill="#7f97b5">1 セッション</text>
+<text class="t" x="300" y="168" font-size="11.5" fill="#6f8aad">▸ 既定 無制限（分数指定可）</text>
+</g>
+<g>
+<rect x="30" y="192" width="246" height="64" rx="14" fill="#58a6ff" opacity=".10"/>
+<rect x="30" y="192" width="4" height="64" rx="2" fill="#58a6ff"/>
+<text class="t" x="50" y="232" font-size="22">🤝</text>
+<text class="t" x="82" y="219" font-size="15" font-weight="700" fill="#eaf2ff">T1 · 4役割一括</text>
+<text class="t" x="82" y="240" font-size="11" fill="#93a9c8">cto / backend / frontend / qa</text>
+<line class="lane" x1="300" y1="200" x2="1010" y2="200" stroke-width="6"/>
+<text class="t" x="1024" y="204" font-size="10.5" fill="#7f97b5">cto</text>
+<circle r="5.5" fill="#58a6ff" filter="url(#soft)"><animateMotion dur="3.2s" begin="0.00s" repeatCount="indefinite" path="M300,200 L1010,200"/></circle>
+<line class="lane" x1="300" y1="216" x2="1010" y2="216" stroke-width="6"/>
+<text class="t" x="1024" y="220" font-size="10.5" fill="#7f97b5">backend</text>
+<circle r="5.5" fill="#58a6ff" filter="url(#soft)"><animateMotion dur="3.2s" begin="0.42s" repeatCount="indefinite" path="M300,216 L1010,216"/></circle>
+<line class="lane" x1="300" y1="232" x2="1010" y2="232" stroke-width="6"/>
+<text class="t" x="1024" y="236" font-size="10.5" fill="#7f97b5">frontend</text>
+<circle r="5.5" fill="#58a6ff" filter="url(#soft)"><animateMotion dur="3.2s" begin="0.84s" repeatCount="indefinite" path="M300,232 L1010,232"/></circle>
+<line class="lane" x1="300" y1="248" x2="1010" y2="248" stroke-width="6"/>
+<text class="t" x="1024" y="252" font-size="10.5" fill="#7f97b5">qa</text>
+<circle r="5.5" fill="#58a6ff" filter="url(#soft)"><animateMotion dur="3.2s" begin="1.26s" repeatCount="indefinite" path="M300,248 L1010,248"/></circle>
+<text class="t" x="300" y="256" font-size="11.5" fill="#6f8aad">▸ tmux 4分割・各役割が並行</text>
+</g>
+<g>
+<rect x="30" y="280" width="246" height="64" rx="14" fill="#a371f7" opacity=".10"/>
+<rect x="30" y="280" width="4" height="64" rx="2" fill="#a371f7"/>
+<text class="t" x="50" y="320" font-size="22">🌙</text>
+<text class="t" x="82" y="307" font-size="15" font-weight="700" fill="#eaf2ff">S1 · バックグラウンド自律</text>
+<text class="t" x="82" y="328" font-size="11" fill="#93a9c8">Supervisor が見守って自動再開</text>
+<line class="lane" x1="300" y1="312" x2="1010" y2="312"/>
+<line class="run" x1="300" y1="312" x2="1010" y2="312"/>
+<circle r="6" fill="#a371f7" filter="url(#soft)"><animateMotion dur="3.6s" begin="0.00s" repeatCount="indefinite" path="M300,312 L1010,312"/></circle>
+<circle r="6" fill="#a371f7" filter="url(#soft)"><animateMotion dur="3.6s" begin="1.20s" repeatCount="indefinite" path="M300,312 L1010,312"/></circle>
+<circle r="6" fill="#a371f7" filter="url(#soft)"><animateMotion dur="3.6s" begin="2.40s" repeatCount="indefinite" path="M300,312 L1010,312"/></circle>
+<rect x="1008" y="299" width="26" height="26" rx="7" fill="#0d1829" stroke="#a371f7" stroke-width="1.4"/>
+<text class="t" x="1021" y="317" font-size="12" text-anchor="middle" fill="#dce8f8">■</text>
+<text class="t" x="1044" y="316" font-size="11" fill="#7f97b5">1 + 再開</text>
+<text class="t" x="300" y="344" font-size="11.5" fill="#6f8aad">▸ 既定 5h 上限で自律</text>
+</g>
+<g>
+  <rect x="30" y="374" width="1140" height="40" rx="12" fill="#0d1829" stroke="#1f3352" stroke-width="1"/>
+  <circle class="live" cx="52" cy="394" r="4.5" fill="#3fb950"/>
+  <text class="t" x="68" y="399" font-size="12" fill="#9fb6d4">どの経路も同じ Goal Router を通り、Human Gate（公開・merge・Secrets・破壊的操作）は共通です。</text>
+</g>
+</svg>
