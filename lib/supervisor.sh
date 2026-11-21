@@ -357,6 +357,13 @@ sup__loop() {
     # 前回値の混入を防ぐため起動前に必ず除去する。
     rm -f "$session_cost_file"
     export CLAUDEOS_SESSION_COST_FILE="$session_cost_file"
+    # 配備済み cron-launcher は PROJECTS_BASE (既定 $HOME/Projects) でプロジェクトを解決する。
+    # config で projects を変えている環境でも一致するよう、supervisor から明示的に渡す
+    # (config_projects_dir が無い文脈では何もしない = 従来挙動)。
+    if declare -F config_projects_dir >/dev/null 2>&1; then
+      local _pbase; _pbase="$(config_projects_dir)"
+      [[ -n "$_pbase" ]] && export PROJECTS_BASE="$_pbase"
+    fi
     bash "$SUP_CRON_LAUNCHER" "$project" "$session_min" || true
     sess_end="$(date +%s)"; sess_secs=$(( sess_end - sess_start )); (( sess_secs < 0 )) && sess_secs=0
 
