@@ -28,7 +28,8 @@ source "$SCRIPT_DIR/../lib/cron-manager.sh"
 # shellcheck source=lib/deploy-launcher.sh
 source "$SCRIPT_DIR/../lib/deploy-launcher.sh"
 
-CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-$HOME/.claudeos/cron-launcher.sh}"
+# 配備先は $CCSU_HOME 配下。参照を $HOME/.claudeos 固定にすると隔離環境で一致しない。
+CRON_LAUNCHER="${CCSU_CRON_LAUNCHER:-${CCSU_HOME:-$HOME/.claudeos}/cron-launcher.sh}"
 DEFAULT_DURATION="$(config_get '.cron.defaultDurationMinutes' '300')"
 CS_DRY_RUN=0
 

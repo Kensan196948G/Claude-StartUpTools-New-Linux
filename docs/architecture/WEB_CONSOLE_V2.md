@@ -127,3 +127,35 @@ CONSOLE_URL=<url> node scripts/e2e/console.e2e.js
 (b) `$HOME/.claudeos` を隔離できる仕組み（`CLAUDEOS_HOME` の完全統一）が必要。
 停止 API は `state.projects[].running`（supervisor 由来）を要求するため、
 background が動かない限り停止の通し検証もできない。
+
+## 隔離セッション E2E と、パス統一の修正（2026-11-21 追加）
+
+### 修正した実装不整合
+
+`start-claude.sh` は `cron-launcher.sh` を **`$CCSU_HOME`** へ配備するが、参照側は
+**`$HOME/.claudeos` 固定**だった。隔離環境（`CCSU_HOME` を変える）では
+「配備したのに見つからない」となり supervisor 起動が失敗していた。
+
+参照を `${CCSU_HOME:-$HOME/.claudeos}/cron-launcher.sh` に統一した（3 箇所）:
+
+| ファイル | 変数 |
+|---|---|
+| `lib/supervisor.sh` | `SUP_CRON_LAUNCHER` |
+| `bin/cron-schedule.sh` | `CRON_LAUNCHER` |
+| `lib/cron-manager.sh` | `CRON_LAUNCHER_PATH` |
+
+これにより**隔離環境でも background（supervisor）起動が成立**するようになった（実測）。
+
+### 残る不具合: 停止 API が supervisor セッションを止められない
+
+`scripts/e2e/session-start-stop.e2e.sh` で通し検証すると、起動は成功し
+supervisor JSON も `status=running` になるが、次の 2 点で停止できない。
+
+- `state.projects[].running` は `launcher__project_run_status` の結果で、
+  **supervisor の pid が生きていること**を要求する。tmux セッションが生きていても
+  supervisor プロセスが抜けていると `running=false` になる。
+- 停止 API は `running=true` を前提にしているため、この状態では **409 NOT_RUNNING** を返す。
+
+→ 停止の判定を「supervisor の pid」だけでなく「tmux セッション / supervisor status」も見るように
+直す必要がある。本 PR では**発見と再現テストの追加まで**とし、修正は別途行う。
+（テストは現状この箇所で FAIL する。既知不具合の検出器として残している）
