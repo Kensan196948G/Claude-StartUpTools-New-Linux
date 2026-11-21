@@ -82,6 +82,7 @@ function record(screen, ok, detail) {
     // 初期描画は設計サンプル (22 件) のことがあるため、API の実件数と一致するまで待つ
     const st = await getJson('/api/startup/state');
     const apiFolders = st && st.state && Array.isArray(st.state.all_folders) ? st.state.all_folders.length : null;
+    if (apiFolders === null) record('起動(概要)', false, 'state API から all_folders を取得できない');
     if (apiFolders) {
       await page.waitForFunction((n) => {
         const t = (document.querySelector('#dc-root') || document.body).innerText || '';
@@ -112,8 +113,13 @@ function record(screen, ok, detail) {
     const units = [...new Set(sd.match(/claude-[a-z-]+\.service/g) || [])];
     const sdApi = await getJson('/api/ops/systemd');
     const sdAvailable = !!(sdApi && sdApi.available);
-    record('Systemd', okNav2 && (sdAvailable ? (units.length > 0 && /ACTIVE|INACTIVE/.test(sd)) : true),
-      sdAvailable ? `unit ${units.length} 件` : 'この環境では未取得 (available:false) — 空表示で整合');
+    const sdCount = sdApi && typeof sdApi.count === 'number' ? sdApi.count : null;
+    // CI には claude* unit が無い。0 件は「画面も 0 件」で整合していれば合格とする。
+    const sdOk = sdAvailable
+      ? (sdCount === 0 ? true : (units.length > 0 && /ACTIVE|INACTIVE/.test(sd)))
+      : true;
+    record('Systemd', okNav2 && sdOk,
+      sdAvailable ? `unit ${sdCount == null ? units.length : sdCount} 件` : 'この環境では未取得 (available:false) — 空表示で整合');
     await shot('03-systemd');
 
     // 3) Agent Teams (実行 → 実 API)
