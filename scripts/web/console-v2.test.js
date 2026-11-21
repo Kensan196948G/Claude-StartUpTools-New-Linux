@@ -50,6 +50,14 @@ test('v2.html: プロジェクト一覧は実データを優先する', () => {
   assert.ok(tpl.includes('this.state.realProjects'), 'realProjects を参照していない');
 });
 
+test('v2.html: 取得前はサンプル名を出さず「取得中」を表示する', () => {
+  const { tpl } = loadTemplate();
+  // 設計時のサンプル一覧 (22 件) を初期描画に使うと、空環境でも件数が実データと食い違う。
+  assert.ok(!tpl.includes('ArcSphere3D'), 'サンプル一覧のフォールバックが残っている');
+  assert.ok(tpl.includes('取得中'), '取得中の表示が無い');
+  assert.ok(tpl.includes('projCountText'), '件数の表示が読み込み状態を考慮していない');
+});
+
 test('v2.html: 「サンプルデータ · 実起動しません」という誤った表示が無い', () => {
   const { tpl } = loadTemplate();
   assert.ok(!tpl.includes('サンプルデータ · 実起動しません'),
