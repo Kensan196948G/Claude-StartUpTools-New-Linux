@@ -550,3 +550,29 @@ test('HTTP: GET /api/ops/managed-agents は台帳から使用量と履歴を返�
     assert.ok(Array.isArray(r.json.log) && r.json.log.length === 1);
   });
 });
+
+/* ------------------------------------------------------------ Cron スナップショット ---
+ * サービスは NoNewPrivileges=yes で crontab を読めないため、ユーザー側タイマーが書く
+ * スナップショットを優先して読む。スナップショットが無ければ直接 crontab を試す。
+ */
+test('HTTP: GET /api/ops/cron はスナップショットを優先して返す', async () => {
+  const snapFile = path.join(process.env.CLAUDEOS_HOME, 'cron-snapshot.json');
+  fs.mkdirSync(process.env.CLAUDEOS_HOME, { recursive: true });
+  fs.writeFileSync(snapFile, JSON.stringify({
+    generated_at: '2026-11-21T10:00:00+09:00', source: 'crontab -l', ok: true, count: 1,
+    entries: [{ disabled: false, minute: '30', hour: '4', dom: '*', month: '*', dow: '1-5', command: '/home/kensan/x.sh' }],
+  }));
+  try {
+    await withServer({}, async (port) => {
+      const r = await req(port, 'GET', '/api/ops/cron');
+      assert.equal(r.status, 200);
+      assert.equal(r.json.ok, true);
+      assert.equal(r.json.available, true);
+      assert.equal(r.json.source, 'snapshot');
+      assert.equal(r.json.count, 1);
+      assert.equal(r.json.entries[0].command, '/home/kensan/x.sh');
+    });
+  } finally {
+    fs.unlinkSync(snapFile);
+  }
+});

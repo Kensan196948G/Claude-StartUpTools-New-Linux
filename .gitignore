@@ -161,3 +161,6 @@ docs/common/CLAUDE.md
 .github/CLAUDE.md
 docs/CLAUDE.md
 Claude/templates/claude/Claude/
+
+# E2E の生成物 (スクリーンショット・result.json)
+reports/e2e/

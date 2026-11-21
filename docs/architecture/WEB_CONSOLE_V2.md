@@ -129,3 +129,37 @@ setgid 昇格が阻害される。そのためサービス文脈では `crontab 
 | 実測 | 1 回目 11.9 秒 / 2 回目以降 **0.005 秒** |
 
 TTL を 8 秒にすると走査（12 秒）より短くヒットしないため、20 秒にしてある。
+
+## Cron 画面の実データ（2026-11-21 追加）
+
+`claudeos-web-startup.service` は `NoNewPrivileges=yes` で動くため、`crontab` が spool を読むための
+setgid 昇格ができず `crontab -l` が失敗する。硬化を弱めずに実データを出すため、
+**ユーザー文脈のタイマーがスナップショットを書き、API がそれを読む**方式にした。
+
+| 要素 | 役割 |
+|---|---|
+| `bin/cron-snapshot.sh` | `crontab -l` を解析し `$CLAUDEOS_HOME/cron-snapshot.json` へ書く（5 フィールド + コマンド + 無効フラグ） |
+| `config/systemd/user/claude-startuptools-cron-snapshot.{service,timer}` | 5 分ごとにスナップショットを更新（`NoNewPrivileges=no` が必要） |
+| `GET /api/ops/cron` | スナップショットを優先。無ければ直接 `crontab -l` を試す。`source` でどちらかを返す |
+
+UI は crontab の各エントリを表示する。crontab はプロジェクト単位ではないため、
+「プロジェクト」列には**コマンド末尾の basename**（例 `backup.sh`）を出し、無効行は `（無効）` を付ける。
+追加・削除・run-now・一括起動は API 未実装のため**読み取り専用の通知**。
+
+実測（このホスト）: 56 件（有効 8 / 無効 48）、`source=snapshot`。
+
+## Playwright による自動検証（2026-11-21 追加）
+
+`npm run test:e2e:console` で、統合コンソールの全画面を実ブラウザで検証する。
+
+```
+CONSOLE_URL=http://127.0.0.1:3740 node scripts/e2e/console.e2e.js
+```
+
+- 画面ごとに API の実値と DOM の表示を突き合わせる（例: プロジェクト件数が `all_folders` と一致するか、
+  SubAgent の KPI が `agent-catalog` の `counts` と一致するか）。
+- 初期描画は設計サンプル（22 件）のことがあるため、**API の件数と一致するまで待つ**。
+- スクリーンショットと `result.json` を `reports/e2e/<timestamp>/` に残す（git 管理外）。
+- 外部フォント等の想定内のエラーは除外し、それ以外の console error が 0 であることを確認する。
+
+実測: 9/9 PASS（起動 370/370・Systemd 5 unit・SubAgent 9/9/6・Managed ledger 3・Cron 56 件・監査・console error 0）。
