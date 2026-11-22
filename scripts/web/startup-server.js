@@ -33,7 +33,8 @@ const fs     = require('fs');
 const path   = require('path');
 const os     = require('os');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const https  = require('https');
+const { spawn, execFile } = require('child_process');
 
 const DEFAULT_PORT = 3740;
 const REPO_ROOT    = path.resolve(__dirname, '..', '..');
@@ -434,6 +435,235 @@ async function confirmSupervisorRunning(dir, project, waitMs) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// プロンプト送信 (POST /api/session/prompt) — 高リスク機能 (Approval PR で導入)
+//   ヘッドレス (claude -p) の会話を Web から 1 ターンずつ進める。実セッションへの直接入力ではなく、
+//   「前回の自律セッションを分岐 (--fork-session) → 以後は Web 専用の会話系譜を --resume」で進める。
+//   自律実行の会話履歴 (トランスクリプト) には書き込まない。
+// ---------------------------------------------------------------------------
+const PROMPT_MAX_CHARS = 4000;
+const PROMPT_MODELS = ['auto', 'opus', 'sonnet', 'haiku'];
+const PROMPT_PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];   // 既定は acceptEdits。auto は明示指定のときだけ
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SECRET_ENV_RE = /(^ANTHROPIC_API_KEY$|^CLAUDEOS_SMTP_|^STARTUP_WEB_|^DASHBOARD_PASSWORD$|^CF_ACCESS_|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_?KEY|_KEY$|_DSN$|^SSH_AUTH_SOCK$|^CLOUDFLARE_|^AWS_|^NEON_|^(DATABASE|POSTGRES|POSTGRESQL|DB|REDIS|MONGO|MONGODB|MYSQL)[A-Z_]*URL$|^PG(PASSWORD|PASSFILE)$)/i;
+const ENV_KEEP = new Set(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN']);   // claude 自身の認証 (消すと起動できない)
+
+/** scrubEnv — claude 子プロセスへ渡す環境から秘密を除く (cron-launcher の env -u 方針と同じ) */
+function scrubEnv(env) {
+  const out = {};
+  Object.keys(env || {}).forEach((k) => {
+    // claude 自身の認証だけは残す (消すと起動できない)。それ以外の秘密は子プロセスへ渡さない。
+    if (ENV_KEEP.has(k) || !SECRET_ENV_RE.test(k)) out[k] = env[k];
+  });
+  return out;
+}
+
+/** validatePromptText — 長さ・制御文字 (NUL) を検証して整形済みの本文を返す */
+function validatePromptText(text) {
+  if (typeof text !== 'string') return { ok: false, error: 'PROMPT_REQUIRED' };
+  const t = text.trim();
+  if (t === '') return { ok: false, error: 'PROMPT_REQUIRED' };
+  if (t.length > PROMPT_MAX_CHARS) return { ok: false, error: 'PROMPT_TOO_LONG', max: PROMPT_MAX_CHARS };
+  if (t.indexOf('\u0000') >= 0) return { ok: false, error: 'PROMPT_INVALID' };
+  return { ok: true, value: t };
+}
+
+function validatePromptModel(model) {
+  if (model === undefined || model === null || model === '') return { ok: true, value: 'auto' };
+  if (typeof model !== 'string' || !PROMPT_MODELS.includes(model)) return { ok: false, error: 'MODEL_INVALID' };
+  return { ok: true, value: model };
+}
+
+function readJsonFile(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+/**
+ * findAutonomousSessionId — 自律実行 (cron-launcher) が保存した、当該プロジェクトの最新 session_id。
+ *   ファイル名ではなく JSON の project フィールドで照合する (非 ASCII 名は safe 名が衝突するため)。
+ */
+function findAutonomousSessionId(sessionsDir, project) {
+  let best = null;
+  let files = [];
+  try { files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json')); } catch { return ''; }
+  for (const f of files) {
+    const full = path.join(sessionsDir, f);
+    const j = readJsonFile(full);
+    if (!j || j.project !== project || typeof j.sessionId !== 'string' || !UUID_RE.test(j.sessionId)) continue;
+    let t = 0;
+    try { t = fs.statSync(full).mtimeMs; } catch { /* 取得不能は古い扱い */ }
+    if (!best || t > best.t) best = { t, id: j.sessionId };
+  }
+  return best ? best.id : '';
+}
+
+/** Web 専用の会話系譜 (自律実行の会話とは別 ID)。ファイル名は safe 名 + project のハッシュで衝突を避ける。 */
+function webLineageFile(dir, project) {
+  const h = crypto.createHash('sha256').update(String(project)).digest('hex').slice(0, 8);
+  return path.join(dir, safeProjectName(project) + '-' + h + '.json');
+}
+
+function readWebLineage(dir, project) {
+  const j = readJsonFile(webLineageFile(dir, project));
+  // project が一致しない系譜は使わない (別プロジェクトの会話文脈を引き継がない)
+  return (j && j.project === project && typeof j.session_id === 'string' && UUID_RE.test(j.session_id)) ? j.session_id : '';
+}
+
+function writeWebLineage(dir, project, sessionId, forkedFrom) {
+  if (!UUID_RE.test(String(sessionId))) return false;
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = webLineageFile(dir, project);
+    const tmp = file + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify({ project, session_id: sessionId, forked_from: forkedFrom || '', updated_at: new Date().toISOString() }) + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return true;
+  } catch { return false; }
+}
+
+/** removeWebLineage — resume に失敗した系譜を捨てる (次回は新規会話/分岐から始める) */
+function removeWebLineage(dir, project) {
+  try { fs.rmSync(webLineageFile(dir, project), { force: true }); } catch { /* 無ければ何もしない */ }
+}
+
+/** positiveNumber — 有限の正数だけを採用し、それ以外 (NaN / 0 / 負数) は既定値へ戻す (上限が黙って無効化されない) */
+function positiveNumber(v, def) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : def;
+}
+
+/** 実行中のプロンプト子プロセス (shutdown 時にプロセスグループごと停止する) */
+const ACTIVE_PROMPT_CHILDREN = new Set();
+function killActivePrompts() {
+  ACTIVE_PROMPT_CHILDREN.forEach((c) => {
+    try { process.kill(-c.pid, 'SIGKILL'); } catch { try { c.kill('SIGKILL'); } catch { /* 既に終了 */ } }
+  });
+}
+
+/**
+ * sanitizePromptEvent — claude の stream-json から、ブラウザへ中継してよい項目だけを残す (許可リスト)。
+ *   tool_result (ファイル内容・コマンド出力) や tool_use の入力、hook / status などは中継しない。
+ */
+function sanitizePromptEvent(ev) {
+  if (!ev || typeof ev !== 'object') return null;
+  const t = ev.type;
+  if (t === 'system') {
+    return ev.subtype === 'init'
+      ? { type: 'system', subtype: 'init', session_id: ev.session_id, model: ev.model, permissionMode: ev.permissionMode }
+      : null;
+  }
+  if (t === 'stream_event') {
+    const se = ev.event || {};
+    if (se.type === 'message_start') return { type: 'stream_event', event: { type: 'message_start' } };
+    if (se.type === 'content_block_delta' && se.delta && se.delta.type === 'text_delta' && typeof se.delta.text === 'string') {
+      return { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: se.delta.text.slice(0, 20000) } } };
+    }
+    return null;
+  }
+  if (t === 'assistant') {
+    const c = ev.message && Array.isArray(ev.message.content) ? ev.message.content : [];
+    return { type: 'assistant', message: { content: c.map((b) => {
+      if (b && b.type === 'text') return { type: 'text', text: String(b.text || '').slice(0, 50000) };
+      if (b && b.type === 'tool_use') return { type: 'tool_use', name: String(b.name || '').slice(0, 80) };
+      return null;
+    }).filter(Boolean) } };
+  }
+  if (t === 'user') return { type: 'user' };
+  if (t === 'result') {
+    return { type: 'result', subtype: ev.subtype, is_error: !!ev.is_error,
+      result: typeof ev.result === 'string' ? ev.result.slice(0, 50000) : undefined,
+      total_cost_usd: typeof ev.total_cost_usd === 'number' ? ev.total_cost_usd : undefined, session_id: ev.session_id };
+  }
+  return null;
+}
+
+function b64urlToBuf(s) { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64'); }
+
+/**
+ * verifyAccessJwt — Cloudflare Access の JWT (Cf-Access-Jwt-Assertion) を検証する。
+ *   署名 (RS256 / JWKS)・iss (https://<team>)・aud・exp を確認する。オリジンが Access を経由した
+ *   リクエストだけを受け付けるための検証で、ヘッダ (メールアドレス) の自己申告は信用しない。
+ */
+async function verifyAccessJwt(token, o) {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 3) return { ok: false, error: 'JWT_MALFORMED' };
+    const header = JSON.parse(b64urlToBuf(parts[0]).toString('utf8'));
+    const payload = JSON.parse(b64urlToBuf(parts[1]).toString('utf8'));
+    if (header.alg !== 'RS256') return { ok: false, error: 'JWT_ALG' };
+    if (typeof header.kid !== 'string' || header.kid === '') return { ok: false, error: 'JWT_KEY_UNKNOWN' };
+    const findKey = (keys) => (keys || []).find(k => k && k.kid === header.kid && k.kty === 'RSA');
+    let jwk;
+    try {
+      jwk = findKey(await o.getKeys(false));
+      if (!jwk) jwk = findKey(await o.getKeys(true));   // 鍵のローテーション直後は 1 度だけ再取得する
+    } catch {
+      return { ok: false, error: 'JWKS_UNAVAILABLE' };
+    }
+    if (!jwk) return { ok: false, error: 'JWT_KEY_UNKNOWN' };
+    const pub = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+    if (!crypto.verify('RSA-SHA256', Buffer.from(parts[0] + '.' + parts[1]), pub, b64urlToBuf(parts[2]))) {
+      return { ok: false, error: 'JWT_SIGNATURE' };
+    }
+    const now = Math.floor((o.now || Date.now()) / 1000);
+    if (typeof payload.exp !== 'number' || payload.exp <= now) return { ok: false, error: 'JWT_EXPIRED' };
+    if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return { ok: false, error: 'JWT_NOT_YET_VALID' };
+    const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (!aud.includes(o.aud)) return { ok: false, error: 'JWT_AUD' };
+    if (payload.iss !== 'https://' + o.teamDomain) return { ok: false, error: 'JWT_ISS' };
+    return { ok: true, email: String(payload.email || payload.sub || '') };
+  } catch {
+    return { ok: false, error: 'JWT_INVALID' };
+  }
+}
+
+/** fetchAccessKeys — https://<team>.cloudflareaccess.com/cdn-cgi/access/certs の公開鍵 (JWKS) を取得する */
+function fetchAccessKeys(teamDomain) {
+  return new Promise((resolve, reject) => {
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)*\.cloudflareaccess\.com$/i.test(String(teamDomain))) return reject(new Error('TEAM_DOMAIN_INVALID'));
+    const r = https.get({ host: teamDomain, path: '/cdn-cgi/access/certs', timeout: 8000, headers: { accept: 'application/json' } }, (res) => {
+      let d = '';
+      res.on('data', (c) => { d += c; if (d.length > 262144) { r.destroy(new Error('JWKS_TOO_LARGE')); } });
+      res.on('end', () => {
+        try { const j = JSON.parse(d); resolve(Array.isArray(j.keys) ? j.keys : []); } catch (e) { reject(e); }
+      });
+    });
+    r.on('timeout', () => r.destroy(new Error('JWKS_TIMEOUT')));
+    r.on('error', reject);
+  });
+}
+
+/** resolveProjectDir — projects_dir 配下の実在ディレクトリだけを返す (シンボリックリンクで外へ出ない) */
+function resolveProjectDir(state, name) {
+  const baseRaw = state && state.projects_dir ? String(state.projects_dir) : '';
+  if (!baseRaw) return '';
+  const base = path.resolve(baseRaw);
+  const full = path.resolve(base, String(name));
+  if (!full.startsWith(base + path.sep)) return '';
+  try {
+    const rb = fs.realpathSync(base);
+    const rf = fs.realpathSync(full);
+    if (!rf.startsWith(rb + path.sep) || !fs.statSync(rf).isDirectory()) return '';
+    return rf;
+  } catch { return ''; }
+}
+
+/**
+ * buildPromptArgs — claude -p の引数。本文は最後に `--` の後ろへ置き、先頭が - でもオプション扱いにしない。
+ *   resumeId があれば --resume、fork=true なら --fork-session (分岐して元の会話に書き込まない)。
+ */
+function buildPromptArgs(o) {
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+    '--permission-mode', o.permissionMode || 'auto'];
+  if (o.noPermissionPrompts) args.push('--permission-prompts', 'none');
+  if (o.resumeId) args.push('--resume', o.resumeId);
+  if (o.resumeId && o.fork) args.push('--fork-session');
+  if (o.model && o.model !== 'auto') args.push('--model', o.model);
+  if (o.budgetUsd > 0) args.push('--max-budget-usd', String(o.budgetUsd));
+  args.push('--', o.text);
+  return args;
+}
+
 function appendAudit(entry) {
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG), { recursive: true });
@@ -458,6 +688,20 @@ function createServer(cfg) {
     // 背景起動 (S1) 後に supervisor の実在を確認する。0 で無効 (テスト用)
     supervisorDir: process.env.CCSU_SUP_DIR || path.join(CLAUDEOS_HOME, 'supervisor'),
     launchConfirmMs: 8000,
+    // プロンプト送信 (POST /api/session/prompt)
+    sessionsDir: process.env.CLAUDEOS_SESSIONS_DIR || path.join(CLAUDEOS_HOME, 'sessions'),
+    webPromptDir: path.join(CLAUDEOS_HOME, 'web-prompt'),
+    claudeBin: process.env.CLAUDE_BIN || 'claude',
+    promptEnabled: process.env.STARTUP_WEB_PROMPT_ENABLE === '1',   // 既定は無効 (高リスク機能)
+    promptBudgetUsd: positiveNumber(process.env.STARTUP_WEB_PROMPT_BUDGET_USD, 2),
+    promptTimeoutMs: Math.max(1000, positiveNumber(process.env.STARTUP_WEB_PROMPT_TIMEOUT_MS, 600000)),
+    promptPermission: PROMPT_PERMISSION_MODES.includes(process.env.STARTUP_WEB_PROMPT_PERMISSION)
+      ? process.env.STARTUP_WEB_PROMPT_PERMISSION : 'acceptEdits',
+    // 認証: Basic パスワード (STARTUP_WEB_PASSWORD) か Cloudflare Access の JWT 検証 (どちらも無ければ送信は拒否)
+    accessTeamDomain: process.env.CF_ACCESS_TEAM_DOMAIN || '',
+    accessAud: process.env.CF_ACCESS_AUD || '',
+    // 公開ホスト名 (Cloudflare 経由の Host)。loopback (127.0.0.1 / localhost / [::1]) は常に許可
+    allowedHosts: String(process.env.STARTUP_WEB_ALLOWED_HOSTS || '').split(',').map(x => x.trim()).filter(Boolean),
   }, cfg || {});
 
   const BIN_START = path.join(conf.root, 'bin', 'start-claude.sh');
@@ -579,6 +823,10 @@ function createServer(cfg) {
     const v = validateLaunchRequest(body, ctx);
     if (!v.ok) return json(res, 400, { ok: false, error: v.error });
 
+    // Web 会話 (プロンプト送信) の実行中は、同じプロジェクトを起動しない (同じ作業ツリーへの二重書き込みを避ける)
+    if (promptActive && promptActive.project === v.value.project) {
+      return json(res, 409, { ok: false, error: 'PROMPT_IN_PROGRESS', message: 'このプロジェクトは Web 会話の実行中です。完了後に起動してください。' });
+    }
     // 同時実行上限 (CLI 側 session__enforce_launch_limits と同じ既定) を先に可視化
     const maxSessions = Number.isInteger(ctx.limits.max_sessions) ? ctx.limits.max_sessions : 4;
     const running = ctx.state.sessions.count;
@@ -715,6 +963,236 @@ function createServer(cfg) {
     } finally {
       busy = false;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // プロンプト送信 (Approval PR): ヘッドレス会話を 1 ターンずつ進め、NDJSON でストリーミングする。
+  //   これは「公開画面からホスト上で Claude に作業をさせる」= 実質リモートコード実行に近い高リスク機能のため、
+  //   既定で無効 (STARTUP_WEB_PROMPT_ENABLE=1 で明示的に有効化) とし、次を全て満たさない限り拒否する (fail-closed)。
+  //   - 認証: Basic パスワード (STARTUP_WEB_PASSWORD) か、Cloudflare Access の JWT 検証 (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD)
+  //   - Host の許可リスト (loopback / STARTUP_WEB_ALLOWED_HOSTS) と、Origin 必須・Host 一致・JSON のみ・Sec-Fetch-Site (DNS rebinding / CSRF 対策)
+  //   - confirm:true (UI の二段階確認。サーバー側の人間確認ではなく、誤操作と自動送信の防止) / dryRunOnly では拒否
+  //   - 自律実行中のプロジェクトには送らない / 同時 1 件 / 本文 4000 文字・NUL 禁止 / モデルは許可リスト
+  //   - 予算・時間上限 / 秘密環境変数を子へ渡さない / 子はプロセスグループごと停止 / ブラウザへは許可リストのイベントだけ中継
+  //   - 監査ログ (本文は記録せず長さとハッシュのみ。拒否も記録)
+  // ---------------------------------------------------------------------------
+  let promptActive = null;
+  let promptsFlagSupport = null;   // true / false。--help の取得に失敗したら null のまま (失敗をキャッシュしない)
+  let accessKeysCache = null;
+  const promptRejectAudit = {};   // 認証前の拒否の監査を間引くための最終記録時刻
+
+  function supportsPermissionPromptsFlag() {
+    if (promptsFlagSupport !== null) return Promise.resolve(promptsFlagSupport);
+    return new Promise((resolve) => {
+      execFile(conf.claudeBin, ['--help'], { timeout: 10000, env: scrubEnv(process.env), maxBuffer: 1 << 20 }, (err, stdout) => {
+        if (err) return resolve(null);
+        promptsFlagSupport = /--permission-prompts/.test(String(stdout));
+        resolve(promptsFlagSupport);
+      });
+    });
+  }
+
+  function isSupervisorActive(project) {
+    const st = readJsonFile(supervisorStateFile(conf.supervisorDir, project));
+    return !!(st && st.status === 'running' && Number.isInteger(st.pid) && st.pid > 0 && isPidAlive(st.pid));
+  }
+
+  async function getAccessKeys(force) {
+    if (typeof conf.accessKeys === 'function') return conf.accessKeys(!!force);
+    const now = Date.now();
+    // 通常は 10 分キャッシュ。強制再取得 (未知 kid) は 60 秒に 1 回まで (不正な kid での取得連打を避ける)
+    if (accessKeysCache && now - accessKeysCache.at < (force ? 60000 : 600000)) return accessKeysCache.keys;
+    const keys = await fetchAccessKeys(conf.accessTeamDomain);
+    accessKeysCache = { at: now, keys };
+    return keys;
+  }
+
+  /** authenticatePrompt — Basic (共通検査を通過済み) か Access JWT。どちらも無ければ拒否 */
+  async function authenticatePrompt(req) {
+    if (conf.authPass) return { ok: true, user: conf.authUser, mode: 'basic' };
+    if (conf.accessTeamDomain && conf.accessAud) {
+      const v = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
+        teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
+      return v.ok ? { ok: true, user: v.email, mode: 'access-jwt' } : { ok: false, error: 'PROMPT_AUTH_FAILED', detail: v.error };
+    }
+    return { ok: false, error: 'PROMPT_AUTH_NOT_CONFIGURED' };
+  }
+
+  /** checkPromptRequest — Host 許可リスト / JSON のみ / Origin 必須かつ Host 一致 / Sec-Fetch-Site */
+  function checkPromptRequest(req) {
+    const host = String(req.headers.host || '');
+    const loop = /^(127\.0\.0\.1|localhost|\[::1\]):\d+$/;
+    if (!loop.test(host) && !conf.allowedHosts.includes(host)) return { ok: false, status: 403, error: 'HOST_REJECTED' };
+    if (!/^application\/json(\s*;|$)/i.test(String(req.headers['content-type'] || ''))) {
+      return { ok: false, status: 415, error: 'UNSUPPORTED_MEDIA_TYPE' };
+    }
+    const origin = req.headers.origin;
+    if (!origin) return { ok: false, status: 403, error: 'ORIGIN_REQUIRED' };
+    let oh = '';
+    try { oh = new URL(String(origin)).host; } catch { return { ok: false, status: 403, error: 'ORIGIN_REJECTED' }; }
+    if (oh !== host) return { ok: false, status: 403, error: 'ORIGIN_REJECTED' };
+    const sfs = req.headers['sec-fetch-site'];
+    if (sfs && sfs !== 'same-origin' && sfs !== 'none') return { ok: false, status: 403, error: 'CROSS_SITE_REJECTED' };
+    return { ok: true };
+  }
+
+  async function handlePrompt(req, res, body, remote) {
+    let user = '';
+    const reject = (status, error, extra) => {
+      // 認証前 (user 不明) の拒否は、同じ理由につき 1 分に 1 件へ間引く。認証後の拒否は常に記録する
+      const nowMs = Date.now();
+      if (user || !(promptRejectAudit[error] && nowMs - promptRejectAudit[error] < 60000)) {
+        if (!user) promptRejectAudit[error] = nowMs;
+        appendAudit({ action: 'prompt-rejected', error, status, user, remote,
+          project: typeof body.project === 'string' ? body.project.slice(0, 200) : '' });
+      }
+      return json(res, status, Object.assign({ ok: false, error }, extra || {}));
+    };
+    if (!conf.promptEnabled) {
+      return reject(403, 'PROMPT_DISABLED', { message: 'プロンプト送信は無効です。有効化には STARTUP_WEB_PROMPT_ENABLE=1 と認証 (STARTUP_WEB_PASSWORD または Cloudflare Access の JWT 検証) の設定が必要です。' });
+    }
+    const chk = checkPromptRequest(req);
+    if (!chk.ok) return reject(chk.status, chk.error);
+    const au = await authenticatePrompt(req);
+    if (!au.ok) return reject(403, au.error, au.detail ? { detail: au.detail } : undefined);
+    user = au.user || '';
+
+    const ctx = await resolveContext();
+    if (!ctx.ok) return json(res, 500, { ok: false, error: ctx.error });
+    const proj = validateProject(body.project, ctx.allowed);
+    if (!proj.ok) return reject(400, proj.error);
+    const text = validatePromptText(body.text);
+    if (!text.ok) return reject(400, text.error, { max: text.max });
+    const model = validatePromptModel(body.model);
+    if (!model.ok) return reject(400, model.error);
+    if (conf.dryRunOnly) return reject(403, 'DRY_RUN_ONLY');
+
+    const dir = resolveProjectDir(ctx.state, proj.value);
+    if (!dir) return reject(404, 'PROJECT_DIR_NOT_FOUND');
+
+    const promptsNone = await supportsPermissionPromptsFlag();
+    if (promptsNone === null) return reject(503, 'CLAUDE_UNAVAILABLE', { message: 'claude の機能確認 (--help) に失敗しました。' });
+
+    // 自律実行中のプロジェクトには送らない (同じ作業ツリー・会話系譜への二重書き込みと、自律実行への混入を避ける)
+    const sessionRunning = () => {
+      const info = (ctx.state.projects || []).find(p => p.name === proj.value) || {};
+      return (ctx.state.sessions && Array.isArray(ctx.state.sessions.headless) && ctx.state.sessions.headless.includes(proj.value))
+        || info.running === true || isSupervisorActive(proj.value);
+    };
+    if (sessionRunning()) {
+      return reject(409, 'SESSION_RUNNING', { message: '自律実行中のプロジェクトにはプロンプトを送れません。先に停止してください。' });
+    }
+
+    const webId = readWebLineage(conf.webPromptDir, proj.value);
+    const autoId = webId ? '' : findAutonomousSessionId(conf.sessionsDir, proj.value);
+    const resumeId = webId || autoId;
+    const fork = !webId && !!autoId;
+    const args = buildPromptArgs({
+      text: text.value, resumeId, fork, model: model.value, budgetUsd: conf.promptBudgetUsd,
+      permissionMode: conf.promptPermission, noPermissionPrompts: promptsNone,
+    });
+
+    if (body.confirm !== true) {
+      return json(res, 200, {
+        ok: true, requiresConfirm: true, project: proj.value, cwd: dir,
+        resumed: !!resumeId, forked: fork, model: model.value,
+        permissionMode: conf.promptPermission, budgetUsd: conf.promptBudgetUsd, timeoutMs: conf.promptTimeoutMs,
+        command: 'claude ' + args.slice(0, -1).join(' ') + ' -- <本文 ' + text.value.length + ' 文字>',
+      });
+    }
+    if (promptActive) return reject(409, 'OPERATION_IN_PROGRESS');
+    // spawn 直前に再判定 (await の間に自律実行が始まった場合の二重書き込みを避ける)
+    if (isSupervisorActive(proj.value)) return reject(409, 'SESSION_RUNNING', { message: '自律実行中のプロジェクトにはプロンプトを送れません。先に停止してください。' });
+
+    const t0 = Date.now();
+    const sha = crypto.createHash('sha256').update(text.value).digest('hex').slice(0, 12);
+    const baseAudit = { project: proj.value, chars: text.value.length, sha, resumed: !!resumeId, forked: fork, model: model.value, user, remote };
+    // detached: 子をプロセスグループの先頭にし、タイムアウト/切断/停止時に孫 (ツールが起動したプロセス) ごと止める
+    const child = spawn(conf.claudeBin, args, { cwd: dir, env: scrubEnv(process.env), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    ACTIVE_PROMPT_CHILDREN.add(child);
+    promptActive = { project: proj.value, child };
+    let started = false, finalized = false, aborted = false, timedOut = false, sawInit = false;
+    let sessionId = '', stderrTail = '', lineBuf = '', exitTimer = null, killTimer = null;
+
+    const killGroup = (sig) => {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, sig); } catch { try { child.kill(sig); } catch { /* 既に終了 */ } }
+    };
+    const groupAlive = () => {
+      if (!child.pid) return false;
+      try { process.kill(-child.pid, 0); return true; } catch (e) { return !!e && e.code === 'EPERM'; }
+    };
+    const scheduleKill = (ms) => {
+      if (killTimer) return;
+      killTimer = setTimeout(() => { if (groupAlive()) killGroup('SIGKILL'); }, ms);
+      if (killTimer.unref) killTimer.unref();
+    };
+    const killChild = () => { killGroup('SIGTERM'); scheduleKill(5000); };
+    const timer = setTimeout(() => { timedOut = true; killChild(); }, conf.promptTimeoutMs);
+
+    const writeLine = (obj) => {
+      if (!started || res.writableEnded || res.destroyed) return;
+      const ok = res.write(JSON.stringify(obj) + '\n');
+      if (!ok) {   // 遅いクライアントでメモリが膨らまないよう、drain まで子の出力を止める
+        try { child.stdout.pause(); } catch { /* 終了済み */ }
+        res.once('drain', () => { try { child.stdout.resume(); } catch { /* 終了済み */ } });
+      }
+    };
+    const emitLine = (line) => {
+      if (!line.trim()) return;
+      let ev;
+      try { ev = JSON.parse(line); } catch { writeLine({ type: 'web/raw', text: line.slice(0, 300) }); return; }
+      if (ev && typeof ev.session_id === 'string' && UUID_RE.test(ev.session_id)) sessionId = ev.session_id;
+      if (ev && ev.type === 'system' && ev.subtype === 'init') sawInit = true;
+      const out = sanitizePromptEvent(ev);
+      if (out) writeLine(out);
+    };
+    const finalize = (code, signal) => {
+      if (finalized) return;
+      finalized = true;
+      clearTimeout(timer);
+      if (exitTimer) clearTimeout(exitTimer);
+      ACTIVE_PROMPT_CHILDREN.delete(child);
+      if (lineBuf) emitLine(lineBuf);
+      if (groupAlive()) { killGroup('SIGTERM'); scheduleKill(3000); }   // ツールが残した孫プロセスを残さない
+      let lineageReset = false;
+      // 破棄するのは resume 自体が失敗したとき (会話が始まらず init が来ない) だけ。中断・タイムアウト・予算超過・ツール失敗では、
+      // claude 側に会話が残っているので系譜を保持する
+      if (webId && !sawInit && !aborted && !timedOut) { removeWebLineage(conf.webPromptDir, proj.value); lineageReset = true; }
+      else if (sessionId) writeWebLineage(conf.webPromptDir, proj.value, sessionId, autoId);
+      writeLine({ type: 'web/end', exitCode: code, signal: signal || null, sessionId, timedOut, aborted, lineageReset,
+                  durationMs: Date.now() - t0, stderr: code === 0 ? '' : stderrTail.slice(-1000) });
+      if (started && !res.writableEnded) res.end();
+      if (promptActive && promptActive.child === child) promptActive = null;
+      appendAudit(Object.assign({ action: 'prompt', exit: code, signal: signal || null, timedOut, aborted, lineageReset, durationMs: Date.now() - t0 }, baseAudit));
+    };
+
+    child.on('error', (e) => {
+      if (started || finalized) return;   // 起動後の error は close で処理する
+      finalized = true;
+      clearTimeout(timer);
+      ACTIVE_PROMPT_CHILDREN.delete(child);
+      if (promptActive && promptActive.child === child) promptActive = null;
+      appendAudit(Object.assign({ action: 'prompt-failed', error: 'SPAWN_FAILED' }, baseAudit));
+      if (!res.headersSent) json(res, 500, { ok: false, error: 'SPAWN_FAILED', detail: String(e && e.message).slice(0, 200) });
+    });
+    child.once('spawn', () => {
+      started = true;
+      appendAudit(Object.assign({ action: 'prompt-start' }, baseAudit));
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      writeLine({ type: 'web/start', project: proj.value, resumed: !!resumeId, forked: fork, model: model.value });
+    });
+    child.stdout.on('data', (d) => {
+      lineBuf += d.toString('utf8');
+      let i;
+      while ((i = lineBuf.indexOf('\n')) >= 0) { const line = lineBuf.slice(0, i); lineBuf = lineBuf.slice(i + 1); emitLine(line); }
+      if (lineBuf.length > 1048576) lineBuf = '';
+    });
+    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString('utf8')).slice(-4000); });
+    res.on('close', () => { if (!finalized) { aborted = true; killChild(); } });
+    // 孫が stdout を握ったままだと 'close' が来ないため、'exit' から一定時間で必ず確定してロックを解放する
+    child.on('exit', (code, signal) => { exitTimer = setTimeout(() => finalize(code, signal), 3000); });
+    child.on('close', (code, signal) => finalize(code, signal));
   }
 
   /** handleLog — ログ閲覧 (~/.claudeos 配下のみ) */
@@ -1172,6 +1650,12 @@ function createServer(cfg) {
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
         return handleStop(res, b.value, remote);
       }
+      if (req.method === 'POST' && pn === '/api/session/prompt') {
+        const b = await readBody(req);
+        if (!b.ok) return json(res, 400, { ok: false, error: b.error });
+        if (!b.value || typeof b.value !== 'object' || Array.isArray(b.value)) return json(res, 400, { ok: false, error: 'BODY_NOT_OBJECT' });
+        return await handlePrompt(req, res, b.value, remote);
+      }
       if (req.method === 'POST' && pn === '/api/startup/apply-all') {
         const b = await readBody(req);
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
@@ -1338,7 +1822,7 @@ function main() {
       ' dryRunOnly=' + o.dryRunOnly + (o.pidFile ? ' pidFile=' + o.pidFile : '') + '\n');
   });
 
-  const shutdown = () => { server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000); };
+  const shutdown = () => { killActivePrompts(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000); };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
@@ -1347,7 +1831,10 @@ module.exports = {
   createServer, parseArgs, usage, main,
   safeEqual, isLoopback, validateProject, validateMode, validateGoal, validateDuration,
   sanitizeIntent, buildLaunchArgs, buildStopArgs, buildApplyAllArgs, parseState,
-  projectNames, isCronSchedule, supervisorStateFile, resolveLogFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
+  projectNames, isCronSchedule, supervisorStateFile, resolveLogFile,
+  scrubEnv, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
+  resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
+  positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,
 };
 
