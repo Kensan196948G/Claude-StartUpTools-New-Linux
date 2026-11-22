@@ -1054,6 +1054,7 @@ test('prompt: confirm 無しは実行せず確認内容 (Human Gate) を返す',
       assert.equal(r.json.requiresConfirm, true);
       assert.equal(r.json.resumed, false);
       assert.match(r.json.command, /^claude -p --output-format stream-json .* -- <本文 5 文字>$/);
+      assert.ok(!r.json.command.includes('-- --'), '確認画面のコマンドで -- が二重にならない');
       assert.ok(!r.json.command.includes('こんにちは'), '確認画面のコマンドに本文は含めない');
       assert.equal(argvLines(f).length, 0, '実行していない');
     });
