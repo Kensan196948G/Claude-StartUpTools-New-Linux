@@ -12,6 +12,7 @@
 #   - 秘密情報 (接続文字列・パスワード) がいかなる出力にも出ない
 # ============================================================
 
+bats_require_minimum_version 1.5.0
 load '../helpers/common-setup'
 
 _write_psql_stub() {
@@ -642,6 +643,32 @@ _mig() { printf '%s\n' "$2" > "$CCSU_CONTROL_MIG_DIR/$1"; }
   [ "$status" -eq 0 ]
   grep -q "'running'" "$PSQL_LOG"
   grep -q "host/pid1" "$PSQL_LOG"
+}
+# ---- 回帰 (#121): set -e 下でも失敗時に診断を出して rc=1 で戻る -----------
+# bin/control-db.sh は set -euo pipefail。以前は out="$(psql ...)" の失敗で即終了し、
+# 直後の `if [[ $? -ne 0 ]]` (診断出力) が到達不能だった。ここでは set -e を有効にして検証する。
+_ctl_under_set_e() {
+  bash -c 'set -euo pipefail
+    source "$REPO_ROOT/lib/common.sh"; source "$REPO_ROOT/lib/postgres.sh"; source "$REPO_ROOT/lib/control-db.sh"
+    "$@"; echo "after-rc=$?"' _ "$@"
+}
+@test "ctl__run_start: DB 失敗時は set -e 下でも ERR 診断を出し rc=1 (#121)" {
+  export PROJECT_ID_STUB="p1" FORCE_RUN_START_FAIL="1"
+  run --separate-stderr _ctl_under_set_e ctl__run_start --project-key demo
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"forced run-start failure"* ]]
+  [[ "$output" != *"after-rc="* ]]
+}
+@test "ctl__project_register: DB 失敗時は set -e 下でも診断を出し rc=1 (#121)" {
+  export FORCE_PROJECT_FAIL="1"
+  run --separate-stderr _ctl_under_set_e ctl__project_register --key demo
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"forced project failure"* ]]
+}
+@test "ctl__run_start: 診断メッセージは死コードでなく実行される (#121)" {
+  export PROJECT_ID_STUB="p1" FORCE_RUN_START_FAIL="1"
+  run --separate-stderr _ctl_under_set_e ctl__run_start --project-key demo
+  [[ "$stderr" == *"run 開始に失敗しました"* ]]
 }
 @test "ctl__run_heartbeat: --run-id 必須" {
   run ctl__run_heartbeat
