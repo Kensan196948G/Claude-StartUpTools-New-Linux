@@ -36,6 +36,13 @@ _start() {
   [ "$(jq -r '.type' "$CCSU_RUNS_DIR/$id/events.jsonl")" = "start" ]
 }
 
+@test "run-ledger: 乱数部を生成できないときは run を作らず失敗する (空の乱数で ID が衝突しない)" {
+  run bash -c 'source "$1/lib/common.sh"; source "$1/lib/run-ledger.sh"; rl__uuid() { return 1; }; rl_run_start --project Demo --task t' _ "$REPO_ROOT"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"乱数部を生成できません"* ]]
+  [ -z "$(ls "$CCSU_RUNS_DIR" 2>/dev/null)" ]
+}
+
 @test "run-ledger: --project / --task は必須 (rc=2)" {
   run bash "$SCRIPT" start --project Demo
   [ "$status" -eq 2 ]
