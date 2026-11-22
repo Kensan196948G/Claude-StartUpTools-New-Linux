@@ -105,3 +105,28 @@ test('v2.html: 起動失敗はサーバーの日本語 message を生コード�
   const { tpl } = loadTemplate();
   assert.ok(tpl.includes('r.message || r.error || r.stderr'), 'message を優先していない');
 });
+
+test('v2.html: 起動画面のプロジェクト一覧に「再読み込み」があり、キャッシュを捨てる API を呼ぶ', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes('sc-camel-on-click="{{ reloadProjects }}"'), '再読み込みボタンが無い');
+  assert.ok(tpl.includes('disabled="{{ reloadDisabled }}"'), '読み込み中の無効化が無い');
+  assert.ok(tpl.includes('reloadProjects() {'), 'reloadProjects メソッドが無い');
+  assert.ok(tpl.includes("/api/startup/state?refresh=1"), 'refresh=1 を指定していない');
+  assert.ok(tpl.includes('projReloading: false'), '状態の初期値が無い');
+  assert.ok(!tpl.includes('\\u002F'), '"\\u002F" がテンプレート内で二重にエスケープされていない');
+});
+
+test('v2.html: 起動通知の tmux 名は ccsu_safe_name と同じ規則 (サブフォルダの / を _ にする)', () => {
+  const { execFileSync } = require('node:child_process');
+  const { tpl } = loadTemplate();
+  const m = /safeName\(x\) \{ return [^\n]*? \}\n/.exec(tpl);
+  assert.ok(m, 'safeName が見つからない');
+  const safeName = new Function('x', m[0].replace(/^safeName\(x\) \{/, '').replace(/\}\n$/, ''));
+  for (const name of ['Alpha-App', 'Business-Project/AI-Company-Control-Center', 'みらい/Project 1']) {
+    const bash = execFileSync('bash', ['-c', 'source "$1/lib/common.sh"; ccsu_safe_name "$2"', '_', path.join(__dirname, '..', '..'), name], { encoding: 'utf8' });
+    assert.equal(safeName(name), bash, name);
+  }
+  // 案内文は生の名前ではなく safeName を使う
+  assert.ok(tpl.includes("'claudeos-') + this.safeName(sel0)"), '単一起動の tmux 名が safeName を使っていない');
+  assert.ok(tpl.includes("'claudeos-') + this.safeName(started[0])"), '複数起動の tmux 名が safeName を使っていない');
+});

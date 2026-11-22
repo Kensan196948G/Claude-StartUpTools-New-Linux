@@ -235,6 +235,30 @@ function req(port, method, urlPath, body, headers) {
   });
 }
 
+test('HTTP: /api/startup/state?refresh=1 は 20 秒キャッシュを捨てて再走査する (連打は 3 秒間抑止)', async () => {
+  const root = path.join(TMP, 'repo-refresh');
+  const counter = path.join(TMP, 'state-scan-count.txt');
+  fs.rmSync(counter, { force: true });
+  fs.mkdirSync(path.join(root, 'libexec'), { recursive: true });
+  const base = fs.readFileSync(path.join(FIXTURE, 'libexec', 'startup-state.sh'), 'utf8');
+  fs.writeFileSync(path.join(root, 'libexec', 'startup-state.sh'),
+    base.replace('#!/usr/bin/env bash\n', '#!/usr/bin/env bash\necho x >> "' + counter + '"\n'));
+  const scans = () => (fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8').split('\n').filter(Boolean).length : 0);
+  await withServer({ root }, async (port) => {
+    await req(port, 'GET', '/api/startup/state');
+    assert.equal(scans(), 1);
+    await req(port, 'GET', '/api/startup/state');
+    assert.equal(scans(), 1, '通常取得はキャッシュを使う');
+    const quick = await req(port, 'GET', '/api/startup/state?refresh=1');
+    assert.equal(quick.json.ok, true);
+    assert.equal(scans(), 1, '直後の再読み込み連打は再走査しない');
+    await new Promise(r => setTimeout(r, 3200));
+    const forced = await req(port, 'GET', '/api/startup/state?refresh=1');
+    assert.equal(forced.json.ok, true);
+    assert.equal(scans(), 2, '3 秒以上経過後の再読み込みはキャッシュを捨てて再走査する');
+  });
+});
+
 test('HTTP: /api/health と /api/startup/state', async () => {
   await withServer({}, async (port) => {
     const h = await req(port, 'GET', '/api/health');
