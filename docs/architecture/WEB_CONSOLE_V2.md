@@ -58,7 +58,7 @@ GET  /api/ops/devops | secops
 
 | 要素 | 役割 |
 |---|---|
-| `bin/cron-snapshot.sh` | `crontab -l` を解析 → `$CLAUDEOS_HOME/cron-snapshot.json` |
+| `bin/cron-snapshot.sh` | `crontab -l` を解析 → `$CLAUDEOS_HOME/cron-snapshot.json`。ClaudeOS が登録した行（直前に `# CLAUDEOS:<id> project=… duration=…` の印がある行）には `claudeos: {id, project, duration, created, goal}` を付ける（他用途の行には付けない） |
 | `config/systemd/user/claude-startuptools-cron-snapshot.{service,timer}` | 5 分ごとに更新（この unit のみ `NoNewPrivileges=no`、`PrivateTmp` 不可） |
 
 > **注意**: スナップショット unit に `PrivateTmp=yes` を付けると `crontab -l` が**無言で 0 行**を返す

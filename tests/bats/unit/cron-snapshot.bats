@@ -49,3 +49,53 @@ EOF
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.count == 1'
 }
+
+# 「今すぐ実行」を ClaudeOS 管理分だけに限るため、台帳印 (# CLAUDEOS:<id> project=… duration=…) を claudeos として残す
+@test "cron-snapshot: 台帳印の直後の cron 行に claudeos (id/project/duration/created/goal) を付け、印なしの行には付けない" {
+  cat > "$CRON_TEXT" <<'EOF'
+# CLAUDEOS:ab12cd project=Mirai-DX-Project/Beta-Site duration=300 created=2026-11-23T01:00:00 goal=pr-babysit
+0 2 * * 1,2 CLAUDEOS_GOAL_TYPE_OVERRIDE=pr-babysit bash /x/cron-launcher.sh Mirai-DX-Project/Beta-Site 300 >> /tmp/l.log 2>&1
+0 3 * * * rm -rf /tmp/other
+EOF
+  _snap
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.count == 2'                                    # 印の行そのものはエントリにしない
+  echo "$output" | jq -e '.entries[0].claudeos == {id:"ab12cd", project:"Mirai-DX-Project/Beta-Site", duration:300, created:"2026-11-23T01:00:00", goal:"pr-babysit"}'
+  echo "$output" | jq -e '.entries[1] | has("claudeos") | not'            # 他用途の生コマンドには付けない
+}
+
+@test "cron-snapshot: 印が効くのは直後の 1 行だけ。間に別の行があれば付けない" {
+  cat > "$CRON_TEXT" <<'EOF'
+# CLAUDEOS:ab12cd project=Alpha duration=60 created=2026-11-23T01:00:00
+0 4 * * * /opt/other.sh
+0 5 * * * bash /x/cron-launcher.sh Alpha 60
+EOF
+  _snap
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.entries[0].claudeos.id == "ab12cd"'            # 印の直後の行 (cron__list と同じ対応)
+  echo "$output" | jq -e '.entries[1] | has("claudeos") | not'
+}
+
+@test "cron-snapshot: 無効化行 (#DISABLED-1#) にも印を付ける。他の接頭辞 (OPENCODE) や読めない印は付けない" {
+  cat > "$CRON_TEXT" <<'EOF'
+# CLAUDEOS:d1 project=Alpha duration=60 created=2026-11-23T01:00:00
+#DISABLED-1# 0 2 * * 1 bash /x/cron-launcher.sh Alpha 60
+# OPENCODE:o1 project=Beta duration=60 created=2026-11-23T01:00:00
+0 3 * * 1 bash /x/other-launcher.sh Beta 60
+# CLAUDEOS:bad1 created=2026-11-23T01:00:00
+0 4 * * 1 bash /x/cron-launcher.sh Gamma 60
+# CLAUDEOSX:x1 project=Delta duration=60
+0 5 * * 1 bash /x/cron-launcher.sh Delta 60
+EOF
+  _snap
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.entries[0].disabled == true and .entries[0].claudeos.id == "d1"'
+  echo "$output" | jq -e '[.entries[1:][] | has("claudeos")] | any | not'  # OPENCODE・project 無し・接頭辞が違う印は管理対象にしない
+}
+
+@test "cron-snapshot: project に引用符や制御文字が入っていても JSON は壊れず、値は無害化される" {
+  printf '%s\n' '# CLAUDEOS:q1 project=Al"pha\x duration=60 created=2026-11-23T01:00:00' '0 2 * * 1 bash /x/cron-launcher.sh Alpha 60' > "$CRON_TEXT"
+  _snap
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.entries[0].claudeos.project == "Al\"pha\\x"'
+}
