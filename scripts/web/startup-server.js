@@ -513,6 +513,23 @@ function checkPromptDailyLimit(usage, limits) {
   return { ok: true };
 }
 
+/** checkOpsDailyLimit — 変更系操作の日次上限。使用量が読めない (破損) ときは上限を守れないので拒否する (fail-closed) */
+function checkOpsDailyLimit(usage, maxCount) {
+  if (usage.corrupt) return { ok: false, error: 'OPS_USAGE_UNREADABLE' };
+  if (usage.count >= maxCount) return { ok: false, error: 'OPS_DAILY_LIMIT' };
+  return { ok: true };
+}
+
+/**
+ * isProtectedOpsTarget — Web から再起動してはいけない対象 (自己ロックアウトの防止)。
+ *   このサービス自身 (web-startup) を再起動すると実行中のリクエストごと止まり、
+ *   公開トンネル (cloudflared / tunnel) を再起動すると、利用者の唯一の経路が切れる。
+ *   台帳に載っていなくても (将来載っても) 拒否できるよう、名前で固定拒否する。
+ */
+function isProtectedOpsTarget(project) {
+  return /web-startup|cloudflared|tunnel/i.test(String(project || ''));
+}
+
 /** validatePromptText — 長さ・制御文字 (NUL) を検証して整形済みの本文を返す */
 function validatePromptText(text) {
   if (typeof text !== 'string') return { ok: false, error: 'PROMPT_REQUIRED' };
@@ -766,6 +783,11 @@ function createServer(cfg) {
     promptTimeoutMs: Math.max(1000, positiveNumber(process.env.STARTUP_WEB_PROMPT_TIMEOUT_MS, 600000)),
     opsPlanTimeoutMs: positiveNumber(process.env.STARTUP_WEB_OPS_PLAN_TIMEOUT_MS, 15000),   // dry-run は短時間で終わる
     opsPlanMaxConcurrent: 3,
+    // 変更系の実行 (段階 2: Systemd restart のみ。docs/architecture/WEB_MUTATING_OPS_DESIGN.md)。既定は無効 (高リスク機能)
+    opsRestartEnabled: process.env.STARTUP_WEB_OPS_RESTART_ENABLE === '1',
+    opsDailyMax: Math.floor(positiveNumber(process.env.STARTUP_WEB_OPS_DAILY_MAX, 20)),            // 1 日の実行回数の上限 (プロンプト送信とは別カウント)
+    opsExecTimeoutMs: positiveNumber(process.env.STARTUP_WEB_OPS_EXEC_TIMEOUT_MS, 30000),
+    webOpsDir: path.join(CLAUDEOS_HOME, 'web-ops'),
     promptDailyMax: Math.floor(positiveNumber(process.env.STARTUP_WEB_PROMPT_DAILY_MAX, 50)),          // 1 日の送信回数の上限
     promptDailyBudgetUsd: positiveNumber(process.env.STARTUP_WEB_PROMPT_DAILY_BUDGET_USD, 10),        // 1 日の累計予算の上限 (USD)
     promptEnvPass: String(process.env.STARTUP_WEB_PROMPT_ENV_PASS || '').split(',').map(x => x.trim()).filter(x => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x)),
@@ -786,6 +808,7 @@ function createServer(cfg) {
 
   // 変更系操作は同時 1 件 (レースで同じプロジェクトを二重起動しない)
   let busy = false;
+  let opsExecRunning = false;   // 変更系の実行は常に 1 件まで
   let opsPlanRunning = 0;   // 計画 (dry-run) の同時実行数 (読み取りだが bash を起動するため上限を設ける)
 
   /**
@@ -1193,6 +1216,67 @@ function createServer(cfg) {
     const sfs = req.headers['sec-fetch-site'];
     if (sfs && sfs !== 'same-origin' && sfs !== 'none') return { ok: false, status: 403, error: 'CROSS_SITE_REJECTED' };
     return { ok: true };
+  }
+
+  /**
+   * handleOpsRestart — Systemd unit の再起動 (段階 2。Approval PR)。claudeos-<project>.service だけが対象。
+   *   認証は Cloudflare Access の JWT のみ (Basic では実行しない)。機能フラグが無効なら何もしない。
+   *   confirm=true、機能フラグ、JWT、保護対象の拒否、日次上限、同時実行 1 件、監査ログ (JWT のメール付き) を全て満たす。
+   *   成否は systemd-control.sh の終了コードで判定する (失敗を成功と誤報しない)。
+   */
+  async function handleOpsRestart(req, res, body, remote) {
+    let user = '';
+    const reject = (status, error, extra) => {
+      // 認証前 (user 不明) の拒否は、同じ理由につき 1 分に 1 件へ間引く。認証後の拒否は常に記録する
+      const nowMs = Date.now();
+      const key = 'ops:' + error;
+      if (user || !(promptRejectAudit[key] && nowMs - promptRejectAudit[key] < 60000)) {
+        if (!user) promptRejectAudit[key] = nowMs;
+        appendAudit({ action: 'ops-exec-rejected', op: 'systemd-restart', error, status, user, remote,
+          project: typeof body.project === 'string' ? body.project.slice(0, 120) : '' });
+      }
+      return json(res, status, Object.assign({ ok: false, error }, extra || {}));
+    };
+    if (!conf.opsRestartEnabled) return reject(403, 'OPS_DISABLED');
+    const chk = checkPromptRequest(req);   // Origin 必須かつ Host 一致・JSON のみ・Sec-Fetch-Site (checkMutationRequest より厳格)
+    if (!chk.ok) return reject(chk.status, chk.error);
+    if (!conf.accessTeamDomain || !conf.accessAud) return reject(403, 'OPS_AUTH_NOT_CONFIGURED');
+    const jwt = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
+      teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
+    if (!jwt.ok) return reject(403, 'OPS_AUTH_FAILED');
+    user = jwt.email;
+    if (body.confirm !== true) return reject(400, 'CONFIRM_REQUIRED');
+    if (conf.dryRunOnly) return reject(403, 'DRY_RUN_ONLY');
+    const ctx = await resolveContext();
+    if (!ctx.ok) return json(res, 500, { ok: false, error: ctx.error });
+    const proj = validateProject(body.project, ctx.allowed);
+    if (!proj.ok) return reject(400, proj.error);
+    if (isProtectedOpsTarget(proj.value)) return reject(403, 'OPS_TARGET_PROTECTED');
+    if (opsExecRunning) return reject(409, 'OPS_IN_PROGRESS');
+    opsExecRunning = true;
+    try {
+      // 日次使用量を実行前に確保する (失敗した実行も使用済みとして残す)
+      const day = usageDay();
+      const u0 = readPromptUsage(conf.webOpsDir, day);
+      const dl = checkOpsDailyLimit(u0, conf.opsDailyMax);
+      const daily = { count: u0.count, max: conf.opsDailyMax };
+      if (!dl.ok) return reject(429, dl.error, { daily });
+      if (!writePromptUsage(conf.webOpsDir, { day, count: u0.count + 1, spentUsd: 0 })) {
+        return reject(500, 'OPS_USAGE_WRITE_FAILED', { message: '使用量の記録に失敗したため実行しません (上限を守れないため)。' });
+      }
+      daily.count = u0.count + 1;
+      const bin = path.join(conf.root, 'bin', 'systemd-control.sh');
+      const r = await runScript(bin, ['restart', proj.value], { cwd: conf.root, timeoutMs: conf.opsExecTimeoutMs });
+      appendAudit({ action: 'ops-restart', project: proj.value, exit: r.exitCode, user, remote });
+      const clean = (t) => String(t || '').replace(/\u001b\[[0-9;]*m/g, '').trim().slice(0, 4000);
+      const ok = r.exitCode === 0;
+      return json(res, 200, Object.assign({
+        ok, op: 'systemd-restart', project: proj.value, exitCode: r.exitCode, daily,
+        output: clean(r.stdout), stderr: ok ? '' : clean(r.stderr),
+      }, ok ? {} : { error: 'RESTART_FAILED' }));
+    } finally {
+      opsExecRunning = false;
+    }
   }
 
   async function handlePrompt(req, res, body, remote) {
@@ -1789,8 +1873,8 @@ function createServer(cfg) {
       if (!checkOrigin(req.headers.origin, req.headers.host)) {
         return json(res, 403, { ok: false, error: 'ORIGIN_REJECTED' });
       }
-      // プロンプト送信は handlePrompt 内でより厳格に検査する。それ以外の変更系はここで共通検査する
-      if (pn !== '/api/session/prompt') {
+      // プロンプト送信と Systemd 再起動は各ハンドラ内でより厳格に検査する。それ以外の変更系はここで共通検査する
+      if (pn !== '/api/session/prompt' && pn !== '/api/ops/systemd/restart') {
         const mg = checkMutationRequest(req);
         if (!mg.ok) {
           const nowMs = Date.now();
@@ -1850,6 +1934,12 @@ function createServer(cfg) {
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
         if (!b.value || typeof b.value !== 'object' || Array.isArray(b.value)) return json(res, 400, { ok: false, error: 'BODY_NOT_OBJECT' });
         return await handlePrompt(req, res, b.value, remote);
+      }
+      if (req.method === 'POST' && pn === '/api/ops/systemd/restart') {
+        const b = await readBody(req);
+        if (!b.ok) return json(res, 400, { ok: false, error: b.error });
+        if (!b.value || typeof b.value !== 'object' || Array.isArray(b.value)) return json(res, 400, { ok: false, error: 'BODY_NOT_OBJECT' });
+        return await handleOpsRestart(req, res, b.value, remote);
       }
       if (req.method === 'POST' && pn === '/api/ops/plan') {
         const b = await readBody(req);
@@ -2033,7 +2123,7 @@ module.exports = {
   safeEqual, isLoopback, validateProject, validateMode, validateGoal, validateDuration,
   sanitizeIntent, buildLaunchArgs, buildStopArgs, buildApplyAllArgs, parseState,
   projectNames, isCronSchedule, supervisorStateFile, resolveLogFile,
-  scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
+  scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, checkOpsDailyLimit, isProtectedOpsTarget, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
   positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,

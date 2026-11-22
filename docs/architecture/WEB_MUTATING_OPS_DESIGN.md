@@ -1,6 +1,6 @@
 # Web コンソール: 変更系操作（Cron / Systemd / SubAgent）の配線設計
 
-状態: **段階 1 を実装済み**（`POST /api/ops/plan`: `cron add` と `systemd` 5 操作の dry-run 計画のみ。実データは変更しない）。段階 2・3 は未実装で、方式と承認の段階を決めるための設計案です。`cron run-now` は、サービスが crontab を読めず「未登録」と誤報し得るため、段階 1 から外しています（方式 B の導入後）。
+状態: **段階 1 を実装済み**（`POST /api/ops/plan`: `cron add` と `systemd` 5 操作の dry-run 計画のみ。実データは変更しない）。**段階 2 は `Systemd restart` のみ実装**（`POST /api/ops/systemd/restart`。Approval PR。既定は無効）。`Cron run-now` は §9 の理由で保留。段階 3 は未実装で、方式と承認の段階を決めるための設計案です。`cron run-now` は、サービスが crontab を読めず「未登録」と誤報し得るため、段階 1 から外しています（方式 B の導入後）。
 
 ## 1. 背景と目的
 
@@ -99,12 +99,34 @@ Web コンソールの Cron・Systemd・SubAgent 画面は、現在すべて**�
 サービス unit と同じ `NoNewPrivileges=yes` / `PrivateTmp=yes` を付けた一時 unit（`systemd-run --user`）から、存在しない unit への `stop` を実行した。結果は `Unit ... not loaded`（exit 5）で、`Access denied` ではない。ユーザーバスへの書き込み系の要求は、この制限下でも認可される。実在する unit の変更は行っていない。
 
 - 含意: `Systemd restart` は、方式 B の実行器（user 文脈）を経由しなくても、サービスから直接実行できる見込み。ただし実在 unit での確認は、段階 2 の実装 PR（Approval PR）の受け入れ条件として別途行う。
-- `crontab` は setgid のため引き続き使えない。`Cron run-now` は台帳の読み取り（スナップショット）と、対象コマンドの実行のみで、crontab の書き込みを伴わない設計にする。
+- `crontab` は setgid のため引き続き使えない。
+
+### `Cron run-now` の保留（実装前調査の結果）
+
+- スナップショット（`bin/cron-snapshot.sh`）は 5 項目の cron 行だけを残し、ClaudeOS の台帳印（`# CLAUDEOS:<id> project=… duration=…` のコメント行）を捨てる。プロジェクト名・実行時間を取れないため、対象を安全に判定できない。
+- 現在の crontab に ClaudeOS 管理のエントリは 0 件（他用途の生コマンドのみ）。実機で確認できる対象がない。
+- **crontab の生コマンドは実行しない**（`rm` など ClaudeOS 管理外のコマンドを含み得る）。実装するなら、スナップショットに ClaudeOS の印・プロジェクト名・実行時間を残す拡張（通常 PR）を先に行い、台帳印のあるエントリだけを対象とし、実行は既存の BG 起動経路を再利用する。スナップショットの鮮度（`generated_at`）も検査する。
+- 認証が弱い既存の `POST /api/startup/launch` は、同じ種類の起動を既に許している（残存リスク。段階 2 では変更しない）。
+
+### 段階 2（`Systemd restart`）の実装内容
+
+| 項目 | 内容 |
+| --- | --- |
+| API | `POST /api/ops/systemd/restart`（`{ project, confirm: true }`） |
+| 有効化 | `STARTUP_WEB_OPS_RESTART_ENABLE=1`（既定は無効。外して再起動すれば読み取り専用に戻る） |
+| 認証 | **Cloudflare Access の JWT のみ**（`CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD`）。Basic では実行しない。未設定は `OPS_AUTH_NOT_CONFIGURED` で拒否 |
+| 要求検査 | プロンプト送信と同じ強さ（Host 許可リスト・JSON のみ・Origin 必須かつ Host 一致・Sec-Fetch-Site） |
+| 対象 | 許可リストのプロジェクト → `claudeos-<project>.service` のみ。`web-startup` / `cloudflared` / `tunnel` を含む名前は固定で拒否（自己ロックアウト防止） |
+| 日次上限 | `STARTUP_WEB_OPS_DAILY_MAX`（既定 20）。専用の使用量ファイル `~/.claudeos/web-ops/usage-YYYY-MM-DD.json`（プロンプト送信と別。実行前に確保し、失敗も使用済み。破損は拒否） |
+| 同時実行 | 1 件（`OPS_IN_PROGRESS` = 409） |
+| 成否 | `systemd-control.sh restart` の終了コード（失敗は `RESTART_FAILED`。同スクリプトは失敗時に非 0 を返すよう修正） |
+| 監査 | `ops-restart` / `ops-exec-rejected`（操作・対象・結果・JWT のメール） |
+| UI | 「再起動」ボタン: 1 回目は計画を表示、30 秒以内の 2 回目（同じ unit）で実行。他の操作は計画のみ |
 
 ### 段階 2 に残る確認事項
 
 - 認証・認可モデルの変更に当たるため、**Approval PR** で出す（head SHA 一致で明示の Y/N）。
-- `run-now` の二重実行の抑止（同一エントリの実行中は 409）。
+- 実在する unit での `restart` の実機確認（検証用 unit を一時登録して行い、終了後に登録解除する）。
 - 監査ログに、操作・対象・結果・認証主体を残す。
 
 ## 10. ロールバック
