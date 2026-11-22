@@ -502,3 +502,14 @@ PY
   GOAL_ROUTER_EXECUTION_PLANE=weird goal_router__persist "$PROJ/state.json"
   [ "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['goal_router']['execution_plane'])" "$PROJ/state.json")" = "local" ]
 }
+
+@test "CLI: --json とテキストが execution_plane を出力する (QA BUG-08)" {
+  run bash "$REPO_ROOT/libexec/goal-router.sh" "$PROJ" --dry-run --json
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.execution_plane')" = "local" ]
+  [ "$(echo "$output" | jq -r '.ma_mode')" = "missing" ]
+
+  run bash "$REPO_ROOT/libexec/goal-router.sh" "$PROJ" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"execution_plane     = local"* ]]
+}

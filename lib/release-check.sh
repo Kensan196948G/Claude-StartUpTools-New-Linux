@@ -130,6 +130,13 @@ relchk__verify() {
   fi
 }
 
+# relchk__skipped <label> <flag> — 明示 skip を SKIP 行として残す。
+#   --skip-* は「検査を一覧から消す」のではなく「未実行として SKIP に数える」
+#   (件数が減るとレポートが 6 件→3 件になり、未検証であることが伝わらない: QA BUG-07)。
+relchk__skipped() {
+  printf '%s|SKIP|%s 指定により未実行\n' "$1" "$2"
+}
+
 # relchk__collect <dir> [--allow-dirty] [--skip-tests] [--skip-lint] [--skip-build]
 #   全チェックを実行し "name|status|detail" 行を stdout へ列挙する (レポート整形は呼び出し側)。
 relchk__collect() {
@@ -147,9 +154,9 @@ relchk__collect() {
   relchk__git_state "$dir" "$allow_dirty"
   relchk__readme "$dir"
   relchk__gitignore "$dir"
-  (( skip_test ))  || relchk__verify "$dir" test
-  (( skip_lint ))  || relchk__verify "$dir" lint
-  (( skip_build )) || relchk__verify "$dir" build
+  if (( skip_test ));  then relchk__skipped Test  --skip-tests;  else relchk__verify "$dir" test;  fi
+  if (( skip_lint ));  then relchk__skipped Lint  --skip-lint;   else relchk__verify "$dir" lint;  fi
+  if (( skip_build )); then relchk__skipped Build --skip-build;  else relchk__verify "$dir" build; fi
 }
 
 # relchk__passed <results> — NG が無ければ 0 (results は collect の出力)

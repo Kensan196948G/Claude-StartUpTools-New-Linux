@@ -104,7 +104,9 @@ test('buildLaunchArgs: start-claude.sh の契約どおりの順序', () => {
 test('buildStopArgs / buildApplyAllArgs', () => {
   assert.deepEqual(srv.buildStopArgs({ project: 'Alpha-App' }), ['stop', 'Alpha-App']);
   assert.deepEqual(srv.buildStopArgs({ project: 'Alpha-App', force: true }), ['stop', 'Alpha-App', '--now']);
-  assert.deepEqual(srv.buildStopArgs({ all: true }), ['stop', '--all']);
+  // Web には TTY が無いため stop --all は --yes を付ける (Human Gate は confirm で通過済み)。
+  assert.deepEqual(srv.buildStopArgs({ all: true }), ['stop', '--all', '--yes']);
+  assert.deepEqual(srv.buildStopArgs({ all: true, force: true }), ['stop', '--all', '--now', '--yes']);
   assert.deepEqual(srv.buildApplyAllArgs({ dryRun: true }), ['start', '--all', '--dry-run']);
   assert.deepEqual(srv.buildApplyAllArgs({ dryRun: false, duration: 120 }), ['start', '--all', '--duration', '120', '--yes']);
 });
@@ -162,6 +164,9 @@ const MARK = path.join(TMP, 'launch-mark.txt');
 function writeStubs() {
   fs.mkdirSync(path.join(FIXTURE, 'bin'), { recursive: true });
   fs.mkdirSync(path.join(FIXTURE, 'libexec'), { recursive: true });
+  const AUTONOMY_CALLS = path.join(TMP, 'autonomy-calls.log');
+  const APPLY_DRY_FAIL = path.join(TMP, 'apply-dry-fail');
+  const START_FAIL = path.join(TMP, 'start-fail');
 
   const state = {
     generated_at: '2026-01-01T00:00:00+09:00', host: 'testhost',
@@ -183,13 +188,23 @@ function writeStubs() {
   };
   fs.writeFileSync(path.join(FIXTURE, 'libexec', 'startup-state.sh'),
     '#!/usr/bin/env bash\ncat <<\'JSON\'\n' + JSON.stringify(state, null, 2) + '\nJSON\n');
-  // 起動スタブ: 引数をそのまま stdout に出す。--dry-run 以外は MARK に追記 (実起動の証跡)
+  // 起動スタブ: 引数をそのまま stdout に出す。--dry-run 以外は MARK に追記 (実起動の証跡)。
+  //   start-fail マーカーがある間は即時失敗する (BUG-05 の再現用)。
   fs.writeFileSync(path.join(FIXTURE, 'bin', 'start-claude.sh'),
-    '#!/usr/bin/env bash\necho "STUB-START-CLAUDE $*"\n' +
+    '#!/usr/bin/env bash\n' +
+    'if [ -f "' + START_FAIL + '" ]; then echo "start failed (stub)" >&2; exit 3; fi\n' +
+    'echo "STUB-START-CLAUDE $*"\n' +
     'case " $* " in *" --dry-run "*) echo "dry-run: 起動しません";; ' +
     '*) printf "%s\\n" "$*" >> "' + MARK + '";; esac\nexit 0\n');
+  // autonomy スタブ: 呼び出しを記録する。apply-dry-fail マーカーがある間は --dry-run で exit 1。
   fs.writeFileSync(path.join(FIXTURE, 'bin', 'autonomy.sh'),
-    '#!/usr/bin/env bash\necho "STUB-AUTONOMY $*"\nexit 0\n');
+    '#!/usr/bin/env bash\n' +
+    'echo "STUB-AUTONOMY $*"\n' +
+    'printf "%s\\n" "$*" >> "' + AUTONOMY_CALLS + '"\n' +
+    'case " $* " in\n' +
+    '  *" --dry-run "*) if [ -f "' + APPLY_DRY_FAIL + '" ]; then echo "dry-run failed (stub)" >&2; exit 1; fi ;;\n' +
+    'esac\n' +
+    'exit 0\n');
 }
 writeStubs();
 
@@ -303,6 +318,27 @@ test('HTTP: dryRunOnly なら confirm 付きでも実起動しない', async () 
   });
 });
 
+test('HTTP: 起動 CLI の即時失敗は started:true にしない (QA BUG-05)', async () => {
+  const fail = path.join(TMP, 'start-fail');
+  fs.rmSync(MARK, { force: true });
+  fs.writeFileSync(fail, '1');
+  try {
+    await withServer({}, async (port) => {
+      const r = await req(port, 'POST', '/api/startup/launch',
+        { project: 'Alpha-App', mode: 'background', duration: 60, confirm: true });
+      assert.equal(r.status, 200);
+      assert.equal(r.json.ok, false);
+      assert.equal(r.json.started, false);
+      assert.equal(r.json.error, 'START_FAILED');
+      assert.equal(r.json.exitCode, 3);
+      assert.match(r.json.stderr, /start failed/);
+      assert.equal(fs.existsSync(MARK), false);   // 起動していない
+    });
+  } finally {
+    fs.rmSync(fail, { force: true });
+  }
+});
+
 test('HTTP: 未登録プロジェクト / 不正モードは 400', async () => {
   await withServer({}, async (port) => {
     const a = await req(port, 'POST', '/api/startup/plan', { project: 'Nope', mode: 'background' });
@@ -337,6 +373,43 @@ test('HTTP: stop は実行中のみ・確認なしでは実行しない', async 
       { project: 'Mirai-DX-Project/Beta-Site', force: true, confirm: true });
     assert.match(forced.json.output, /stop Mirai-DX-Project\/Beta-Site --now/);
   });
+});
+
+test('HTTP: stop --all は非対話でも通るよう --yes を渡す (QA BUG-03)', async () => {
+  const calls = path.join(TMP, 'autonomy-calls.log');
+  fs.rmSync(calls, { force: true });
+  await withServer({}, async (port) => {
+    const plan = await req(port, 'POST', '/api/startup/stop', { all: true });
+    assert.equal(plan.status, 200);
+    assert.equal(plan.json.requiresConfirm, true);
+    assert.deepEqual(plan.json.args, ['stop', '--all', '--yes']);
+
+    const real = await req(port, 'POST', '/api/startup/stop', { all: true, confirm: true });
+    assert.equal(real.status, 200);
+    assert.equal(real.json.ok, true);
+    const log = fs.readFileSync(calls, 'utf8');
+    assert.match(log, /stop --all --yes/);
+  });
+});
+
+test('HTTP: apply-all は dry-run 失敗時に実適用へ進まない (QA BUG-02)', async () => {
+  const fail = path.join(TMP, 'apply-dry-fail');
+  const calls = path.join(TMP, 'autonomy-calls.log');
+  fs.rmSync(calls, { force: true });
+  fs.writeFileSync(fail, '1');
+  try {
+    await withServer({}, async (port) => {
+      const r = await req(port, 'POST', '/api/startup/apply-all', { confirm: true });
+      assert.equal(r.status, 200);
+      assert.equal(r.json.ok, false);
+      assert.equal(r.json.error, 'PLAN_FAILED');
+      assert.equal(r.json.started, undefined);
+      const log = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '';
+      assert.ok(!/--yes/.test(log), 'dry-run 失敗時に --yes を起動してはいけない: ' + log);
+    });
+  } finally {
+    fs.rmSync(fail, { force: true });
+  }
 });
 
 test('HTTP: apply-all は計画 → 確認の 2 段階', async () => {
@@ -408,13 +481,57 @@ test('HTTP: 空 body / 不正 JSON の扱い', async () => {
   });
 });
 
+test('HTTP: 64KB 超の本文は 400 BODY_TOO_LARGE を返す (接続断にしない / QA BUG-06)', async () => {
+  await withServer({}, async (port) => {
+    const payload = JSON.stringify({ pad: 'x'.repeat(70000) });
+    const res = await new Promise((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/startup/plan',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
+        rs => {
+          let d = '';
+          rs.on('data', c => { d += c; });
+          rs.on('end', () => resolve({ status: rs.statusCode, body: d }));
+        });
+      r.on('error', reject);
+      r.write(payload);
+      r.end();
+    });
+    assert.equal(res.status, 400);
+    assert.equal(JSON.parse(res.body).error, 'BODY_TOO_LARGE');
+  });
+});
+
 test('parseArgs / usage', () => {
   const a = srv.parseArgs(['--port', '3900', '--lan', '--dry-run-only']);
   assert.equal(a.port, 3900);
   assert.equal(a.host, '0.0.0.0');
   assert.equal(a.dryRunOnly, true);
   assert.equal(srv.parseArgs(['3741']).port, 3741);
+  const p = srv.parseArgs(['--pid-file', path.join(TMP, 'web.pid')]);
+  assert.equal(p.pidFile, path.join(TMP, 'web.pid'));
   assert.match(srv.usage(), /startup-server\.js/);
+  assert.match(srv.usage(), /--pid-file/);
+});
+
+test('CLI: --pid-file は自分自身の PID を書き、終了時に消す (QA BUG-01)', async () => {
+  const { spawn } = require('child_process');
+  const pidFile = path.join(TMP, 'web-startup.pid');
+  const root = path.join(__dirname, '..', '..');
+  const child = spawn(process.execPath,
+    [path.join(root, 'scripts', 'web', 'startup-server.js'), '--port', '0', '--host', '127.0.0.1', '--pid-file', pidFile],
+    { cwd: root, env: process.env, stdio: 'ignore' });
+  try {
+    let content = '';
+    for (let i = 0; i < 60 && !content; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      try { content = fs.readFileSync(pidFile, 'utf8').trim(); } catch { /* まだ書かれていない */ }
+    }
+    assert.equal(content, String(child.pid));   // pgrep 先頭ではなく自分自身
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise(r => child.on('exit', r));
+  }
+  assert.equal(fs.existsSync(pidFile), false);  // 停止後に残さない
 });
 
 test('isLoopback', () => {

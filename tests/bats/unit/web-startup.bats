@@ -12,8 +12,10 @@ setup() {
   export CLAUDEOS_HOME="$TEST_TEMP/claudeos"
   mkdir -p "$CLAUDEOS_HOME/logs"
   export WEB_STARTUP_PORT=39919
-  make_stub_bin node 'echo "node $*"; exit 0'
-  make_stub_bin setsid 'shift; "$@"'
+  # 実サーバの代わりに「--pid-file へ自分自身の PID を書いて少し生き続ける」スタブ。
+  # 旧実装は pgrep の先頭を書いていたため、pgrep スタブは別インスタンス (12345) を返して残す。
+  make_stub_bin node 'pidfile=""; prev=""; for a in "$@"; do [ "$prev" = "--pid-file" ] && pidfile="$a"; prev="$a"; done; [ -n "$pidfile" ] && printf "%s\n" "$$" > "$pidfile"; sleep 3'
+  make_stub_bin setsid '"$@"'
   make_stub_bin curl 'exit 0'
   make_stub_bin pgrep 'echo 12345'
   SCRIPT="$REPO_ROOT/bin/web-startup.sh"
@@ -35,14 +37,16 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"停止しています"* ]]
 }
 
-@test "web-startup: --start は health 確認後に PID ファイルを書く" {
+@test "web-startup: --start は health 確認後に自分の PID を書く (pgrep 先頭を使わない)" {
   run bash "$SCRIPT" --start
   [ "$status" -eq 0 ]
   [[ "$output" == *"起動しました"* ]]
   [[ "$output" == *"http://127.0.0.1:39919"* ]]
   [ -f "$CLAUDEOS_HOME/web-startup.pid" ]
-  run cat "$CLAUDEOS_HOME/web-startup.pid"
-  [ "$output" = "12345" ]
+  pid="$(cat "$CLAUDEOS_HOME/web-startup.pid")"
+  [[ "$pid" =~ ^[0-9]+$ ]]
+  # pgrep スタブが返す 12345 (別インスタンス) ではなく、起動した自分の PID を記録する (QA BUG-01)
+  [ "$pid" != "12345" ]
 }
 
 @test "web-startup: 非ループバック bind はパスワード無しで拒否 (fail-closed)" {
