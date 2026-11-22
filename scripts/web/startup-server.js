@@ -1104,6 +1104,11 @@ function createServer(cfg) {
 
     try {
       if (pn === '/api/startup/state' && req.method === 'GET') {
+        // ?refresh=1: UI の「再読み込み」。20 秒キャッシュを捨てて再走査する。
+        // 連打で全フォルダ走査 (370 件で約 12 秒) が重なるのを避けるため、直近 3 秒以内は捨てない。
+        if (url.searchParams.get('refresh') === '1' && stateCache && (Date.now() - stateCache.at) > 3000) {
+          invalidateState();
+        }
         const ctx = await resolveContext();
         if (!ctx.ok) return json(res, 500, { ok: false, error: ctx.error, detail: ctx.stderr || '' });
         return json(res, 200, {
