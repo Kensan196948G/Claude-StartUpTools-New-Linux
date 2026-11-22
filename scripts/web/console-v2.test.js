@@ -101,9 +101,111 @@ test('v2.html: 要求欄は「指示文としては渡されない」ことを�
   assert.ok(!tpl.includes('Goal Router の Evidence になります'), '旧文言が残っている');
 });
 
-test('v2.html: 起動失敗はサーバーの日本語 message を生コードより優先して表示する', () => {
+function loadErrText(tpl) {
+  const a = tpl.indexOf('/*et-start*/errText(r, fallback) {');
+  const b = tpl.indexOf('}/*et-end*/');
+  assert.ok(a > 0 && b > a, 'errText が見つからない');
+  return new Function('r', 'fallback', tpl.slice(a + '/*et-start*/errText(r, fallback) {'.length, b));
+}
+
+test('v2.html: エラー表示 (実コードを実行) — サーバーの message を優先し、生コードは日本語へ、未知のコードはそのまま出す', () => {
   const { tpl } = loadTemplate();
-  assert.ok(tpl.includes('r.message || r.error || r.stderr'), 'message を優先していない');
+  const errText = loadErrText(tpl);
+  assert.equal(errText({ error: 'START_NOT_CONFIRMED', message: 'supervisor を確認できませんでした' }, 'x'), 'supervisor を確認できませんでした', 'message を最優先');
+  assert.match(errText({ error: 'DURATION_OVER_LIMIT' }, 'x'), /上限/, '生コード DURATION_OVER_LIMIT を出さない');
+  assert.ok(!/DURATION_OVER_LIMIT/.test(errText({ error: 'DURATION_OVER_LIMIT' }, 'x')));
+  assert.match(errText({ error: 'NOT_RUNNING' }, 'x'), /稼働していません/);
+  assert.match(errText({ error: 'HOST_REJECTED' }, 'x'), /STARTUP_WEB_ALLOWED_HOSTS/);
+  assert.equal(errText({ error: 'SOMETHING_NEW' }, 'x'), 'SOMETHING_NEW', '未知のコードは握りつぶさずそのまま出す');
+  assert.equal(errText({ ok: false, exitCode: 1, stderr: 'boom\n' }, 'x'), 'boom', 'コード無しは stderr');
+  assert.match(errText({ error: 'START_FAILED', stderr: 'no tmux' }, 'x'), /起動に失敗.*no tmux/, '既知コードは日本語に stderr を添える');
+  assert.equal(errText(null, '既定の文言'), '既定の文言');
+  assert.equal(errText({ error: 'X', message: 'y'.repeat(900) }, 'x').length, 400, '長すぎる文言は切り詰める');
+});
+
+test('v2.html: 左メニューで画面を移動したら、前の画面のエラーバナーを消す', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes('go[k] = () => this.setState({ screen: k, notice: null });'));
+});
+
+function runStop(tpl, response) {
+  const a = tpl.indexOf('/*stop-start*/');
+  const b = tpl.indexOf('/*stop-end*/');
+  assert.ok(a > 0 && b > a, 'stop の本体が見つからない');
+  const body = tpl.slice(a + '/*stop-start*/'.length, b);
+  const calls = { post: null, patch: null, refreshed: 0 };
+  const fake = {
+    state: { sessions: [{ project: 'Alpha' }, { project: 'Beta' }], logFor: 'Alpha' },
+    livePost(url, payload) { calls.post = { url, payload }; return Promise.resolve(response); },
+    errText: loadErrText(tpl),
+    logged(op, p, r) { return [op, p, r]; },
+    setState(p) { calls.patch = p; },
+    refreshLive() { calls.refreshed++; },
+  };
+  const run = new Function('project', 'now', 'after', 'return ' + body);
+  return run.call(fake, 'Alpha', true, '').then(() => calls);
+}
+
+test('v2.html: 停止ボタンは confirm:true と force を送り、サーバーが停止を実行したときだけ「停止しました」と表示する (実コードを実行)', async () => {
+  const { tpl } = loadTemplate();
+  const ok = await runStop(tpl, { ok: true, exitCode: 0 });
+  assert.equal(ok.post.url, '/api/startup/stop');
+  assert.deepEqual(ok.post.payload, { project: 'Alpha', force: true, confirm: true }, 'now ではなく force、かつ confirm:true を送る');
+  assert.equal(ok.patch.notice.tone, 'ok');
+  assert.deepEqual(ok.patch.sessions.map((x) => x.project), ['Beta'], '成功時だけ一覧から外す');
+  assert.equal(ok.refreshed, 1);
+  // 以前の不具合: サーバーは confirm 無しだと確認待ち (ok:true, requiresConfirm:true) を返すだけで何も停止しない。成功と表示してはいけない
+  const pending = await runStop(tpl, { ok: true, requiresConfirm: true });
+  assert.equal(pending.patch.notice.tone, 'err', '確認待ちの応答を成功扱いにしない');
+  assert.equal(pending.patch.sessions, undefined, '停止していないのに一覧から外さない');
+  const dry = await runStop(tpl, { ok: true, requiresConfirm: true, dryRunOnly: true });
+  assert.match(dry.patch.notice.text, /DRY-RUN ONLY/, 'DRY-RUN ONLY のときは専用の文言');
+  const nr = await runStop(tpl, { ok: false, error: 'NOT_RUNNING' });
+  assert.equal(nr.patch.notice.tone, 'err');
+  assert.match(nr.patch.notice.text, /稼働していません/);
+  assert.equal(nr.patch.sessions, undefined);
+});
+
+test('v2.html: Cron の「プロジェクト」列 (実コードを実行) — /Projects/ 配下の実パス・--project・妥当な末尾だけ。14 や * や +%Y… を出さない', () => {
+  const { tpl } = loadTemplate();
+  const start = tpl.indexOf('CRON.entries.map(');
+  const end = tpl.indexOf('\n      : s.cron.map');
+  const build = new Function('CRON', 'all', 'return ' + tpl.slice(start, end));
+  const mk = (command, disabled) => ({ disabled: !!disabled, minute: '0', hour: '1', dow: '*', command });
+  const rows = build({ entries: [
+    mk('/home/kensan/Projects/Mirai-DX-Project/MIRAI_Site_Carbon_Navigator/scripts/backup_cron.sh >> /home/kensan/Projects/Mirai-DX-Project/MIRAI_Site_Carbon_Navigator/logs/backup_cron.log 2>&1'),
+    mk('/home/kensan/Projects/DX-Project-Portfolio-Atlas/scripts/backup.sh >> /home/kensan/Projects/DX-Project-Portfolio-Atlas/backups/backup-cron.log 2>&1'),
+    mk('docker run --rm -v /home/kensan/.ceop/backups:/backups ceop-platform:current node --experimental-strip-types scripts/backup-retention.ts /backups --keep-days 14'),
+    mk('rm -rf ~/.claude/cache/*', true),
+    mk('CEOP_HEALTH_URL=https://x.example/healthz /home/kensan/Projects/Mirai-DX-Project/Construction-Enterprise-Operating-Platform/scripts/health-probe.sh'),
+    mk('bash /opt/run-claude.sh --project Foo >> /tmp/foo.log 2>&1'),
+    mk('/home/kensan/ops/memory-guard.sh'),
+  ] }, ['Mirai-DX-Project/MIRAI_Site_Carbon_Navigator', 'DX-Project-Portfolio-Atlas']);
+  assert.equal(rows[0].project, 'Mirai-DX-Project/MIRAI_Site_Carbon_Navigator', '登録済みプロジェクト名と一致');
+  assert.equal(rows[1].project, 'DX-Project-Portfolio-Atlas');
+  assert.equal(rows[2].project, 'docker', '末尾の 14 ではなく実行するコマンド');
+  assert.equal(rows[3].project, 'rm（無効）', '末尾の * ではなくコマンド名');
+  assert.equal(rows[4].project, 'Mirai-DX-Project/Construction-Enterprise-Operating-Platform', '未登録でも /Projects/ 配下の実パス (scripts より前)');
+  assert.equal(rows[5].project, 'Foo', '--project の引数');
+  assert.equal(rows[6].project, 'memory-guard.sh');
+  // レビュー指摘: -p は --project だけに限定 / 末尾トークン (/backups など) は採用せず先頭の実コマンドを出す / インタープリタは飛ばす
+  const rows2 = build({ entries: [
+    mk('pg_dump -p 5432 mydb > /tmp/x.sql'),
+    mk('docker run --rm ceop-platform:current node scripts/backup-retention.ts /backups'),
+    mk('bash /opt/run-claude.sh'),
+  ] }, []);
+  assert.equal(rows2[0].project, 'pg_dump', '-p 5432 をプロジェクト名にしない');
+  assert.equal(rows2[1].project, 'docker', '末尾の /backups をプロジェクト名にしない');
+  assert.equal(rows2[2].project, 'run-claude.sh', 'bash は飛ばして実行するスクリプトを出す');
+});
+
+test('v2.html: tmux セッション名は ccsu_safe_name と同じ規則 (表示・役割別セッションも safeName 経由)', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(!tpl.includes("'claudeos-' + x.project + '-"), '役割別セッション名が生の project 名を使っている');
+  assert.ok(!tpl.includes("'tmux attach -t claudeos-team-' + x.project"), 'attach 案内が生の project 名を使っている');
+  assert.ok(!tpl.includes(": 'claudeos-') + x.project"), 'セッション名が生の project 名を使っている');
+  assert.ok(!tpl.includes(": 'claudeos-') + s.selected"), '選択中の接続案内が生の名前を使っている');
+  assert.ok(tpl.includes("'claudeos-team-' : 'claudeos-') + this.safeName(x.project)"));
 });
 
 test('v2.html: 起動画面のプロジェクト一覧に「再読み込み」があり、キャッシュを捨てる API を呼ぶ', () => {
