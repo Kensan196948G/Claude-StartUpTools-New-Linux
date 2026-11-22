@@ -633,6 +633,20 @@ function fetchAccessKeys(teamDomain) {
   });
 }
 
+/**
+ * isProjectRunning — プロジェクトが稼働中か。登録済み (state.projects[].running) に加えて、
+ *   実際の稼働情報 (state.sessions の headless / foreground / tmux) も見る。
+ *   登録外のフォルダ (all_folders 由来) は state.projects に載らないため、これが無いと停止も二重送信防止も効かない。
+ */
+function isProjectRunning(state, name) {
+  const p = ((state && state.projects) || []).find(x => x.name === name);
+  if (p && p.running === true) return true;
+  const s = (state && state.sessions) || {};
+  const has = (arr, v) => Array.isArray(arr) && arr.includes(v);
+  const safe = safeProjectName(name);
+  return has(s.headless, name) || has(s.foreground, name) || has(s.tmux, 'claudeos-' + safe) || has(s.tmux, 'claudeos-team-' + safe);
+}
+
 /** resolveProjectDir — projects_dir 配下の実在ディレクトリだけを返す (シンボリックリンクで外へ出ない) */
 function resolveProjectDir(state, name) {
   const baseRaw = state && state.projects_dir ? String(state.projects_dir) : '';
@@ -907,8 +921,8 @@ function createServer(cfg) {
     } else {
       const proj = validateProject(body.project, ctx.allowed);
       if (!proj.ok) return json(res, 400, { ok: false, error: proj.error });
-      const target = ctx.state.projects.find(p => p.name === proj.value) || {};
-      if (!target.running) return json(res, 409, { ok: false, error: 'NOT_RUNNING' });
+      // 登録外のフォルダ (all_folders 由来) は state.projects に載らないため、実際の稼働情報 (state.sessions) でも判定する
+      if (!isProjectRunning(ctx.state, proj.value)) return json(res, 409, { ok: false, error: 'NOT_RUNNING' });
       if (body.confirm !== true || conf.dryRunOnly) {
         return json(res, 200, {
           ok: true, requiresConfirm: true, dryRunOnly: conf.dryRunOnly,
@@ -1074,11 +1088,7 @@ function createServer(cfg) {
     if (promptsNone === null) return reject(503, 'CLAUDE_UNAVAILABLE', { message: 'claude の機能確認 (--help) に失敗しました。' });
 
     // 自律実行中のプロジェクトには送らない (同じ作業ツリー・会話系譜への二重書き込みと、自律実行への混入を避ける)
-    const sessionRunning = () => {
-      const info = (ctx.state.projects || []).find(p => p.name === proj.value) || {};
-      return (ctx.state.sessions && Array.isArray(ctx.state.sessions.headless) && ctx.state.sessions.headless.includes(proj.value))
-        || info.running === true || isSupervisorActive(proj.value);
-    };
+    const sessionRunning = () => isProjectRunning(ctx.state, proj.value) || isSupervisorActive(proj.value);
     if (sessionRunning()) {
       return reject(409, 'SESSION_RUNNING', { message: '自律実行中のプロジェクトにはプロンプトを送れません。先に停止してください。' });
     }
@@ -1834,7 +1844,7 @@ module.exports = {
   projectNames, isCronSchedule, supervisorStateFile, resolveLogFile,
   scrubEnv, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
-  positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
+  positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,
 };
 
