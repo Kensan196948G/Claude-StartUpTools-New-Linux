@@ -162,7 +162,16 @@ cmd_stop() {
 
 cmd_restart() {
   local project="$1"
-  sc__systemctl restart "$(sysd_unit_name "$project")" || true
+  # restart の失敗は呼び出し側 (Web API 等) が成功と誤認しないよう、終了コードで伝える
+  # (systemctl が無い環境では sc__systemctl が警告だけで 0 を返すため、実行前に確認して失敗にする)
+  if (( ! DRY_RUN )) && ! sysd_available; then
+    log_error "restart できません: systemctl が見つかりません"
+    return 1
+  fi
+  if ! sc__systemctl restart "$(sysd_unit_name "$project")"; then
+    log_error "restart に失敗しました: $(sysd_unit_name "$project")"
+    return 1
+  fi
   (( DRY_RUN )) || log_ok "restart: $(sysd_unit_name "$project")"
 }
 

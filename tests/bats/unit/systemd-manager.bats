@@ -217,3 +217,30 @@ _mk_project() {   # <name> [files...]
   [ ! -f "$CCSU_SYSTEMD_REGISTRY" ]                # 台帳を作らない (enable でも registry_set_enabled しない)
   [ ! -e "$CCSU_SYSTEMD_USER_DIR/claudeos-Demo.service" ]   # 未生成の unit を generate しない
 }
+
+# Web 実行 API (POST /api/ops/systemd/restart) は終了コードで成否を判定する。失敗を 0 で返すと「再起動した」と誤報する
+@test "systemd-control: restart は systemctl が失敗したら非 0 で終わり、成功メッセージを出さない" {
+  _mk_project Demo >/dev/null
+  printf '#!/usr/bin/env bash\necho "$*" >> "%s/systemctl.calls"\nexit 5\n' "$TEST_TEMP" > "$CCSU_SYSTEMCTL_BIN"
+  run bash "$REPO_ROOT/bin/systemd-control.sh" restart Demo
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"restart: claudeos-Demo.service"* ]]
+  grep -q "restart claudeos-Demo.service" "$TEST_TEMP/systemctl.calls"
+}
+
+@test "systemd-control: restart は systemctl が成功したら 0 で終わる" {
+  _mk_project Demo >/dev/null
+  run bash "$REPO_ROOT/bin/systemd-control.sh" restart Demo
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claudeos-Demo.service"* ]]
+}
+
+# systemctl が無い環境では sc__systemctl が警告だけで 0 を返す。Web API が「再起動した」と誤報しないよう、restart は失敗にする
+@test "systemd-control: systemctl が無い環境の restart は非 0 (再起動していないのに成功にしない)" {
+  _mk_project Demo >/dev/null
+  CCSU_SYSTEMCTL_BIN="/nonexistent/definitely/systemctl" run bash "$REPO_ROOT/bin/systemd-control.sh" restart Demo
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"restart: claudeos-Demo.service"* ]]
+  CCSU_SYSTEMCTL_BIN="/nonexistent/definitely/systemctl" run bash "$REPO_ROOT/bin/systemd-control.sh" restart Demo --dry-run
+  [ "$status" -eq 0 ]   # 計画 (dry-run) は従来どおり成功
+}

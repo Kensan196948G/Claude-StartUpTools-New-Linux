@@ -1882,3 +1882,170 @@ test('ops-plan: 同時実行の上限 (3 本まで。超えたら 429) と計画
     assert.equal(t.json.ok, false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 変更系操作の実行 (段階 2 / Approval PR): POST /api/ops/systemd/restart
+//   スタブの systemd-control.sh で、認証・フラグ・保護対象・日次上限・同時実行・成否判定・監査を検証する (実 systemd は触らない)。
+// ---------------------------------------------------------------------------
+function opsExecFixture(name) {
+  const f = promptFixture('opsexec-' + name);
+  fs.mkdirSync(path.join(f.root, 'bin'), { recursive: true });
+  // 台帳 (固定フィクスチャ) の Beta-Site を保護対象の名前に差し替える
+  const stPath = path.join(f.root, 'libexec', 'startup-state.sh');
+  fs.writeFileSync(stPath, fs.readFileSync(stPath, 'utf8').split('Beta-Site').join('Cloudflared-Tools'));
+  f.calls = path.join(f.base, 'ops-calls.txt');
+  f.ops = path.join(f.base, 'web-ops');
+  fs.writeFileSync(path.join(f.root, 'bin', 'systemd-control.sh'), [
+    '#!/usr/bin/env bash',
+    'printf "%s\\n" "$*" >> "' + f.calls + '"',
+    '[ -f "' + path.join(f.base, 'slow') + '" ] && sleep 1',
+    '[ -f "' + path.join(f.base, 'fail') + '" ] && { echo "Unit not loaded" >&2; exit 5; }',
+    'echo "restart ok: $2"',
+  ].join('\n') + '\n', { mode: 0o755 });
+  f.callLines = () => (fs.existsSync(f.calls) ? fs.readFileSync(f.calls, 'utf8').split('\n').filter(Boolean) : []);
+  f.cfg2 = (extra) => f.cfg(Object.assign({ opsRestartEnabled: true, webOpsDir: f.ops, opsDailyMax: 20 }, extra || {}));
+  return f;
+}
+const rs = (port, body, headers) => req(port, 'POST', '/api/ops/systemd/restart', body,
+  Object.assign({ Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() }, headers || {}));
+
+test('ops-restart: ヘルパ (checkOpsDailyLimit / isProtectedOpsTarget)', () => {
+  assert.deepEqual(srv.checkOpsDailyLimit({ count: 0 }, 2), { ok: true });
+  assert.equal(srv.checkOpsDailyLimit({ count: 2 }, 2).error, 'OPS_DAILY_LIMIT');
+  assert.equal(srv.checkOpsDailyLimit({ count: 0, corrupt: true }, 2).error, 'OPS_USAGE_UNREADABLE', '破損は fail-closed');
+  ['web-startup', 'Web-Startup-Tools', 'cloudflared', 'my-Tunnel-svc'].forEach(n => assert.equal(srv.isProtectedOpsTarget(n), true, n));
+  ['Alpha-App', 'Mirai-DX-Project'].forEach(n => assert.equal(srv.isProtectedOpsTarget(n), false, n));
+});
+
+test('ops-restart: 子プロセスの環境は絞る (サーバーの秘密・claude の認証は渡さず、systemctl --user に必要な変数は通す)', () => {
+  const e = srv.opsChildEnv({ PATH: '/bin', HOME: '/h', XDG_RUNTIME_DIR: '/run/user/1000', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus', CLAUDEOS_HOME: '/h/.claudeos',
+    STARTUP_WEB_PASSWORD: 'p', CF_ACCESS_AUD: 'a', CLAUDE_CODE_OAUTH_TOKEN: 't', ANTHROPIC_API_KEY: 'k', GITHUB_TOKEN: 'g', MY_SECRET: 's', LANG: 'ja' });
+  assert.deepEqual(Object.keys(e).sort(), ['CLAUDEOS_HOME', 'DBUS_SESSION_BUS_ADDRESS', 'HOME', 'LANG', 'PATH', 'XDG_RUNTIME_DIR']);
+});
+
+test('ops-restart: 既定で無効 (STARTUP_WEB_OPS_RESTART_ENABLE 未設定は 403 で何も実行しない)', async () => {
+  const f = opsExecFixture('disabled');
+  await withServer(f.cfg({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error, 'OPS_DISABLED');
+  });
+  assert.equal(f.callLines().length, 0);
+});
+
+test('ops-restart: 認証は Access JWT のみ — JWT 無し/不正は拒否、Basic が設定されていても JWT 無しは拒否、Access 未設定は拒否 (fail-closed)', async () => {
+  const f = opsExecFixture('auth');
+  await withServer(f.cfg2({}), async (port) => {
+    const noJwt = await req(port, 'POST', '/api/ops/systemd/restart', { project: 'Alpha-App', confirm: true }, { Origin: 'http://127.0.0.1:' + port });
+    assert.equal(noJwt.json.error, 'OPS_AUTH_FAILED');
+    const bad = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ aud: ['other'] }) });
+    assert.equal(bad.json.error, 'OPS_AUTH_FAILED');
+    const noOrigin = await req(port, 'POST', '/api/ops/systemd/restart', { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt() });
+    assert.equal(noOrigin.json.error, 'ORIGIN_REQUIRED', 'Origin 必須 (checkMutationRequest より厳格)');
+  });
+  // Basic だけ設定 (Access 無し): プロンプト送信なら通る構成でも、変更系は実行しない
+  const basic = 'Basic ' + Buffer.from('u:pw').toString('base64');
+  await withServer(f.cfg2({ authUser: 'u', authPass: 'pw', accessTeamDomain: '', accessAud: '' }), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true }, { Authorization: basic });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error, 'OPS_AUTH_NOT_CONFIGURED');
+  });
+  // Basic と Access の両方が設定されていても、JWT が無ければ Basic では実行しない
+  await withServer(f.cfg2({ authUser: 'u', authPass: 'pw' }), async (port) => {
+    const r = await req(port, 'POST', '/api/ops/systemd/restart', { project: 'Alpha-App', confirm: true }, { Origin: 'http://127.0.0.1:' + port, Authorization: basic });
+    assert.equal(r.json.error, 'OPS_AUTH_FAILED');
+  });
+  assert.equal(f.callLines().length, 0, '拒否では systemd-control を一度も呼ばない');
+});
+
+test('ops-restart: 実行者 (メール) を特定できない JWT では実行しない', async () => {
+  const f = opsExecFixture('noemail');
+  await withServer(f.cfg2({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: '' }) });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error, 'OPS_AUTH_FAILED');
+  });
+  assert.equal(f.callLines().length, 0);
+});
+
+test('ops-restart: confirm=true が無ければ実行しない。不正な project・保護対象 (web-startup / cloudflared / tunnel) は拒否', async () => {
+  const f = opsExecFixture('guards');
+  await withServer(f.cfg2({}), async (port) => {
+    assert.equal((await rs(port, { project: 'Alpha-App' })).json.error, 'CONFIRM_REQUIRED');
+    assert.equal((await rs(port, { project: 'Alpha-App', confirm: 'true' })).json.error, 'CONFIRM_REQUIRED', '文字列の true は確認と見なさない');
+    assert.equal((await rs(port, { project: 'No-Such', confirm: true })).json.error, 'PROJECT_NOT_REGISTERED');
+    assert.equal((await rs(port, { project: 'x; reboot', confirm: true })).json.error, 'PROJECT_NOT_REGISTERED');
+    const prot = await rs(port, { project: 'Mirai-DX-Project/Cloudflared-Tools', confirm: true });
+    assert.equal(prot.status, 403);
+    assert.equal(prot.json.error, 'OPS_TARGET_PROTECTED', '自己ロックアウトを避けるため固定で拒否');
+    const arr = await req(port, 'POST', '/api/ops/systemd/restart', [1], { Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() });
+    assert.equal(arr.json.error, 'BODY_NOT_OBJECT');
+  });
+  assert.equal(f.callLines().length, 0);
+});
+
+test('ops-restart: 成功は systemd-control restart <project> を 1 回だけ実行し、監査ログに JWT のメールを残す', async () => {
+  const f = opsExecFixture('ok');
+  await withServer(f.cfg2({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: 'ops-audit@example.test' }) });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.exitCode, 0);
+    assert.match(r.json.output, /restart ok: Alpha-App/);
+    assert.deepEqual(r.json.daily, { count: 1, max: 20 });
+  });
+  assert.deepEqual(f.callLines(), ['restart Alpha-App']);
+  const log = fs.readFileSync(path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log'), 'utf8');
+  assert.ok(log.includes('ops-restart') && log.includes('ops-audit@example.test'), '操作・対象・認証主体を記録する');
+});
+
+test('ops-restart: スクリプトが失敗したら ok:false / RESTART_FAILED (成功と誤報しない)。失敗も使用済みに数える', async () => {
+  const f = opsExecFixture('fail');
+  fs.writeFileSync(path.join(f.base, 'fail'), '');
+  await withServer(f.cfg2({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, false);
+    assert.equal(r.json.error, 'RESTART_FAILED');
+    assert.equal(r.json.exitCode, 5);
+    assert.match(r.json.stderr, /Unit not loaded/);
+    assert.equal(r.json.daily.count, 1);
+  });
+});
+
+test('ops-restart: 日次上限 (専用カウンタ。プロンプト送信と共有しない)・破損は fail-closed', async () => {
+  const f = opsExecFixture('daily');
+  await withServer(f.cfg2({ opsDailyMax: 2 }), async (port) => {
+    assert.equal((await rs(port, { project: 'Alpha-App', confirm: true })).json.ok, true);
+    assert.equal((await rs(port, { project: 'Alpha-App', confirm: true })).json.ok, true);
+    const third = await rs(port, { project: 'Alpha-App', confirm: true });
+    assert.equal(third.status, 429);
+    assert.equal(third.json.error, 'OPS_DAILY_LIMIT');
+    assert.deepEqual(third.json.daily, { count: 2, max: 2 });
+  });
+  assert.equal(f.callLines().length, 2, '上限超過では実行しない');
+  assert.ok(!fs.existsSync(f.web) || fs.readdirSync(f.web).every(n => !n.startsWith('usage-')), 'プロンプト用の使用量ファイルには書かない');
+  fs.writeFileSync(path.join(f.ops, 'usage-' + srv.usageDay() + '.json'), '{broken');
+  await withServer(f.cfg2({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true });
+    assert.equal(r.status, 429);
+    assert.equal(r.json.error, 'OPS_USAGE_UNREADABLE');
+  });
+  assert.equal(f.callLines().length, 2);
+});
+
+test('ops-restart: 実行中の再起動があるときは 409 (同時実行は 1 件)', async () => {
+  const f = opsExecFixture('concurrent');
+  fs.writeFileSync(path.join(f.base, 'slow'), '');
+  await withServer(f.cfg2({}), async (port) => {
+    const first = rs(port, { project: 'Alpha-App', confirm: true });
+    await new Promise(r => setTimeout(r, 300));
+    const second = await rs(port, { project: 'Alpha-App', confirm: true });
+    assert.equal(second.status, 409);
+    assert.equal(second.json.error, 'OPS_IN_PROGRESS');
+    assert.equal((await first).json.ok, true);
+    const after = await rs(port, { project: 'Alpha-App', confirm: true });
+    assert.equal(after.json.ok, true, '完了後は再び実行できる');
+  });
+  assert.equal(f.callLines().length, 2);
+});

@@ -408,3 +408,67 @@ test('v2.html: Cron 登録 / Systemd 起動・停止・自動起動は「計画�
   assert.ok(tpl.includes("this.opsPlan(op.replace(' ', '-'), String(name).replace(/^claudeos-/, '').replace(/\\.service$/, ''))"), 'unit 名 → プロジェクト名の変換');
   assert.ok(tpl.includes("this.opsPlan('cron-add', s.cfProject"), 'Cron 登録が計画 API を使う');
 });
+
+test('v2.html: Systemd 再起動は「計画 → 確認 → 実行」の二段階 (実コードを実行) — 1 回目は実行せず、30 秒以内の 2 回目だけ実行する', async () => {
+  const { tpl } = loadTemplate();
+  const a = tpl.indexOf('/*rs-start*/sdRestart(unit) {');
+  const b = tpl.indexOf('}/*rs-end*/');
+  assert.ok(a > 0 && b > a, 'sdRestart が見つからない');
+  const body = tpl.slice(a + '/*rs-start*/sdRestart(unit) {'.length, b);
+  const make = (planTone, resp, st) => {
+    const calls = { plan: [], post: [] };
+    const fake = {
+      state: Object.assign({ sdArm: '', sdArmAt: 0, notice: null }, st || {}),
+      opsPlan(op, proj) { calls.plan.push([op, proj]); this.state.notice = { tone: planTone, text: 'plan' }; return Promise.resolve(planTone === 'ok'); },
+      livePost(url, payload) { calls.post.push({ url, payload }); return Promise.resolve(resp); },
+      errText: loadErrText(tpl),
+      logged(o, p, r) { return [o, p, r]; },
+      setState(p) { Object.assign(this.state, p); },
+    };
+    return { fake, calls, run: (unit) => new Function('unit', body).call(fake, unit) };
+  };
+  // 1 回目: 計画のみ。実行 API は呼ばず、確認待ちにする
+  const t1 = make('ok', { ok: true });
+  await t1.run('claudeos-Foo.service');
+  assert.deepEqual(t1.calls.plan, [['systemd-restart', 'Foo']], 'unit 名 → プロジェクト名');
+  assert.equal(t1.calls.post.length, 0, '1 回目は実行しない');
+  assert.equal(t1.fake.state.sdArm, 'claudeos-Foo.service');
+  // 計画が取れなかった (管理外 unit など) ときは確認待ちにしない
+  const t0 = make('warn', { ok: true });
+  await t0.run('claude-startuptools-ttyd.service');
+  assert.equal(t0.fake.state.sdArm, '', '計画に失敗したら 2 回目でも実行へ進めない');
+  // 2 回目 (30 秒以内・同じ unit): 実行
+  const t2 = make('ok', { ok: true, output: 'restart ok' }, { sdArm: 'claudeos-Foo.service', sdArmAt: Date.now() - 1000 });
+  await t2.run('claudeos-Foo.service');
+  assert.deepEqual(t2.calls.post, [{ url: '/api/ops/systemd/restart', payload: { project: 'Foo', confirm: true } }]);
+  assert.equal(t2.calls.plan.length, 0);
+  assert.equal(t2.fake.state.sdArm, '', '実行後は確認待ちを解除');
+  assert.match(t2.fake.state.notice.text, /再起動しました/);
+  assert.equal(t2.fake.state.notice.tone, 'ok');
+  // 別の unit / 30 秒超過は、確認待ちとして扱わず計画から
+  const t3 = make('ok', { ok: true }, { sdArm: 'claudeos-Foo.service', sdArmAt: Date.now() - 1000 });
+  await t3.run('claudeos-Bar.service');
+  assert.equal(t3.calls.post.length, 0, '別の unit は実行しない');
+  const t4 = make('ok', { ok: true }, { sdArm: 'claudeos-Foo.service', sdArmAt: Date.now() - 31000 });
+  await t4.run('claudeos-Foo.service');
+  assert.equal(t4.calls.post.length, 0, '30 秒を過ぎたら計画からやり直す');
+  // サーバーの拒否・失敗は日本語で表示する (成功扱いにしない)
+  for (const [resp, re] of [[{ ok: false, error: 'OPS_DISABLED' }, /無効です/], [{ ok: false, error: 'OPS_AUTH_FAILED' }, /認証に失敗/],
+    [{ ok: false, error: 'OPS_TARGET_PROTECTED' }, /自己ロックアウト/], [{ ok: false, error: 'OPS_DAILY_LIMIT' }, /上限/],
+    [{ ok: false, error: 'RESTART_FAILED', stderr: 'Unit not loaded' }, /再起動に失敗しました.*Unit not loaded/]]) {
+    const t = make('ok', resp, { sdArm: 'claudeos-Foo.service', sdArmAt: Date.now() });
+    await t.run('claudeos-Foo.service');
+    assert.equal(t.fake.state.notice.tone, 'warn');
+    assert.match(t.fake.state.notice.text, re);
+  }
+  // 連打: 確認済みの状態で 2 回続けて押しても、実行 API は 1 回だけ
+  const tr = make('ok', { ok: true, output: 'x' }, { sdArm: 'claudeos-Foo.service', sdArmAt: Date.now() });
+  const p1 = tr.run('claudeos-Foo.service');
+  const p2 = tr.run('claudeos-Foo.service');
+  await Promise.all([p1, p2]);
+  assert.equal(tr.calls.post.length, 1, '連打で二重に実行しない');
+  await tr.run('claudeos-Foo.service');
+  assert.equal(tr.calls.plan.length, 1, '実行完了後の次のクリックは計画から (確認待ちは解除済み)');
+  assert.ok(tpl.includes('restart: () => this.sdRestart(u.name)'), '行の再起動ボタンが sdRestart を呼ぶ');
+  assert.ok(tpl.includes('{{ u.restartLabel }}'), '再起動ボタンの描画');
+});
