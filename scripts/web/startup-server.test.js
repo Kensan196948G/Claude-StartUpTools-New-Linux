@@ -1706,14 +1706,15 @@ test('hardening: Web 会話の実行中は apply-all を実適用しない (起�
       first.on('error', () => { /* 切断時の ECONNRESET は想定内 */ });
       first.end(JSON.stringify({ project: 'Alpha-App', text: 'long', confirm: true }));
       const res1 = await got;
+      // スタブが pid を書くまで待つ (切断すると子を即停止するため、先に待たないと CI のような遅い環境で pid が書かれない)
+      for (let i = 0; i < 100 && !fs.existsSync(f.pid); i++) await new Promise(r => setTimeout(r, 100));
       const blocked = await req(port, 'POST', '/api/startup/apply-all', { confirm: true });
       assert.equal(blocked.status, 409);
       assert.equal(blocked.json.error, 'PROMPT_IN_PROGRESS');
+      const pid = fs.existsSync(f.pid) ? Number(fs.readFileSync(f.pid, 'utf8').trim()) : 0;
       res1.destroy();
       first.destroy();
-      for (let i = 0; i < 50 && !fs.existsSync(f.pid); i++) await new Promise(r => setTimeout(r, 100));
-      const pid = Number(fs.readFileSync(f.pid, 'utf8').trim());
-      for (let i = 0; i < 60; i++) { await new Promise(r => setTimeout(r, 100)); try { process.kill(pid, 0); } catch { break; } }
+      for (let i = 0; i < 60 && pid > 0; i++) { await new Promise(r => setTimeout(r, 100)); try { process.kill(pid, 0); } catch { break; } }
     });
   });
 });
