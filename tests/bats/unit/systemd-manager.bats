@@ -202,3 +202,18 @@ _mk_project() {   # <name> [files...]
   run bash "$REPO_ROOT/bin/systemd-control.sh" frobnicate
   [ "$status" -eq 1 ]
 }
+
+# Web 計画 API (POST /api/ops/plan) が使う 5 操作は、--dry-run で実データを一切変えない (将来 cmd_* に副作用が足されても検知する)
+@test "systemd-control: start/stop/restart/enable/disable の --dry-run は systemctl・台帳・unit に触れない" {
+  _mk_project Demo >/dev/null; touch "$PROJECTS/Demo/server.js"
+  printf '#!/usr/bin/env bash\necho "$*" >> "%s/systemctl.calls"\nexit 0\n' "$TEST_TEMP" > "$CCSU_SYSTEMCTL_BIN"
+  local v
+  for v in start stop restart enable disable; do
+    run bash "$REPO_ROOT/bin/systemd-control.sh" "$v" Demo --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"dry-run"* ]]
+  done
+  [ ! -f "$TEST_TEMP/systemctl.calls" ]            # 実 systemctl は一度も呼ばれない
+  [ ! -f "$CCSU_SYSTEMD_REGISTRY" ]                # 台帳を作らない (enable でも registry_set_enabled しない)
+  [ ! -e "$CCSU_SYSTEMD_USER_DIR/claudeos-Demo.service" ]   # 未生成の unit を generate しない
+}

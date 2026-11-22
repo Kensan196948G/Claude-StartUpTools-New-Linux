@@ -764,6 +764,8 @@ function createServer(cfg) {
     promptEnabled: process.env.STARTUP_WEB_PROMPT_ENABLE === '1',   // 既定は無効 (高リスク機能)
     promptBudgetUsd: positiveNumber(process.env.STARTUP_WEB_PROMPT_BUDGET_USD, 2),
     promptTimeoutMs: Math.max(1000, positiveNumber(process.env.STARTUP_WEB_PROMPT_TIMEOUT_MS, 600000)),
+    opsPlanTimeoutMs: positiveNumber(process.env.STARTUP_WEB_OPS_PLAN_TIMEOUT_MS, 15000),   // dry-run は短時間で終わる
+    opsPlanMaxConcurrent: 3,
     promptDailyMax: Math.floor(positiveNumber(process.env.STARTUP_WEB_PROMPT_DAILY_MAX, 50)),          // 1 日の送信回数の上限
     promptDailyBudgetUsd: positiveNumber(process.env.STARTUP_WEB_PROMPT_DAILY_BUDGET_USD, 10),        // 1 日の累計予算の上限 (USD)
     promptEnvPass: String(process.env.STARTUP_WEB_PROMPT_ENV_PASS || '').split(',').map(x => x.trim()).filter(x => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x)),
@@ -784,6 +786,7 @@ function createServer(cfg) {
 
   // 変更系操作は同時 1 件 (レースで同じプロジェクトを二重起動しない)
   let busy = false;
+  let opsPlanRunning = 0;   // 計画 (dry-run) の同時実行数 (読み取りだが bash を起動するため上限を設ける)
 
   /**
    * state の短命キャッシュ。
@@ -1042,6 +1045,65 @@ function createServer(cfg) {
     } finally {
       busy = false;
     }
+  }
+
+  /**
+   * handleOpsPlan — Cron / Systemd の変更系操作の「計画のみ」(段階 1。docs/architecture/WEB_MUTATING_OPS_DESIGN.md)。
+   *   CLI を必ず --dry-run 付きで実行し、その出力を返すだけ。実データは変更しない (実行は未接続のまま)。
+   *   操作名は許可リストから引数を組み立てる (シェル文字列を作らない)。
+   *   cron run-now は、サービスが NoNewPrivileges のため crontab を読めず「未登録」と誤報し得るので対象外 (方式 B の導入後)。
+   */
+  async function handleOpsPlan(res, body, remote) {
+    const op = typeof body.op === 'string' ? body.op : '';
+    const rejectPlan = (status, error, extra) => {
+      appendAudit(Object.assign({ action: 'ops-plan-rejected', error, op: op.slice(0, 40), remote }, extra || {}));
+      return json(res, status, { ok: false, error });
+    };
+    const SYSTEMD_VERBS = { 'systemd-start': 'start', 'systemd-stop': 'stop', 'systemd-restart': 'restart', 'systemd-enable': 'enable', 'systemd-disable': 'disable' };
+    const isCron = op === 'cron-add';
+    if (!isCron && !Object.prototype.hasOwnProperty.call(SYSTEMD_VERBS, op)) return rejectPlan(400, 'OP_INVALID');
+    const ctx = await resolveContext();
+    if (!ctx.ok) return json(res, 500, { ok: false, error: ctx.error });
+    const proj = validateProject(body.project, ctx.allowed);
+    if (!proj.ok) return rejectPlan(400, proj.error, { project: typeof body.project === 'string' ? body.project.slice(0, 120) : '' });
+    let bin, args;
+    const params = {};
+    if (isCron) {
+      const time = typeof body.time === 'string' ? body.time : '';
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return rejectPlan(400, 'TIME_INVALID', { project: proj.value });
+      const dow = String(body.dow === undefined || body.dow === null ? '' : body.dow);
+      if (!/^[0-6](,[0-6]){0,6}$/.test(dow)) return rejectPlan(400, 'DOW_INVALID', { project: proj.value });
+      // 数値か、数字だけの文字列のみ (true / [] / '1e2' などを通さない)
+      const durOk = (typeof body.duration === 'number') || (typeof body.duration === 'string' && /^[0-9]{1,4}$/.test(body.duration));
+      const dur = durOk ? Number(body.duration) : NaN;
+      if (!Number.isInteger(dur) || dur < 1 || dur > 1440) return rejectPlan(400, 'DURATION_INVALID', { project: proj.value });
+      const goal = validateGoal(body.goal, ctx.goals);
+      if (!goal.ok) return rejectPlan(400, goal.error, { project: proj.value });
+      bin = path.join(conf.root, 'bin', 'cron-schedule.sh');
+      args = ['add', '--project', proj.value, '--time', time, '--dow', dow, '--duration', String(dur)];
+      if (goal.value) args.push('--goal-type', goal.value);
+      Object.assign(params, { time, dow, duration: dur, goal: goal.value });
+    } else {
+      bin = path.join(conf.root, 'bin', 'systemd-control.sh');
+      args = [SYSTEMD_VERBS[op], proj.value];
+    }
+    args.push('--dry-run');
+    if (opsPlanRunning >= conf.opsPlanMaxConcurrent) return rejectPlan(429, 'OPS_PLAN_BUSY', { project: proj.value });
+    opsPlanRunning++;
+    let r;
+    try {
+      r = await runScript(bin, args, { cwd: conf.root, timeoutMs: conf.opsPlanTimeoutMs });
+    } finally {
+      opsPlanRunning--;
+    }
+    appendAudit(Object.assign({ action: 'ops-plan', op, project: proj.value, exit: r.exitCode, remote }, params));
+    const clean = (t) => String(t || '').replace(/\u001b\[[0-9;]*m/g, '').trim().slice(0, 4000);   // ANSI 除去・長さ上限
+    return json(res, 200, {
+      ok: r.exitCode === 0, op, dryRun: true, exitCode: r.exitCode,
+      command: 'bash bin/' + path.basename(bin) + ' ' + args.join(' '),
+      plan: clean(r.stdout),
+      stderr: r.exitCode === 0 ? '' : clean(r.stderr),   // 成功時は環境依存のパス等を返さない
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -1788,6 +1850,12 @@ function createServer(cfg) {
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
         if (!b.value || typeof b.value !== 'object' || Array.isArray(b.value)) return json(res, 400, { ok: false, error: 'BODY_NOT_OBJECT' });
         return await handlePrompt(req, res, b.value, remote);
+      }
+      if (req.method === 'POST' && pn === '/api/ops/plan') {
+        const b = await readBody(req);
+        if (!b.ok) return json(res, 400, { ok: false, error: b.error });
+        if (!b.value || typeof b.value !== 'object' || Array.isArray(b.value)) return json(res, 400, { ok: false, error: 'BODY_NOT_OBJECT' });
+        return handleOpsPlan(res, b.value, remote);
       }
       if (req.method === 'POST' && pn === '/api/startup/apply-all') {
         const b = await readBody(req);
