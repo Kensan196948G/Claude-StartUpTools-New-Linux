@@ -561,6 +561,18 @@ test('HTTP: GET /api/ops/systemd は読み取り専用で unit 一覧を返す',
   });
 });
 
+test('isCronSchedule: 正しい 5 項目だけを cron と認め、説明コメントの断片は拒否する', () => {
+  const t = (s) => srv.isCronSchedule(s.split(' '));
+  assert.equal(t('0 2 * * *'), true);
+  assert.equal(t('*/5 1-3 * jan mon-fri'), true);
+  assert.equal(t('0 2 * * 1,3'), true);
+  assert.equal(t('2>&1 then not Do x'), false);
+  assert.equal(t('0*:0* a b c d'), false);
+  assert.equal(t('2026-07-11]:[STOPPED a b c'), false);
+  assert.equal(t('foo bar baz qux quux'), false);
+  assert.equal(srv.isCronSchedule(['0', '2', '*']), false);
+});
+
 test('HTTP: GET /api/ops/cron は entries 配列を返し、取得不能でも嘘をつかない', async () => {
   await withServer({}, async (port) => {
     const r = await req(port, 'GET', '/api/ops/cron');

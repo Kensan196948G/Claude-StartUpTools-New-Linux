@@ -186,6 +186,26 @@ function projectNames(state) {
   return Array.from(new Set([...names, ...extra]));
 }
 
+/**
+ * isCronSchedule — 先頭 5 項目が cron のスケジュール書式かを検証する。
+ *   説明コメント ("# ... then ...") を「無効化された cron 行」と誤認しないため。
+ *   各項目は * / 数字 / 範囲 / 名前 (月・曜日) とカンマ列挙、任意の /step を許す。
+ */
+const CRON_MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const CRON_DOWS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function isCronSchedule(fields) {
+  if (!Array.isArray(fields) || fields.length !== 5) return false;
+  const end = (v, names) => v === '*' || /^\d+$/.test(v) || names.includes(String(v).toLowerCase());
+  const part = (p, names) => {
+    const r = p.replace(/\/\d+$/, '').split('-');
+    if (r.length === 1) return end(r[0], names);
+    return r.length === 2 && r[0] !== '*' && end(r[0], names) && end(r[1], names);
+  };
+  const field = (f, names) => f.split(',').every((p) => part(p, names));
+  return field(fields[0], []) && field(fields[1], []) && field(fields[2], [])
+    && field(fields[3], CRON_MONTHS) && field(fields[4], CRON_DOWS);
+}
+
 /** resolveLogFile — ログ閲覧のパス検証 (~/.claudeos 配下のみ) */
 function resolveLogFile(filePath) {
   if (typeof filePath !== 'string' || filePath === '') return null;
@@ -674,6 +694,7 @@ function createServer(cfg) {
       const body = disabled ? t.replace(/^#(?:DISABLED-\d+)?#?\s*/, '') : t;
       const m = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(body);
       if (!m) return;
+      if (!isCronSchedule([m[1], m[2], m[3], m[4], m[5]])) return;   // 説明コメントを除外
       entries.push({
         disabled,
         schedule: [m[1], m[2], m[3], m[4], m[5]].join(' '),
@@ -1239,7 +1260,7 @@ module.exports = {
   createServer, parseArgs, usage, main,
   safeEqual, isLoopback, validateProject, validateMode, validateGoal, validateDuration,
   sanitizeIntent, buildLaunchArgs, buildStopArgs, buildApplyAllArgs, parseState,
-  projectNames, resolveLogFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
+  projectNames, isCronSchedule, resolveLogFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,
 };
 
