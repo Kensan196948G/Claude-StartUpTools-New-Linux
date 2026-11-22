@@ -87,7 +87,7 @@ CONSOLE_URL=<url> node scripts/e2e/console.e2e.js
 |---|---|
 | 品質チェックの実行 | ジョブ化済み。実チェックは数分かかる |
 | DevOps / SecOps の実行系 | 未接続（有無・現状値のみ） |
-| Cron の追加・削除・run-now | 未接続（読み取り専用） |
+| Cron の追加・削除・run-now | 未接続（読み取り専用）。配線の設計案: `WEB_MUTATING_OPS_DESIGN.md` |
 | state の cold 短縮 | **未達**。主コストは 190 プロジェクト分の `_project_json`（1 件あたり十数回の jq）。1 秒台には一括化が必要 |
 | `_all_folders` の `find` 化 | 撤回。symlink 配下の欠落・隠しディレクトリ配下の混入で一覧の意味が変わる |
 | 実セッションの起動・停止 E2E | 未実施（計画 = dry-run までを検証） |
