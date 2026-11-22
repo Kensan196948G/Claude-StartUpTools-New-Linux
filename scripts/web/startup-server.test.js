@@ -1752,3 +1752,133 @@ test('hardening: Host は大文字小文字を区別せず比較し、loopback �
     assert.notEqual(lo.status, 403, 'ポート省略の localhost (リバースプロキシ経由) も許可');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 変更系操作の「計画のみ」(段階 1): POST /api/ops/plan は CLI を必ず --dry-run 付きで実行し、実データを変更しない
+// ---------------------------------------------------------------------------
+function opsFixture() {
+  const root = path.join(TMP, 'repo-ops-plan');
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(path.join(root, 'libexec'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  fs.copyFileSync(path.join(FIXTURE, 'libexec', 'startup-state.sh'), path.join(root, 'libexec', 'startup-state.sh'));
+  const calls = path.join(TMP, 'ops-plan-calls.txt');
+  fs.rmSync(calls, { force: true });
+  ['cron-schedule.sh', 'systemd-control.sh'].forEach((n) => {
+    fs.writeFileSync(path.join(root, 'bin', n), '#!/usr/bin/env bash\nprintf "%s %s\\n" "' + n + '" "$*" >> "' + calls + '"\nprintf "\\033[32mPLAN\\033[0m %s\\n" "$*"\n', { mode: 0o755 });
+  });
+  return { root, calls, lines: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').split('\n').filter(Boolean) : []) };
+}
+
+test('ops-plan: cron add / systemd の計画は --dry-run 付きで実行し、出力 (ANSI 除去) を返す', async () => {
+  const f = opsFixture();
+  await withServer({ root: f.root }, async (port) => {
+    const c = await req(port, 'POST', '/api/ops/plan', { op: 'cron-add', project: 'Alpha-App', time: '21:30', dow: '1,2,3', duration: 120 });
+    assert.equal(c.status, 200);
+    assert.equal(c.json.ok, true);
+    assert.equal(c.json.dryRun, true);
+    assert.equal(c.json.command, 'bash bin/cron-schedule.sh add --project Alpha-App --time 21:30 --dow 1,2,3 --duration 120 --dry-run');
+    assert.equal(c.json.plan, 'PLAN add --project Alpha-App --time 21:30 --dow 1,2,3 --duration 120 --dry-run', 'ANSI 色コードは除去される');
+    for (const verb of ['start', 'stop', 'restart', 'enable', 'disable']) {
+      const s = await req(port, 'POST', '/api/ops/plan', { op: 'systemd-' + verb, project: 'Alpha-App' });
+      assert.equal(s.status, 200, verb);
+      assert.equal(s.json.command, 'bash bin/systemd-control.sh ' + verb + ' Alpha-App --dry-run');
+    }
+    const lines = f.lines();
+    assert.equal(lines.length, 6);
+    lines.forEach((l) => assert.ok(l.endsWith(' --dry-run'), '必ず --dry-run が付く: ' + l));
+  });
+});
+
+test('ops-plan: 許可リスト外の操作・未登録プロジェクト・不正な引数は CLI を実行せず 400', async () => {
+  const f = opsFixture();
+  await withServer({ root: f.root }, async (port) => {
+    const bad = [
+      [{ op: 'cron-remove', project: 'Alpha-App' }, 'OP_INVALID'],
+      [{ op: 'cron-run-now', project: 'Alpha-App' }, 'OP_INVALID'],
+      [{ op: 'systemd-unregister', project: 'Alpha-App' }, 'OP_INVALID'],
+      [{ op: '__proto__', project: 'Alpha-App' }, 'OP_INVALID'],
+      [{ op: 'systemd-start', project: 'Nope' }, 'PROJECT_NOT_REGISTERED'],
+      [{ op: 'systemd-start', project: 'Alpha-App\nx' }, 'PROJECT_INVALID'],
+      [{ op: 'systemd-start', project: 'Alpha-App; rm -rf /' }, 'PROJECT_NOT_REGISTERED'],
+      [{ op: 'cron-add', project: 'Alpha-App', time: '25:00', dow: '1', duration: 60 }, 'TIME_INVALID'],
+      [{ op: 'cron-add', project: 'Alpha-App', time: '21:00', dow: '7', duration: 60 }, 'DOW_INVALID'],
+      [{ op: 'cron-add', project: 'Alpha-App', time: '21:00', dow: '1;2', duration: 60 }, 'DOW_INVALID'],
+      [{ op: 'cron-add', project: 'Alpha-App', time: '21:00', dow: '1', duration: 0 }, 'DURATION_INVALID'],
+      [{ op: 'cron-add', project: 'Alpha-App', time: '21:00', dow: '1', duration: 5000 }, 'DURATION_INVALID'],
+      [{ op: 'cron-add', project: 'Alpha-App', time: '21:00', dow: '1', duration: 60, goal: 'evil' }, 'GOAL_INVALID'],
+    ];
+    for (const [body, err] of bad) {
+      const r = await req(port, 'POST', '/api/ops/plan', body);
+      assert.equal(r.status, 400, JSON.stringify(body));
+      assert.equal(r.json.error, err, JSON.stringify(body));
+    }
+    const arr = await req(port, 'POST', '/api/ops/plan', [1]);
+    assert.equal(arr.status, 400);
+    assert.equal(arr.json.error, 'BODY_NOT_OBJECT');
+    assert.deepEqual(f.lines(), [], '検証に失敗した要求では CLI を実行しない');
+  });
+});
+
+test('ops-plan: 共通の変更系検査 (Host) が掛かる', async () => {
+  const f = opsFixture();
+  await withServer({ root: f.root }, async (port) => {
+    const r = await req(port, 'POST', '/api/ops/plan', { op: 'systemd-start', project: 'Alpha-App' }, { Host: 'evil.example.com' });
+    assert.equal(r.status, 403);
+    assert.deepEqual(f.lines(), []);
+  });
+});
+
+test('ops-plan: duration の型を厳密に検査し、末尾改行の time を通さない (レビュー指摘)', async () => {
+  const f = opsFixture();
+  await withServer({ root: f.root }, async (port) => {
+    const base = { op: 'cron-add', project: 'Alpha-App', time: '21:00', dow: '1' };
+    for (const d of [true, [60], '1e2', '60 ', '-5', null, {}]) {
+      const r = await req(port, 'POST', '/api/ops/plan', Object.assign({}, base, { duration: d }));
+      assert.equal(r.status, 400, 'duration=' + JSON.stringify(d));
+      assert.equal(r.json.error, 'DURATION_INVALID');
+    }
+    const ok = await req(port, 'POST', '/api/ops/plan', Object.assign({}, base, { duration: '60' }));
+    assert.equal(ok.status, 200, '数字だけの文字列は許可');
+    const nl = await req(port, 'POST', '/api/ops/plan', Object.assign({}, base, { time: '21:00\n', duration: 60 }));
+    assert.equal(nl.json.error, 'TIME_INVALID');
+    assert.equal(f.lines().length, 1, '検証に失敗した要求では CLI を実行しない');
+  });
+});
+
+test('ops-plan: CLI が失敗したら ok:false と stderr を返し、出力は切り詰め、成功時は stderr を返さない', async () => {
+  const f = opsFixture();
+  fs.writeFileSync(path.join(f.root, 'bin', 'systemd-control.sh'),
+    '#!/usr/bin/env bash\nif [ "$1" = "stop" ]; then echo "boom: /home/x/secret-path" >&2; exit 3; fi\nif [ "$1" = "start" ]; then head -c 20000 /dev/zero | tr "\\0" "A"; echo "noise" >&2; exit 0; fi\nexit 0\n', { mode: 0o755 });
+  await withServer({ root: f.root }, async (port) => {
+    const bad = await req(port, 'POST', '/api/ops/plan', { op: 'systemd-stop', project: 'Alpha-App' });
+    assert.equal(bad.status, 200);
+    assert.equal(bad.json.ok, false);
+    assert.equal(bad.json.exitCode, 3);
+    assert.match(bad.json.stderr, /boom/);
+    const big = await req(port, 'POST', '/api/ops/plan', { op: 'systemd-start', project: 'Alpha-App' });
+    assert.equal(big.json.ok, true);
+    assert.equal(big.json.plan.length, 4000, '出力は 4000 文字で切り詰める');
+    assert.equal(big.json.stderr, '', '成功時は stderr (環境依存の情報) を返さない');
+  });
+});
+
+test('ops-plan: 同時実行の上限 (3 本まで。超えたら 429) と計画専用の短い制限時間', async () => {
+  const f = opsFixture();
+  fs.writeFileSync(path.join(f.root, 'bin', 'systemd-control.sh'), '#!/usr/bin/env bash\nsleep 1\necho done\n', { mode: 0o755 });
+  await withServer({ root: f.root }, async (port) => {
+    const rs = await Promise.all([1, 2, 3, 4, 5].map(() => req(port, 'POST', '/api/ops/plan', { op: 'systemd-start', project: 'Alpha-App' })));
+    const codes = rs.map((r) => r.status).sort();
+    assert.equal(codes.filter((c) => c === 200).length, 3, '同時に走るのは 3 本');
+    assert.equal(codes.filter((c) => c === 429).length, 2);
+    assert.equal(rs.find((r) => r.status === 429).json.error, 'OPS_PLAN_BUSY');
+    const after = await req(port, 'POST', '/api/ops/plan', { op: 'systemd-start', project: 'Alpha-App' });
+    assert.equal(after.status, 200, '解放されたら再び実行できる');
+  });
+  fs.writeFileSync(path.join(f.root, 'bin', 'systemd-control.sh'), '#!/usr/bin/env bash\nsleep 5\n', { mode: 0o755 });
+  await withServer({ root: f.root, opsPlanTimeoutMs: 300 }, async (port) => {
+    const t = await req(port, 'POST', '/api/ops/plan', { op: 'systemd-start', project: 'Alpha-App' });
+    assert.equal(t.json.exitCode, 124, '制限時間で打ち切る');
+    assert.equal(t.json.ok, false);
+  });
+});

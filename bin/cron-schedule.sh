@@ -74,6 +74,10 @@ cs__add() {
   done
   [[ -n "$project" && -n "$time" && -n "$dow" ]] || { log_error "add: --project / --time / --dow は必須"; return 1; }
   local -a dows; IFS=',' read -ra dows <<< "$dow"
+  # 形式検査は実登録 (cron__add) と同じ。dry-run の計画が、実行時の結果と食い違わないようにする
+  if [[ -n "$goal_type" ]] && ! [[ "$goal_type" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    log_error "goal-type は英数字とハイフンのみ: $goal_type"; return 1
+  fi
   if (( CS_DRY_RUN )); then
     local expr
     expr="$(cron__format_expr "$time" "${dows[@]}")" || return 1

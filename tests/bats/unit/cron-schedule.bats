@@ -292,3 +292,18 @@ EOF
   run bash "$SCRIPT" frobnicate
   [ "$status" -ne 0 ]
 }
+
+# Web 計画 API (POST /api/ops/plan cron-add) が使う add --dry-run は crontab を書かない
+@test "cron-schedule: add --dry-run は crontab を書き換えない (計画だけを表示する)" {
+  printf '0 1 * * * /opt/existing.sh\n' > "$CRON_STORE"
+  before="$(cat "$CRON_STORE")"
+  run bash "$SCRIPT" add --project MyProj --time 21:30 --dow 3 --duration 60 --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dry-run"* ]]
+  [ "$(cat "$CRON_STORE")" = "$before" ]
+}
+
+@test "cron-schedule: add --dry-run も --goal-type の形式を検証する (計画と実行の結果を食い違わせない)" {
+  run bash "$SCRIPT" add --project MyProj --time 21:30 --dow 3 --duration 60 --goal-type 'bad type;x' --dry-run
+  [ "$status" -ne 0 ]
+}

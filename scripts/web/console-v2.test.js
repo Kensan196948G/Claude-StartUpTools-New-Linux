@@ -370,3 +370,38 @@ test('v2.html: 権限モードの表記は固定の「auto」や「自律実行�
   assert.ok(!tpl.includes('自律実行と同じ権限'), '実態と異なる「自律実行と同じ権限」が残っている');
   assert.ok(tpl.includes('権限モードはサーバー設定'));
 });
+
+test('v2.html: Cron 登録 / Systemd 起動・停止・自動起動は「計画のみ」(実コードを実行) — 実行したように見せず、サーバーの dry-run 出力を表示する', async () => {
+  const { tpl } = loadTemplate();
+  const a = tpl.indexOf('/*op-start*/opsPlan(op, project, extra) {');
+  const b = tpl.indexOf('}/*op-end*/');
+  assert.ok(a > 0 && b > a, 'opsPlan が見つからない');
+  const body = tpl.slice(a + '/*op-start*/opsPlan(op, project, extra) {'.length, b);
+  const run = (resp, op, project, extra) => {
+    const calls = { post: null, patch: null };
+    const fake = {
+      state: { sdOut: 'old' },
+      livePost(url, payload) { calls.post = { url, payload }; return Promise.resolve(resp); },
+      errText: loadErrText(tpl),
+      logged(o, p, r) { return [o, p, r]; },
+      setState(p) { calls.patch = p; },
+    };
+    return new Function('op', 'project', 'extra', body).call(fake, op, project, extra).then(() => calls);
+  };
+  const ok = await run({ ok: true, command: 'bash bin/systemd-control.sh stop Foo --dry-run', plan: '[dry-run] systemctl --user stop x', stderr: '' }, 'systemd-stop', 'Foo');
+  assert.equal(ok.post.url, '/api/ops/plan');
+  assert.deepEqual(ok.post.payload, { op: 'systemd-stop', project: 'Foo' }, '実行 API ではなく計画 API を叩く');
+  assert.match(ok.patch.notice.text, /^【計画のみ・何も変更していません】/);
+  assert.match(ok.patch.notice.text, /\[dry-run\] systemctl --user stop x/);
+  assert.equal(ok.patch.notice.tone, 'ok');
+  assert.match(ok.patch.sdOut, /dry-run/, 'systemd は出力欄にも表示する');
+  const cli = await run({ ok: false, command: 'bash bin/cron-schedule.sh add ... --dry-run', plan: '', stderr: '月曜は登録上限を超えます' }, 'cron-add', 'Foo', { time: '21:00' });
+  assert.deepEqual(cli.post.payload, { op: 'cron-add', project: 'Foo', time: '21:00' });
+  assert.equal(cli.patch.notice.tone, 'warn', 'CLI の検証エラーも計画の結果として表示する');
+  assert.match(cli.patch.notice.text, /月曜は登録上限/);
+  assert.equal(cli.patch.sdOut, 'old', 'cron のときは systemd 出力欄を触らない');
+  const rej = await run({ ok: false, error: 'PROJECT_NOT_REGISTERED' }, 'systemd-start', 'x');
+  assert.match(rej.patch.notice.text, /登録されていません/, '検証エラーは日本語で表示する');
+  assert.ok(tpl.includes("this.opsPlan(op.replace(' ', '-'), String(name).replace(/^claudeos-/, '').replace(/\\.service$/, ''))"), 'unit 名 → プロジェクト名の変換');
+  assert.ok(tpl.includes("this.opsPlan('cron-add', s.cfProject"), 'Cron 登録が計画 API を使う');
+});

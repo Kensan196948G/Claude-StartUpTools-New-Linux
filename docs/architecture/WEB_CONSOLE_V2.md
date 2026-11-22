@@ -21,8 +21,8 @@ ClaudeOS の起動・監視・運用を 1 画面に集約した Web UI。設計�
 | **起動** | `GET /api/startup/state`（`all_folders`） | プロジェクト選択 → 計画（`POST /api/startup/plan`）→ 起動（`/launch`、`confirm:true`） | 実起動は tmux セッションを作る |
 | **セッション監視** | 同上 `sessions` | 稼働状況の表示、停止（`/api/startup/stop`） | — |
 | **Supervisor 全適用** | `POST /api/startup/apply-all`（confirm 無し） | **計画のみ**取得 | 実適用は画面から不可（CLI で人間が実行） |
-| **Cron** | `GET /api/ops/cron` | crontab の一覧表示 | スナップショット経由。追加/削除/run-now は未接続 |
-| **Systemd** | `GET /api/ops/systemd` | unit の状態・有効化状態・ExecStart 表示 | 起動/停止等は未接続（読み取り専用） |
+| **Cron** | `GET /api/ops/cron`、`POST /api/ops/plan` | crontab の一覧表示、登録の計画（dry-run） | スナップショット経由。実際の追加/削除/run-now は未接続（計画のみ） |
+| **Systemd** | `GET /api/ops/systemd`、`POST /api/ops/plan` | unit の状態・有効化状態・ExecStart 表示、起動/停止/自動起動の計画（dry-run） | 実際の操作は未接続（計画のみ） |
 | **Agent Teams** | `GET /api/ops/agents` | 使用状況 JSON の表示 | history/diag/migrate は未接続 |
 | **SubAgent** | `GET /api/ops/agent-catalog` | カタログ KPI・一覧・統合・削除候補の表示 | 昇格/降格・Issue 化は未接続 |
 | **Managed Agents** | `GET /api/ops/managed-agents` | roster/registry/台帳・当月使用量 | 設定が無ければ「未設定」。依頼送信は未接続 |
@@ -41,6 +41,7 @@ GET  /api/startup/log | /audit
 GET  /api/ops/systemd | cron | agents | agent-catalog | managed-agents
 GET  /api/ops/diag?name=<key>       (allowlist: all-tools, mounts, mcp-health, agent-teams,
                                      worktree, architecture, claude-compat, postgres, control-plane*)
+POST /api/ops/plan  (cron-add | systemd-start/stop/restart/enable/disable。--dry-run のみ・実データ変更なし)
 POST /api/ops/release-check/start   GET /api/ops/release-check
 GET  /api/ops/devops | secops
 ```
