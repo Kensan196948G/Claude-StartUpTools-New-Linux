@@ -14,6 +14,9 @@
 #
 # 出力: $CLAUDEOS_HOME/cron-snapshot.json
 #   {"generated_at":"...","source":"crontab -l","ok":true,"count":N,"entries":[...]}
+#   ClaudeOS が登録したエントリ (直前に `# CLAUDEOS:<id> project=... duration=...` の印がある cron 行) には
+#   "claudeos":{"id","project","duration","created","goal"} を付ける。印の無い行 (他用途の cron) には付けない。
+#   Web の将来の「今すぐ実行」が、実行してよい対象 (ClaudeOS 管理分) だけを判定するための情報。
 # 秘密情報は含まない (crontab の内容そのもの)。書き込みは自分の HOME 配下のみ。
 # ============================================================
 set -euo pipefail
@@ -31,7 +34,7 @@ fi
 # 5 フィールド + コマンド。先頭 # は無効行 (DISABLED マーカー付きも含む)。
 # 先頭 5 語が cron のスケジュール書式でない行 (説明コメント等) はエントリにしない。
 #   例: "# 2>&1 then not Do ..." のように 6 語以上ある説明コメントを無効 cron と誤認しない。
-entries_json="$(printf '%s\n' "$crontab_text" | awk '
+entries_json="$(printf '%s\n' "$crontab_text" | awk -v prefix="${CCSU_CRON_PREFIX:-CLAUDEOS}" '
   # 1 要素: * / 数字 / 範囲 / 名前(names に含まれる 3 文字) + 任意の /step
   function okend(s, names) {
     if (s == "*" || s ~ /^[0-9]+$/) return 1
@@ -54,11 +57,31 @@ entries_json="$(printf '%s\n' "$crontab_text" | awk '
         && okfield(f[4], " jan feb mar apr may jun jul aug sep oct nov dec ") \
         && okfield(f[5], " sun mon tue wed thu fri sat ")
   }
-  BEGIN { first = 1; printf "[" }
+  function jesc(x) { gsub(/\\/, "\\\\", x); gsub(/"/, "\\\"", x); gsub(/[\001-\037]/, "", x); return x }
+  # 印 (# CLAUDEOS:<id> project=P duration=N created=T [goal=G]) から必要な項目を取り出す。id は英数字と _ - のみ
+  function parse_marker(l,   rest, id, p, d, c, g, m) {
+    rest = l; sub(/^#[ \t]*/, "", rest)
+    if (index(rest, prefix ":") != 1) return ""
+    rest = substr(rest, length(prefix) + 2)
+    if (!match(rest, /^[A-Za-z0-9_-]+/)) return ""
+    id = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+    if (rest != "" && substr(rest, 1, 1) !~ /[ \t]/) return ""
+    p = ""; d = ""; c = ""; g = ""
+    if (match(rest, /project=[^ \t]+/)) p = substr(rest, RSTART + 8, RLENGTH - 8)
+    if (match(rest, /duration=[0-9]+/)) d = substr(rest, RSTART + 9, RLENGTH - 9)
+    if (match(rest, /created=[^ \t]+/)) c = substr(rest, RSTART + 8, RLENGTH - 8)
+    if (match(rest, /goal=[A-Za-z0-9_-]+/)) g = substr(rest, RSTART + 5, RLENGTH - 5)
+    if (p == "" || d == "") return ""   # 対象 (project) と時間が読めない印は、管理対象と見なさない
+    return "{\"id\":\"" id "\",\"project\":\"" jesc(p) "\",\"duration\":" d ",\"created\":\"" jesc(c) "\",\"goal\":\"" g "\"}"
+  }
+  BEGIN { first = 1; printf "["; pending = "" }
   {
     line = $0
     gsub(/^[ \t]+|[ \t]+$/, "", line)
     if (line == "") next
+    mk = parse_marker(line)
+    if (mk != "") { pending = mk; next }   # 印の行そのものはエントリにしない。直後の行に付ける
+    meta = pending; pending = ""            # 印は直後の 1 行だけに有効 (cron__list と同じ)
     disabled = 0
     body = line
     if (substr(line, 1, 1) == "#") {
@@ -75,8 +98,8 @@ entries_json="$(printf '%s\n' "$crontab_text" | awk '
     gsub(/\\/, "\\\\", cmd); gsub(/"/, "\\\"", cmd)
     if (!first) printf ","
     first = 0
-    printf "{\"disabled\":%s,\"minute\":\"%s\",\"hour\":\"%s\",\"dom\":\"%s\",\"month\":\"%s\",\"dow\":\"%s\",\"command\":\"%s\"}", \
-      (disabled ? "true" : "false"), f[1], f[2], f[3], f[4], f[5], cmd
+    printf "{\"disabled\":%s,\"minute\":\"%s\",\"hour\":\"%s\",\"dom\":\"%s\",\"month\":\"%s\",\"dow\":\"%s\",\"command\":\"%s\"%s}", \
+      (disabled ? "true" : "false"), f[1], f[2], f[3], f[4], f[5], cmd, (meta != "" ? ",\"claudeos\":" meta : "")
   }
   END { printf "]" }
 ')"
