@@ -212,6 +212,12 @@ function resolveLogFile(filePath) {
   const base = path.resolve(CLAUDEOS_HOME);
   const full = path.resolve(filePath);
   if (full !== base && !full.startsWith(base + path.sep)) return null;
+  // シンボリックリンクで配下の外を指していないこと (存在するときだけ実体パスで再検証)
+  try {
+    const rb = fs.realpathSync(base);
+    const rf = fs.realpathSync(full);
+    if (rf !== rb && !rf.startsWith(rb + path.sep)) return null;
+  } catch { /* 未作成のファイルはここでは弾かない (読み取り時に空/404 になる) */ }
   return full;
 }
 
@@ -219,7 +225,20 @@ function resolveLogFile(filePath) {
 function tailLines(filePath, lines) {
   const n = Number.isInteger(lines) && lines > 0 ? Math.min(lines, 2000) : 200;
   try {
-    const text = fs.readFileSync(filePath, 'utf8');
+    // ライブ表示は 3 秒ごとに呼ばれる。巨大ログを毎回全読みしないよう、末尾の最大 512KB だけ読む。
+    const MAX_BYTES = 512 * 1024;
+    const fd = fs.openSync(filePath, 'r');
+    let text;
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, MAX_BYTES);
+      const buf = Buffer.alloc(len);
+      if (len > 0) fs.readSync(fd, buf, 0, len, size - len);
+      text = buf.toString('utf8');
+      if (size > len) text = text.slice(text.indexOf('\n') + 1);   // 先頭の欠けた行を捨てる
+    } finally {
+      fs.closeSync(fd);
+    }
     const arr = text.split('\n');
     if (arr.length && arr[arr.length - 1] === '') arr.pop();   // 末尾改行の空要素を落とす
     return arr.slice(Math.max(0, arr.length - n)).join('\n');
@@ -380,10 +399,13 @@ function runDetached(script, args, opts) {
  * supervisorStateFile — supervisor の状態ファイル。lib/common.sh の ccsu_safe_name と同じ規則
  *   ([A-Za-z0-9_-] 以外は 1 バイトずつ _ に置換) で <dir>/<safe>.json を返す。
  */
-function supervisorStateFile(dir, project) {
-  const safe = Array.from(Buffer.from(String(project), 'utf8'))
+function safeProjectName(project) {
+  return Array.from(Buffer.from(String(project), 'utf8'))
     .map(b => (/[A-Za-z0-9_-]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : '_')).join('');
-  return path.join(dir, safe + '.json');
+}
+
+function supervisorStateFile(dir, project) {
+  return path.join(dir, safeProjectName(project) + '.json');
 }
 
 function isPidAlive(pid) {
@@ -703,7 +725,13 @@ function createServer(cfg) {
     const proj = validateProject(name, ctx.allowed);
     if (!proj.ok) return json(res, 400, { ok: false, error: proj.error });
     const target = ctx.state.projects.find(p => p.name === proj.value) || {};
-    const file = resolveLogFile(target.log_file);
+    let file = resolveLogFile(target.log_file);
+    if (!file) {
+      // 登録外のサブフォルダ (all_folders 由来) は state に log_file が無い。
+      // supervisor が書く既定のログ (~/.claudeos/supervisor/<safe>.log) があればそれを返す。
+      const cand = resolveLogFile(path.join(conf.supervisorDir, safeProjectName(proj.value) + '.log'));
+      if (cand && fs.existsSync(cand)) file = cand;
+    }
     if (!file) return json(res, 404, { ok: false, error: 'LOG_NOT_FOUND' });
     const lines = parseInt(url.searchParams.get('lines') || '200', 10);
     return json(res, 200, {

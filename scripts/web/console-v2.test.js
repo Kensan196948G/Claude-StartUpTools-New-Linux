@@ -130,3 +130,50 @@ test('v2.html: 起動通知の tmux 名は ccsu_safe_name と同じ規則 (サ�
   assert.ok(tpl.includes("'claudeos-') + this.safeName(sel0)"), '単一起動の tmux 名が safeName を使っていない');
   assert.ok(tpl.includes("'claudeos-') + this.safeName(started[0])"), '複数起動の tmux 名が safeName を使っていない');
 });
+
+test('v2.html: セッション一覧はサーバーの実状態 (state.sessions) から作る (宣言順ごと実コードを実行)', () => {
+  const { tpl } = loadTemplate();
+  const a = tpl.indexOf('const folders = Array.isArray(s0.all_folders)');
+  const b = tpl.indexOf('/*ss-end*/');
+  assert.ok(a > 0 && b > a, 'セッション変換ブロックが見つからない');
+  // folders / registered の構築から変換ブロックまでを丸ごと実行する (TDZ: registered より前に参照しない)
+  const code = tpl.slice(a, b);
+  assert.ok(code.indexOf('const registered') < code.indexOf('/*ss-start*/'), 'registered の宣言が変換ブロックより後ろにある');
+  const safeName = (x) => String(x).replace(/[^A-Za-z0-9_-]/g, '_');
+  const build = new Function('s0', code + '\nreturn realSessions;');
+  const rows = build.call({ safeName }, {
+    all_folders: ['Business-Project/AI-Company-Control-Center', 'Alpha-App'],
+    projects: [{ name: 'Alpha-App' }],
+    sessions: {
+      tmux: ['claudeos-Business-Project_AI-Company-Control-Center', 'claudeos-team-Alpha-App', 'claudeos-unknown_x'],
+      headless: ['Alpha-App'], foreground: ['Alpha-App'] } });
+  const by = Object.fromEntries(rows.map(r => [r.project, r.mode]));
+  assert.equal(by['Business-Project/AI-Company-Control-Center'], 'foreground', 'tmux 名 (_ 置換) から実プロジェクト名へ戻す');
+  assert.equal(by['Alpha-App'], 'background', '同一プロジェクトは 1 件 (先勝ち)');
+  assert.equal(by['unknown_x'], 'foreground', '解決できない名前はそのまま出す');
+  assert.equal(rows.length, 3);
+  // サーバーが何も返さなければ 0 件 (起動ボタンのローカル追加に依存しない)
+  assert.deepEqual(build.call({ safeName }, { all_folders: [], projects: [], sessions: { tmux: [], headless: [], foreground: [] } }), []);
+  assert.deepEqual(build.call({ safeName }, {}), []);
+  assert.ok(tpl.includes('realProjects: folders, sessions: realSessions,'), 'refreshLive が sessions を更新していない');
+});
+
+test('v2.html: セッション画面はライブログを表示し、送信は見せかけの応答を返さない', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes('ライブログ（読み取り専用・3 秒ごとに更新）'), 'ライブログのカードが無い');
+  assert.ok(tpl.includes('{{ pLive }}'));
+  assert.ok(tpl.includes("/api/startup/log?project="), 'ログ API を参照していない');
+  assert.ok(tpl.includes('this._logTimer = setInterval'), 'ライブログのポーリングが無い');
+  assert.ok(tpl.includes('if (this._logTimer) clearInterval(this._logTimer);'), 'アンマウント時に停止していない');
+  assert.ok(!tpl.includes('の Claude Code がこのプロンプトを受け取り'), 'セッション画面のプロトタイプ固定応答が残っている');
+  assert.ok(tpl.includes('プロンプト送信は未接続です'), '送信が未接続であることを明示していない');
+  assert.ok(!tpl.includes('プロンプトを送り、応答をストリーミングで確認します'), '旧い見出し説明が残っている');
+});
+
+test('v2.html: 同時実行の上限は固定の 4 ではなく state.limits.max_sessions を使う', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes('s0.limits.max_sessions'), 'サーバーの上限を読んでいない');
+  assert.ok(tpl.includes('{{ maxSessions }}'), 'ヘッダの上限が固定のまま');
+  assert.ok(tpl.includes('s.sessions.length >= (s.maxSessions || 4)'), '起動の事前判定が固定のまま');
+  assert.ok(!tpl.includes('s.sessions.length >= 4)'), '旧い固定判定が残っている');
+});

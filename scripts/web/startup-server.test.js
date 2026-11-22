@@ -135,6 +135,31 @@ test('resolveStaticPath: public 配下のみ', () => {
   assert.equal(srv.resolveStaticPath('/..%2f..%2fetc%2fpasswd'), null);
 });
 
+test('tailLines: 巨大ログは末尾の一部だけ読み、欠けた先頭行は捨てて末尾 N 行を返す', () => {
+  const f = path.join(TMP, 'big.log');
+  const lines = [];
+  for (let i = 1; i <= 60000; i++) lines.push('line-' + i + '-' + 'x'.repeat(20));   // 約 1.7MB (> 512KB)
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  const out = srv.tailLines(f, 3).split('\n');
+  assert.deepEqual(out, ['line-59998-' + 'x'.repeat(20), 'line-59999-' + 'x'.repeat(20), 'line-60000-' + 'x'.repeat(20)]);
+  const many = srv.tailLines(f, 2000).split('\n');
+  assert.equal(many.length, 2000);
+  assert.ok(many[0].startsWith('line-'), '先頭は欠けていない完全な行');
+});
+
+test('resolveLogFile: 配下の外を指すシンボリックリンクは拒否する', () => {
+  const outside = path.join(TMP, 'outside-secret.txt');
+  fs.writeFileSync(outside, 'secret');
+  const link = path.join(process.env.CLAUDEOS_HOME, 'link-to-outside.log');
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(outside, link);
+  try {
+    assert.equal(srv.resolveLogFile(link), null);
+  } finally {
+    fs.rmSync(link, { force: true });
+  }
+});
+
 test('tailLines: 末尾 N 行 (存在しないファイルは空)', () => {
   const f = path.join(TMP, 'tail.log');
   fs.writeFileSync(f, '1\n2\n3\n4\n5\n');
@@ -397,6 +422,23 @@ test('HTTP: 背景起動は supervisor が running かつ pid 生存なら start
     assert.equal(r.json.ok, true);
     assert.equal(r.json.started, true);
   });
+});
+
+test('HTTP: /api/startup/log は log_file が無い (登録外の) プロジェクトでも supervisor ログを返す', async () => {
+  const supDir = path.join(process.env.CLAUDEOS_HOME, 'supervisor-log-test');
+  fs.rmSync(supDir, { recursive: true, force: true });
+  fs.mkdirSync(supDir, { recursive: true });
+  await withServer({ supervisorDir: supDir }, async (port) => {
+    // Alpha-App は fixture 上 log_file が空 → ログ無しは 404
+    const none = await req(port, 'GET', '/api/startup/log?project=Alpha-App&lines=5');
+    assert.equal(none.status, 404);
+    assert.equal(none.json.error, 'LOG_NOT_FOUND');
+    fs.writeFileSync(path.join(supDir, 'Alpha-App.log'), 'line1\nline2\nline3\n');
+    const r = await req(port, 'GET', '/api/startup/log?project=Alpha-App&lines=2');
+    assert.equal(r.status, 200);
+    assert.equal(r.json.content, 'line2\nline3');
+  });
+  fs.rmSync(supDir, { recursive: true, force: true });
 });
 
 test('supervisorStateFile: ccsu_safe_name と同じ規則 (非 [A-Za-z0-9_-] は 1 バイトずつ _)', () => {
