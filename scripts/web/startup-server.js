@@ -151,6 +151,8 @@ function buildLaunchArgs(o) {
 function buildStopArgs(o) {
   const args = ['stop', o.all ? '--all' : o.project];
   if (o.force) args.push('--now');
+  // Web には TTY が無い。stop --all は非対話で --yes が必須 (Human Gate は confirm で通過済み)。
+  if (o.all) args.push('--yes');
   return args;
 }
 
@@ -325,6 +327,35 @@ function startDetached(script, args, opts) {
   return { pid: child.pid };
 }
 
+/**
+ * runDetached — 切り離し起動しつつ、CLI の終了コードと出力を短時間だけ待って回収する。
+ *   目的: 起動 CLI が即時失敗した場合に started:true を返さない (QA BUG-05)。
+ *   Web から起動する CLI は tmux/supervisor を用意して戻るため、通常は数秒で終了する。
+ *   時間内に終わらなければ timedOut:true を返し、プロセスは殺さない (起動は継続)。
+ */
+function runDetached(script, args, opts) {
+  const o = opts || {};
+  return new Promise((resolve) => {
+    const child = spawn('bash', [script].concat(args), {
+      cwd: o.cwd || REPO_ROOT,
+      env: o.env || process.env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '', err = '', done = false;
+    const trim = s => (s.length > 8000 ? s.slice(-8000) : s);
+    const finish = (r) => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
+    const timer = setTimeout(() => {
+      try { child.unref(); } catch { /* 既に終了 */ }
+      finish({ pid: child.pid, exitCode: null, timedOut: true, stdout: trim(out), stderr: trim(err) });
+    }, o.waitMs || 15000);
+    child.stdout.on('data', d => { out = trim(out + d); });
+    child.stderr.on('data', d => { err = trim(err + d); });
+    child.on('error', e => finish({ pid: child.pid, exitCode: -1, stdout: trim(out), stderr: String(e && e.message) }));
+    child.on('exit', (code, signal) => finish({ pid: child.pid, exitCode: code, signal, stdout: trim(out), stderr: trim(err) }));
+  });
+}
+
 function appendAudit(entry) {
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG), { recursive: true });
@@ -388,18 +419,20 @@ function createServer(cfg) {
 
   function readBody(req) {
     return new Promise((resolve) => {
-      let size = 0, buf = '';
+      let size = 0, buf = '', done = false;
+      const finish = (v) => { if (done) return; done = true; resolve(v); };
       req.on('data', chunk => {
+        if (done) return;                       // 超過後は読み捨てる (接続は切らない)
         size += chunk.length;
-        if (size > BODY_LIMIT) { resolve({ ok: false, error: 'BODY_TOO_LARGE' }); req.destroy(); return; }
+        if (size > BODY_LIMIT) { finish({ ok: false, error: 'BODY_TOO_LARGE' }); return; }
         buf += chunk;
       });
       req.on('end', () => {
-        if (!buf) return resolve({ ok: true, value: {} });
-        try { resolve({ ok: true, value: JSON.parse(buf) }); }
-        catch { resolve({ ok: false, error: 'BODY_INVALID_JSON' }); }
+        if (!buf) return finish({ ok: true, value: {} });
+        try { finish({ ok: true, value: JSON.parse(buf) }); }
+        catch { finish({ ok: false, error: 'BODY_INVALID_JSON' }); }
       });
-      req.on('error', () => resolve({ ok: false, error: 'BODY_READ' }));
+      req.on('error', () => finish({ ok: false, error: 'BODY_READ' }));
     });
   }
 
@@ -491,16 +524,27 @@ function createServer(cfg) {
     busy = true;
     try {
       const args = buildLaunchArgs(v.value);
-      const r = startDetached(BIN_START, args, { cwd: conf.root });
+      const projectLog = (ctx.state.projects.find(p => p.name === v.value.project) || {}).log_file || '';
+      // CLI の終了コードまで待つ。即時失敗を started:true と誤報しない (QA BUG-05)。
+      const r = await runDetached(BIN_START, args, { cwd: conf.root, waitMs: 15000 });
       // 起動直後は state が古い (resolveContext が起動前の状態をキャッシュしている)。
       // ここで捨てないと 20 秒間 running=false のままになり、直後の停止が 409 NOT_RUNNING になる。
       invalidateState();
+      if (r.timedOut || r.exitCode !== 0) {
+        appendAudit({ action: 'launch-failed', project: v.value.project, mode: v.value.mode,
+                      goal: v.value.goal, pid: r.pid, exitCode: r.exitCode, remote });
+        return json(res, 200, {
+          ok: false, started: false, error: r.timedOut ? 'START_TIMEOUT' : 'START_FAILED',
+          exitCode: r.exitCode, pid: r.pid, args,
+          log: projectLog, output: r.stdout, stderr: r.stderr,
+        });
+      }
       appendAudit({ action: 'launch', project: v.value.project, mode: v.value.mode,
                     goal: v.value.goal, pid: r.pid, remote });
       return json(res, 200, {
         ok: true, started: true, pid: r.pid, args,
         modeLabel: MODE_LABELS[v.value.mode],
-        log: (ctx.state.projects.find(p => p.name === v.value.project) || {}).log_file || '',
+        log: projectLog,
         capacity: { running, max: maxSessions },
       });
     } finally {
@@ -557,6 +601,15 @@ function createServer(cfg) {
         return json(res, 200, {
           ok: dry.exitCode === 0, requiresConfirm: true, dryRunOnly: conf.dryRunOnly,
           exitCode: dry.exitCode, plan: dry.stdout, stderr: dry.stderr, args: dryArgs,
+        });
+      }
+      if (dry.exitCode !== 0) {
+        // dry-run が失敗した計画で実適用へ進まない (AGENTS.md: 計画を確認してから --yes)。
+        // ここを素通りさせると、対象の検証に失敗したまま全プロジェクトへ適用してしまう (QA BUG-02)。
+        appendAudit({ action: 'apply-all-blocked', exit: dry.exitCode, remote });
+        return json(res, 200, {
+          ok: false, error: 'PLAN_FAILED', exitCode: dry.exitCode,
+          plan: dry.stdout, stderr: dry.stderr, args: dryArgs,
         });
       }
       const args = buildApplyAllArgs({ dryRun: false, duration: body.duration });
@@ -1095,13 +1148,14 @@ function contentType(file) {
 
 function parseArgs(argv) {
   const o = { port: DEFAULT_PORT, host: '127.0.0.1', root: REPO_ROOT, lan: false,
-              allowNoAuth: false, dryRunOnly: false, help: false };
+              allowNoAuth: false, dryRunOnly: false, pidFile: '', help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--port') o.port = parseInt(argv[++i], 10);
     else if (a === '--host') o.host = argv[++i];
     else if (a === '--lan') { o.lan = true; o.host = '0.0.0.0'; }
     else if (a === '--root') o.root = path.resolve(argv[++i]);
+    else if (a === '--pid-file') o.pidFile = path.resolve(argv[++i]);
     else if (a === '--dry-run-only') o.dryRunOnly = true;
     else if (a === '--allow-no-auth') o.allowNoAuth = true;
     else if (a === '--help' || a === '-h') o.help = true;
@@ -1120,6 +1174,7 @@ function usage() {
     '  --host <addr>     bind アドレス (既定 127.0.0.1)',
     '  --lan             0.0.0.0 で待ち受け (要 STARTUP_WEB_PASSWORD)',
     '  --root <dir>      リポジトリルート (テスト用)',
+    '  --pid-file <path> 起動後に自分の PID を書き出す (bin/web-startup.sh 用)',
     '  --dry-run-only    起動系操作は常に --dry-run (実起動しない)',
     '  --allow-no-auth   loopback 以外でもパスワード無しを許可 (非推奨)',
     '  -h, --help        このヘルプ',
@@ -1147,11 +1202,32 @@ function main() {
     authPass, dryRunOnly: o.dryRunOnly,
   });
 
+  /* PID ファイルは「このプロセス自身」が書く。
+     pgrep で先頭の startup-server.js を拾うと、別ポートで動く既存インスタンスを
+     記録してしまい、--stop が無関係なサーバを止める (QA BUG-01)。 */
+  const removePidFile = () => {
+    if (!o.pidFile) return;
+    try {
+      if (fs.readFileSync(o.pidFile, 'utf8').trim() === String(process.pid)) fs.unlinkSync(o.pidFile);
+    } catch { /* 既に無い・読めない場合は何もしない */ }
+  };
+  process.on('exit', removePidFile);
+
   server.listen(o.port, o.host, () => {
+    if (o.pidFile) {
+      try {
+        fs.mkdirSync(path.dirname(o.pidFile), { recursive: true });
+        fs.writeFileSync(o.pidFile, String(process.pid) + '\n');
+      } catch (e) {
+        process.stderr.write('❌ PID ファイルを書けません: ' + o.pidFile + ' (' + String(e && e.message) + ')\n');
+        server.close(() => process.exit(1));
+        return;
+      }
+    }
     const shown = isLoopback(o.host) ? 'http://localhost:' + o.port : 'http://' + o.host + ':' + o.port;
     process.stdout.write('🌐 ClaudeOS Web スタートアップコンソール: ' + shown + '\n');
     process.stdout.write('   root=' + o.root + ' auth=' + (authPass ? 'required' : 'off') +
-      ' dryRunOnly=' + o.dryRunOnly + '\n');
+      ' dryRunOnly=' + o.dryRunOnly + (o.pidFile ? ' pidFile=' + o.pidFile : '') + '\n');
   });
 
   const shutdown = () => { server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000); };

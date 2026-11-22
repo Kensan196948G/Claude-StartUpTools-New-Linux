@@ -58,6 +58,17 @@ teardown() { _bats_common_teardown; }
   [ "$(echo "$output" | jq -r '.projects[] | select(.name=="Alpha-App") | .supervisor.alive')" = "true" ]
 }
 
+@test "startup-state: tmux 単独セッションも running と数える (QA BUG-04)" {
+  # 実機の tmux を数えない既定スタブを、claudeos-Alpha-App を持つスタブへ差し替える
+  make_stub_bin tmux 'printf "claudeos-Alpha-App: 1 windows (created 2026-01-01)\n"'
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.projects[] | select(.name=="Alpha-App") | .tmux.active')" = "true" ]
+  [ "$(echo "$output" | jq -r '.projects[] | select(.name=="Alpha-App") | .running')" = "true" ]
+  [ "$(echo "$output" | jq -r '.sessions.tmux[0]')" = "claudeos-Alpha-App" ]
+  [ "$(echo "$output" | jq -r '.sessions.count')" -ge 1 ]
+}
+
 @test "startup-state: 死んでいる PID は running 扱いしない" {
   echo '{"project":"Alpha-App","status":"running","pid":999999}' \
     > "$CLAUDEOS_HOME/supervisor/Alpha-App.json"

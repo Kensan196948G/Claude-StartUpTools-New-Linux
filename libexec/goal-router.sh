@@ -67,7 +67,9 @@ main() {
   goal_router__resolve "$project_dir" "${args[@]}" >/dev/null
 
   if (( as_json )); then
-    GR_PROJECT_DIR="$project_dir" GR_DRY="$dry" python3 - <<'PYEOF'
+    GR_PROJECT_DIR="$project_dir" GR_DRY="$dry" \
+    GR_PLANE="${GOAL_ROUTER_EXECUTION_PLANE:-local}" GR_MA_MODE="${GOAL_ROUTER_MA_MODE:-missing}" \
+    python3 - <<'PYEOF'
 import json, os
 e = os.environ
 print(json.dumps({
@@ -78,6 +80,7 @@ print(json.dumps({
   "evidence": [x for x in e.get("GOAL_ROUTER_EVIDENCE", "").split(",") if x],
   "transition": e.get("GOAL_ROUTER_TRANSITION", ""), "locked_by_user": e.get("GOAL_ROUTER_LOCKED_BY_USER") == "true",
   "fallback": e.get("GOAL_ROUTER_FALLBACK") == "1",
+  "execution_plane": e.get("GR_PLANE") or "local", "ma_mode": e.get("GR_MA_MODE") or "missing",
 }, ensure_ascii=False, indent=2))
 PYEOF
   else
@@ -88,6 +91,7 @@ PYEOF
     echo "  confidence          = ${GOAL_ROUTER_CONFIDENCE:-0}"
     echo "  mode                = ${GOAL_ROUTER_MODE:-auto} (locked_by_user=${GOAL_ROUTER_LOCKED_BY_USER:-false})"
     echo "  transition          = ${GOAL_ROUTER_TRANSITION:-}"
+    echo "  execution_plane     = ${GOAL_ROUTER_EXECUTION_PLANE:-local} (ma_mode=${GOAL_ROUTER_MA_MODE:-missing})"
     echo "  reason              = ${GOAL_ROUTER_REASON:-}"
     echo "  evidence            = ${GOAL_ROUTER_EVIDENCE:-}"
     (( dry )) && echo "  (dry-run: state.json は更新していません)"

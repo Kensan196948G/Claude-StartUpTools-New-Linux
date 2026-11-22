@@ -72,7 +72,7 @@ ws__start() {
   [[ -f "$SERVER_JS" ]] || die "サーバが見つかりません: $SERVER_JS"
   if ! has_cmd node; then die "node が見つかりません (Node.js 18+ が必要)"; fi
 
-  local -a args=("$SERVER_JS" --port "$PORT" --host "$HOST")
+  local -a args=("$SERVER_JS" --port "$PORT" --host "$HOST" --pid-file "$PID_FILE")
   (( WS_DRY_RUN_ONLY )) && args+=(--dry-run-only)
 
   if (( WS_DRY_RUN )); then
@@ -94,6 +94,7 @@ ws__start() {
   fi
 
   mkdir -p "$CCSU_HOME/logs"
+  rm -f "$PID_FILE" 2>/dev/null || true
   local runner; if has_cmd setsid; then runner=setsid; else runner=nohup; fi
   ( cd "$CCSU_ROOT" && "$runner" "$NODE_BIN" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null & )
   disown 2>/dev/null || true
@@ -103,9 +104,22 @@ ws__start() {
   while (( i < 20 )); do
     i=$((i + 1))
     if has_cmd curl && curl -fsS --max-time 2 "$(ws__url)/api/health" >/dev/null 2>&1; then
-      local pid2; pid2="$(pgrep -f 'startup-server.js' | head -1 || true)"
-      [[ -n "$pid2" ]] && printf '%s\n' "$pid2" > "$PID_FILE"
-      log_ok "起動しました: $(ws__url) (pid=${pid2:-?})"
+      # PID はサーバ自身が書いた PID ファイルだけを信頼する。
+      # pgrep で先頭の startup-server.js を拾うと、別ポートの既存インスタンスを
+      # 記録してしまい、--stop が無関係なサーバを止める (QA BUG-01)。
+      local pid2="" j=0
+      while (( j < 10 )); do
+        pid2="$(cat "$PID_FILE" 2>/dev/null || true)"
+        if [[ "$pid2" =~ ^[0-9]+$ ]] && kill -0 "$pid2" 2>/dev/null; then break; fi
+        pid2=""
+        sleep 0.2; j=$((j + 1))
+      done
+      if [[ -z "$pid2" ]]; then
+        log_error "health は応答しましたが PID ファイルを確認できません: $PID_FILE"
+        log_error "  ログを確認してください: $LOG_FILE"
+        return 1
+      fi
+      log_ok "起動しました: $(ws__url) (pid=$pid2)"
       log_info "  ログ: $LOG_FILE"
       return 0
     fi

@@ -164,7 +164,7 @@ _project_json() {
     --arg tmux_name "$tmux_name" --argjson tmux "$tmux_hit" \
     --arg log_file "$([[ -f "$log_file" ]] && printf '%s' "$log_file" || printf '')" \
     '{name:$name,dir:$dir,group:$group,run_status:$run_status,exists:($exists=="true"),
-      running:($run_status=="running"),
+      running:(($run_status=="running") or ($tmux=="true")),
       supervisor:$supervisor,foreground:$foreground,
       tmux:{name:$tmux_name,active:$tmux},log_file:$log_file}'
 }
@@ -228,6 +228,9 @@ _project_tsv() {
   fi
 
   # tmux は 1 回だけ取った一覧を bash で照合する (grep を 1 プロジェクトごとに起動しない)
+  #   キャッシュは _project_tsv より先に必ず初期化する。空のまま照合すると
+  #   tmux 単独セッションを「停止中」と誤判定する (QA BUG-04)。
+  _tmux_sessions >/dev/null
   local tmux_name="claudeos-$safe" tmux_hit="false"
   [[ $'\n'"$_TMUX_SESSIONS_CACHE"$'\n' == *$'\n'"$tmux_name"$'\n'* ]] && tmux_hit="true"
 

@@ -119,11 +119,18 @@ _git_init_clean() {
   [ "$status" -ne 0 ]
 }
 
-@test "relchk__collect: --skip-tests/--skip-lint/--skip-build で verify 行が出ない" {
-  echo x > "$PROJ/f"; _git_init_clean
-  printf '{ "scripts": { "test": "true", "lint": "true", "build": "true" } }\n' > "$PROJ/package.json"
+@test "relchk__collect: --skip-* は SKIP 行として残し、件数を減らさない (QA BUG-07)" {
+  echo x > "$PROJ/f"
+  echo "# hi" > "$PROJ/README.md"
+  printf 'logs/\n' > "$PROJ/.gitignore"
+  _git_init_clean
   local results; results="$(relchk__collect "$PROJ" --skip-tests --skip-lint --skip-build)"
-  [[ "$results" != *"Test|"* ]]
-  [[ "$results" != *"Lint|"* ]]
-  [[ "$results" != *"Build|"* ]]
+  # 従来は検査ごと消えて 6→3 件になり、未検証であることがレポートから読めなかった
+  [ "$(printf '%s\n' "$results" | grep -c .)" -eq 6 ]
+  [ "$(printf '%s\n' "$results" | grep -c '|SKIP|')" -eq 3 ]
+  [[ "$results" == *"Test|SKIP|--skip-tests"* ]]
+  [[ "$results" == *"Lint|SKIP|--skip-lint"* ]]
+  [[ "$results" == *"Build|SKIP|--skip-build"* ]]
+  run relchk__passed "$results"
+  [ "$status" -eq 0 ]   # SKIP は不合格にしない
 }
