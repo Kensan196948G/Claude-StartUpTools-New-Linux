@@ -1238,13 +1238,15 @@ function createServer(cfg) {
   async function requireLaunchJwt(req, res, action, body, remote) {
     if (!conf.launchRequireJwt) return { ok: true, user: '' };
     let error = '';
+    let detail = '';   // 監査にだけ残す内部の理由 (応答には出さない。JWKS 取得障害と不正アクセスを区別するため)
     let user = '';
     if (!conf.accessTeamDomain || !conf.accessAud) {
       error = 'AUTH_NOT_CONFIGURED';
     } else {
       const v = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
         teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
-      if (!v.ok || !v.email) error = 'AUTH_JWT_REQUIRED'; else user = v.email;
+      // 実行者はメールで特定する (verifyAccessJwt は email が無いと sub を返すため、メールの形でなければ拒否する)
+      if (!v.ok || !/@/.test(String(v.email || ''))) { error = 'AUTH_JWT_REQUIRED'; detail = v.ok ? 'NO_EMAIL' : String(v.error || ''); } else user = v.email;
     }
     if (error) {
       // 認証前の拒否は、同じ理由につき 1 分に 1 件へ間引く (監査ログの洪水を避ける)
@@ -1252,7 +1254,7 @@ function createServer(cfg) {
       const key = action + ':' + error;
       if (!(promptRejectAudit[key] && nowMs - promptRejectAudit[key] < 60000)) {
         promptRejectAudit[key] = nowMs;
-        appendAudit({ action: action + '-rejected', error, remote,
+        appendAudit({ action: action + '-rejected', error, detail: detail || undefined, remote,
           project: body && typeof body.project === 'string' ? body.project.slice(0, 120) : '' });
       }
       json(res, 403, { ok: false, error });

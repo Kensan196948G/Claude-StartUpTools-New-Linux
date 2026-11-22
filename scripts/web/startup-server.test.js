@@ -2088,6 +2088,37 @@ test('launch-jwt: 有効時、JWT 無し・不正・未設定の実起動は拒�
   assert.equal(fs.existsSync(MARK), false, '拒否では CLI を起動しない');
 });
 
+test('launch-jwt: 署名不正・期限切れ・鍵の取得失敗 (JWKS 例外)・sub だけの JWT・truthy な confirm は、実起動しない (apply-all の実適用も走らない)', async () => {
+  fs.rmSync(MARK, { force: true });
+  const autoLog = path.join(TMP, 'autonomy-calls.log');
+  const calls = () => (fs.existsSync(autoLog) ? fs.readFileSync(autoLog, 'utf8').split('\n').filter(Boolean).length : 0);
+  const { privateKey: otherKey } = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const before = calls();
+  await withServer(jwtCfg(), async (port) => {
+    const post = (jwt) => req(port, 'POST', '/api/startup/launch', launchBody, { 'Cf-Access-Jwt-Assertion': jwt });
+    assert.equal((await post(signJwt({}, otherKey))).json.error, 'AUTH_JWT_REQUIRED', '署名不正');
+    assert.equal((await post(signJwt({ exp: Math.floor(Date.now() / 1000) - 10 }))).json.error, 'AUTH_JWT_REQUIRED', '期限切れ');
+    assert.equal((await post(signJwt({ email: undefined, sub: 'abc-123' }))).json.error, 'AUTH_JWT_REQUIRED', 'メールが無く sub だけの JWT は実行者を特定できない');
+    const all = await req(port, 'POST', '/api/startup/apply-all', { confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: '' }) });
+    assert.equal(all.status, 403);
+    // truthy でも === true でない confirm は、ゲートを通らなくてもハンドラが計画のみにする (実起動しない)
+    for (const c of ['true', 1, {}]) {
+      const r = await req(port, 'POST', '/api/startup/launch', Object.assign({}, launchBody, { confirm: c }));
+      assert.equal(r.json.started, undefined, 'confirm=' + JSON.stringify(c));
+      assert.equal(r.json.requiresConfirm, true);
+    }
+  });
+  await withServer(jwtCfg({ accessKeys: async () => { throw new Error('network down'); } }), async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch', launchBody, { 'Cf-Access-Jwt-Assertion': signJwt() });
+    assert.equal(r.status, 403, '鍵を取得できないときは通さない (fail-closed)');
+    assert.equal(r.json.error, 'AUTH_JWT_REQUIRED');
+  });
+  assert.equal(fs.existsSync(MARK), false, '拒否では CLI を起動しない');
+  assert.equal(calls(), before, '拒否では apply-all の CLI を呼ばない');
+  const log = fs.readFileSync(path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log'), 'utf8');
+  assert.ok(log.split('\n').some(l => l.includes('launch-rejected') && l.includes('"detail"')), '拒否の内部理由 (detail) は監査にだけ残す');
+});
+
 test('launch-jwt: 有効時でも、計画の表示 (confirm 無し) と dryRunOnly は JWT 無しで使える。実起動は何も起きない', async () => {
   fs.rmSync(MARK, { force: true });
   await withServer(jwtCfg(), async (port) => {
