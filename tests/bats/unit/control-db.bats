@@ -88,6 +88,10 @@ case "$args" in
     printf '%s\n' "${DECIDE_STATUS_STUB:-pending}"
     exit 0 ;;
   *"'passport_version'"*)
+    if [ "${FORCE_PASSPORT_FAIL:-0}" = "1" ]; then
+      echo "stub: forced passport failure" >&2
+      exit 1
+    fi
     printf '%s\n' "${PASSPORT_EXPORT_BODY_STUB:-}"
     exit 0 ;;
   *"'runs_total'"*)
@@ -287,7 +291,7 @@ setup() {
   export TASK_LOOKUP_STUB="" ASSIGNMENT_ID_STUB="" FORCE_ASSIGN_FAIL="0" FORCE_ASSIGN_CONFLICT="0" FORCE_RELEASE_FAIL="0"
   export HANDOFF_ID_STUB="" FORCE_HANDOFF_OFFER_FAIL="0" FORCE_HANDOFF_ACCEPT_FAIL="0"
   export DASHBOARD_STATS_STUB="" FORCE_DASHBOARD_FAIL="0"
-  export PASSPORT_EXPORT_BODY_STUB=""
+  export PASSPORT_EXPORT_BODY_STUB="" FORCE_PASSPORT_FAIL="0"
   export PATTERN_ID_STUB="" FORCE_FAILURE_PATTERN_FAIL="0"
   export PROPOSAL_ID_STUB="" FORCE_PROPOSAL_FAIL="0"
   export CANDIDATE_ID_STUB="" FORCE_CANDIDATE_FAIL="0"
@@ -663,7 +667,14 @@ _ctl_under_set_e() {
   export FORCE_PROJECT_FAIL="1"
   run --separate-stderr _ctl_under_set_e ctl__project_register --key demo
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"forced project failure"* ]]
+  [[ "$stderr" == *"project 登録に失敗しました"* ]]
+  [[ "$output" != *"after-rc="* ]]
+}
+@test "ctl__passport_export: body 変数側も set -e 下で診断を出し rc=1 (#121)" {
+  export FORCE_PASSPORT_FAIL="1"
+  run --separate-stderr _ctl_under_set_e ctl__passport_export --run-id r1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"passport export に失敗しました"* ]]
 }
 @test "ctl__run_start: 診断メッセージは死コードでなく実行される (#121)" {
   export PROJECT_ID_STUB="p1" FORCE_RUN_START_FAIL="1"
