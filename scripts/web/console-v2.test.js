@@ -261,3 +261,10 @@ test('v2.html: web/end の追加ケース (シグナル終了・系譜の破棄�
     .forEach((k) => assert.ok(tpl.includes(k + ':'), k + ' の日本語メッセージが無い'));
   assert.ok(tpl.includes("let cur = { id: aid, role: 'assistant'"), '1 メッセージ分をローカルに蓄積していない');
 });
+
+test('v2.html: 権限モードの表記は固定の「auto」や「自律実行と同じ権限」にしない (サーバー設定を確認画面で示す)', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(!tpl.includes('permission-mode: auto'), '固定の auto 表記が残っている');
+  assert.ok(!tpl.includes('自律実行と同じ権限'), '実態と異なる「自律実行と同じ権限」が残っている');
+  assert.ok(tpl.includes('権限モードはサーバー設定'));
+});

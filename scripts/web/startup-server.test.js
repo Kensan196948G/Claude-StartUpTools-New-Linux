@@ -1546,3 +1546,41 @@ test('prompt: 認証前の拒否の監査は同じ理由につき 1 分に 1 件
   });
   assert.equal(count() - before, 1, '5 回拒否しても監査は 1 件');
 });
+
+// ---------------------------------------------------------------------------
+// 6) 登録外フォルダ (all_folders 由来) の稼働判定 — 停止ボタンが NOT_RUNNING にならないこと
+// ---------------------------------------------------------------------------
+test('isProjectRunning: 登録済み running に加え、state.sessions (headless / foreground / tmux) でも判定する', () => {
+  const st = { projects: [{ name: 'Reg', running: true }, { name: 'Idle', running: false }],
+    sessions: { headless: ['Gamma'], foreground: ['Fg'], tmux: ['claudeos-Business-Project_X', 'claudeos-team-Tm'] } };
+  assert.equal(srv.isProjectRunning(st, 'Reg'), true);
+  assert.equal(srv.isProjectRunning(st, 'Idle'), false);
+  assert.equal(srv.isProjectRunning(st, 'Gamma'), true, '登録外でも headless の稼働を認識する');
+  assert.equal(srv.isProjectRunning(st, 'Fg'), true);
+  assert.equal(srv.isProjectRunning(st, 'Business-Project/X'), true, 'tmux 名 (/ は _) から判定する');
+  assert.equal(srv.isProjectRunning(st, 'Tm'), true);
+  assert.equal(srv.isProjectRunning(st, 'Nope'), false);
+  assert.equal(srv.isProjectRunning({}, 'Reg'), false);
+});
+
+test('HTTP: 登録外フォルダの稼働中セッションも停止できる (NOT_RUNNING にならない)', async () => {
+  const root = path.join(TMP, 'repo-stop-unreg');
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(path.join(root, 'libexec'), { recursive: true });
+  const base = fs.readFileSync(path.join(FIXTURE, 'libexec', 'startup-state.sh'), 'utf8');
+  const a = base.indexOf("<<'JSON'\n") + "<<'JSON'\n".length;
+  const b = base.lastIndexOf('\nJSON\n');
+  const state = JSON.parse(base.slice(a, b));
+  state.all_folders = ['Gamma', 'Delta'];                 // 登録外のフォルダ
+  state.sessions.headless = ['Gamma'];                    // Gamma だけが稼働中
+  fs.writeFileSync(path.join(root, 'libexec', 'startup-state.sh'),
+    '#!/usr/bin/env bash\ncat <<\'JSON\'\n' + JSON.stringify(state) + '\nJSON\n');
+  await withServer({ root }, async (port) => {
+    const run = await req(port, 'POST', '/api/startup/stop', { project: 'Gamma' });
+    assert.equal(run.status, 200, '稼働中の登録外フォルダは確認画面 (requiresConfirm) まで進む');
+    assert.equal(run.json.requiresConfirm, true);
+    const idle = await req(port, 'POST', '/api/startup/stop', { project: 'Delta' });
+    assert.equal(idle.status, 409, '稼働していない登録外フォルダは NOT_RUNNING');
+    assert.equal(idle.json.error, 'NOT_RUNNING');
+  });
+});
