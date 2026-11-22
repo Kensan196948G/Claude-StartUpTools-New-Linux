@@ -1097,7 +1097,7 @@ function createServer(cfg) {
         ok: true, requiresConfirm: true, project: proj.value, cwd: dir,
         resumed: !!resumeId, forked: fork, model: model.value,
         permissionMode: conf.promptPermission, budgetUsd: conf.promptBudgetUsd, timeoutMs: conf.promptTimeoutMs,
-        command: 'claude ' + args.slice(0, -1).join(' ') + ' -- <本文 ' + text.value.length + ' 文字>',
+        command: 'claude ' + args.slice(0, -1).join(' ') + ' <本文 ' + text.value.length + ' 文字>',
       });
     }
     if (promptActive) return reject(409, 'OPERATION_IN_PROGRESS');
