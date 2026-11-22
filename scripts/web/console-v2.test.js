@@ -63,3 +63,23 @@ test('v2.html: 「サンプルデータ · 実起動しません」という誤�
   assert.ok(!tpl.includes('サンプルデータ · 実起動しません'),
     '実データ接続後もサンプル表示が残っている');
 });
+
+test('v2.html: Cron 表示 — リダイレクト除去・時刻の * 保持・曜日範囲の展開 (実コードを実行)', () => {
+  const { tpl } = loadTemplate();
+  const start = tpl.indexOf('CRON.entries.map(');
+  const end = tpl.indexOf('\n      : s.cron.map');
+  assert.ok(start > 0 && end > start, 'cron 変換ブロックが見つからない');
+  const build = new Function('CRON', 'return ' + tpl.slice(start, end));
+  const rows = build({ entries: [
+    { disabled: false, minute: '0', hour: '2', dow: '*', command: 'bash /opt/run-claude.sh --project Foo >> /tmp/foo.log 2>&1' },
+    { disabled: false, minute: '*/5', hour: '*', dow: '1-5', command: '/opt/health-probe.sh >/dev/null 2>&1' },
+    { disabled: true, minute: '30', hour: '3', dow: 'mon-wed,sun', command: 'monitor.sh' },
+  ] });
+  assert.equal(rows[0].project, 'Foo', '末尾の 2>&1 / ログ出力先ではなく対象名を出す');
+  assert.equal(rows[0].time, '02:00');
+  assert.equal(rows[1].project, 'health-probe.sh');
+  assert.equal(rows[1].time, '*:*/5', '* を 0 埋めして 0* にしない');
+  assert.deepEqual(rows[1].dow, [1, 2, 3, 4, 5], '1-5 は月〜金へ展開する');
+  assert.equal(rows[2].project, 'monitor.sh（無効）');
+  assert.deepEqual(rows[2].dow, [1, 2, 3, 0], 'mon-wed,sun を展開する');
+});
