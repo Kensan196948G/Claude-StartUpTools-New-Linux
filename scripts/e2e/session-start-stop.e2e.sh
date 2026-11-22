@@ -54,7 +54,9 @@ export CCSU_HOME="$TMP/home"
 export AI_STARTUP_CONFIG_PATH="$TMP/config.json"
 export E2E_ARGV_FILE="$TMP/argv.txt"
 
-( cd "$REPO" && node scripts/web/startup-server.js --port "$PORT" --host 127.0.0.1 --allow-no-auth >"$TMP/server.log" 2>&1 ) &
+# exec で node を直接 SERVER_PID にする。サブシェルのまま kill すると node 本体が残り、
+# 次回実行がポートを占有した古いサーバ (別 HOME・別プロジェクト) に当たって誤って FAIL する。
+( cd "$REPO" && exec node scripts/web/startup-server.js --port "$PORT" --host 127.0.0.1 --allow-no-auth >"$TMP/server.log" 2>&1 ) &
 SERVER_PID=$!
 for _ in $(seq 1 40); do
   curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break

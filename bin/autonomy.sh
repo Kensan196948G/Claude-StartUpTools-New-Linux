@@ -276,6 +276,21 @@ au__start_all() {
   log_ok "🎉 全適用完了: started=$ok failed=$fail skipped=${#skips[@]}"
 }
 
+# au__descendants <pid> — pid の子孫 pid を (深い方から) 1 行 1 件で列挙する
+au__descendants() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null || true); do
+    au__descendants "$c"
+    printf '%s\n' "$c"
+  done
+}
+
+# au__alive <pid> — 実行中なら 0 (終了済みで回収待ちのゾンビは「停止済み」として 1)
+au__alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]
+}
+
 # au__stop <project> [--now]
 au__stop() {
   local project="" now=0
@@ -308,11 +323,36 @@ au__stop() {
   log_ok "🛑 停止要求: $project (現セッション終了後に再起動を止めます)"
 
   if (( now )); then
-    local pid safe; pid="$(sup__get "$project" pid 0)"; safe="$(ccsu_safe_name "$project")"
-    [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 0 )) && kill "$pid" 2>/dev/null || true
+    local pid safe sent=0 survivors="" d
+    pid="$(sup__get "$project" pid 0)"; safe="$(ccsu_safe_name "$project")"
+    # 状態ファイルが stop/blocked 等で古い pid が残っている場合 (PID 再利用) に、
+    # 無関係なプロセスの子孫まで巻き込まないよう、稼働中と確認できたときだけ停止する。
+    if [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )) && (( pid != $$ )) && sup__is_running "$project"; then
+      # headless 起動 (cron-launcher → timeout → claude -p) は tmux セッションを持たない。
+      # supervisor だけを kill すると配下の claude が孤児として残る (#停止が効かない) ため、
+      # 子孫の一覧を先に取り、supervisor → 子孫の順に停止する。
+      local -a tree=()
+      mapfile -t tree < <(au__descendants "$pid")
+      if kill "$pid" 2>/dev/null; then sent=$(( sent + 1 )); fi
+      for d in ${tree[@]+"${tree[@]}"}; do
+        [[ "$d" =~ ^[0-9]+$ ]] || continue
+        # 自分自身とその親 (supervisor 配下のセッションから停止を呼んだ場合) は kill しない
+        (( d == $$ || d == PPID )) && continue
+        if kill "$d" 2>/dev/null; then sent=$(( sent + 1 )); fi
+      done
+      (( sent > 0 )) && sleep "${CCSU_STOP_GRACE_SEC:-2}"
+      for d in "$pid" ${tree[@]+"${tree[@]}"}; do
+        if [[ "$d" =~ ^[0-9]+$ ]] && au__alive "$d"; then survivors+="$d "; fi
+      done
+    fi
     "$SUP_TMUX_BIN" kill-session -t "claudeos-$safe" 2>/dev/null || true
     "$SUP_TMUX_BIN" kill-session -t "_keeper_$safe" 2>/dev/null || true
-    log_info "  --now: supervisor と現セッションを即停止しました"
+    if [[ -n "$survivors" ]]; then
+      log_warn "  --now: 停止シグナルを ${sent} プロセスへ送信しましたが、まだ残っています: ${survivors% }"
+      log_warn "  💡 数秒後に再確認してください (claude の終了待ち / timeout 上限で自動終了します)"
+    else
+      log_info "  --now: supervisor と配下プロセス ${sent} 件へ停止シグナルを送り、終了を確認しました"
+    fi
   fi
 }
 
