@@ -85,12 +85,27 @@ Web コンソールの Cron・Systemd・SubAgent 画面は、現在すべて**�
 2. **段階 2（Approval PR）**: 可逆な操作（Cron の run-now / 有効無効、Systemd の start / stop / restart、SubAgent の seed）。方式 B の実行器を導入。
 3. **段階 3（Approval PR）**: 削除・登録・外部公開を伴う操作。**crontab の事前バックアップと復元手順の実証**を受け入れ条件にする。
 
-## 9. 未決事項（実装前に決める）
+## 9. 決定事項（2026-11-23、ユーザーの番号選択による）
 
-- 変更系の認証を **Cloudflare Access の JWT 必須**にするか（推奨）、Basic でも可とするか。
-- 段階 2 の対象を、上の表の全てにするか、`Cron run-now` と `Systemd restart` の 2 つに絞って始めるか。
-- `systemctl --user` をサービスから実行できるかの**事前検証**（読み取りは動作済み。書き込みは未検証）。
-- 日次上限の既定値。
+| 項目 | 決定 |
+| --- | --- |
+| 変更系の認証 | **Cloudflare Access の JWT 必須**（プロンプト送信と同じ強さ。Basic のみでは実行しない） |
+| 段階 2 の対象 | **`Cron run-now` と `Systemd restart` の 2 つに絞って始める**（他は段階 3 以降） |
+| 日次上限の既定値 | **1 日 20 件**（環境変数で変更可。超過は翌日まで拒否） |
+| `systemctl --user` の書き込み | 下記の事前検証で**認可される**ことを確認 |
+
+### 事前検証: `systemctl --user` の書き込み権限（サービスと同じ制限下）
+
+サービス unit と同じ `NoNewPrivileges=yes` / `PrivateTmp=yes` を付けた一時 unit（`systemd-run --user`）から、存在しない unit への `stop` を実行した。結果は `Unit ... not loaded`（exit 5）で、`Access denied` ではない。ユーザーバスへの書き込み系の要求は、この制限下でも認可される。実在する unit の変更は行っていない。
+
+- 含意: `Systemd restart` は、方式 B の実行器（user 文脈）を経由しなくても、サービスから直接実行できる見込み。ただし実在 unit での確認は、段階 2 の実装 PR（Approval PR）の受け入れ条件として別途行う。
+- `crontab` は setgid のため引き続き使えない。`Cron run-now` は台帳の読み取り（スナップショット）と、対象コマンドの実行のみで、crontab の書き込みを伴わない設計にする。
+
+### 段階 2 に残る確認事項
+
+- 認証・認可モデルの変更に当たるため、**Approval PR** で出す（head SHA 一致で明示の Y/N）。
+- `run-now` の二重実行の抑止（同一エントリの実行中は 409）。
+- 監査ログに、操作・対象・結果・認証主体を残す。
 
 ## 10. ロールバック
 
