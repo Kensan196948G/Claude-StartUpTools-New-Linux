@@ -401,7 +401,10 @@ test('v2.html: Cron 登録 / Systemd 起動・停止・自動起動は「計画�
   assert.match(cli.patch.notice.text, /月曜は登録上限/);
   assert.equal(cli.patch.sdOut, 'old', 'cron のときは systemd 出力欄を触らない');
   const rej = await run({ ok: false, error: 'PROJECT_NOT_REGISTERED' }, 'systemd-start', 'x');
-  assert.match(rej.patch.notice.text, /登録されていません/, '検証エラーは日本語で表示する');
+  assert.match(rej.patch.notice.text, /台帳.*に無いため、計画を作れません/, 'systemd の管理外 unit は理由と対処を示す');
+  assert.match(rej.patch.notice.text, /systemctl --user/);
+  const rej2 = await run({ ok: false, error: 'PROJECT_NOT_REGISTERED' }, 'cron-add', 'x');
+  assert.match(rej2.patch.notice.text, /登録されていません/, 'Cron など他の操作の検証エラーは従来どおり日本語で表示する');
   assert.ok(tpl.includes("this.opsPlan(op.replace(' ', '-'), String(name).replace(/^claudeos-/, '').replace(/\\.service$/, ''))"), 'unit 名 → プロジェクト名の変換');
   assert.ok(tpl.includes("this.opsPlan('cron-add', s.cfProject"), 'Cron 登録が計画 API を使う');
 });
