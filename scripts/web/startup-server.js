@@ -376,6 +376,42 @@ function runDetached(script, args, opts) {
   });
 }
 
+/**
+ * supervisorStateFile — supervisor の状態ファイル。lib/common.sh の ccsu_safe_name と同じ規則
+ *   ([A-Za-z0-9_-] 以外は 1 バイトずつ _ に置換) で <dir>/<safe>.json を返す。
+ */
+function supervisorStateFile(dir, project) {
+  const safe = Array.from(Buffer.from(String(project), 'utf8'))
+    .map(b => (/[A-Za-z0-9_-]/.test(String.fromCharCode(b)) ? String.fromCharCode(b) : '_')).join('');
+  return path.join(dir, safe + '.json');
+}
+
+function isPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return !!e && e.code === 'EPERM'; }
+}
+
+/**
+ * confirmSupervisorRunning — 背景起動のあと supervisor が実在するか短時間ポーリングして確認する。
+ *   「CLI が exit 0 で戻った」だけでは起動の証拠にならない (入力待ち分岐でのキャンセル、
+ *   起動直後の停止などでも exit 0 になり得る) ため、status=running かつ pid 生存を要求する。
+ */
+async function confirmSupervisorRunning(dir, project, waitMs) {
+  const file = supervisorStateFile(dir, project);
+  const until = Date.now() + waitMs;
+  let last = null;
+  for (;;) {
+    try {
+      const st = JSON.parse(fs.readFileSync(file, 'utf8'));
+      last = { status: st.status || '', reason: st.last_reason || '', pid: st.pid };
+      if (st.status === 'running' && Number.isInteger(st.pid) && st.pid > 0 && isPidAlive(st.pid)) {
+        return { ok: true, state: last };
+      }
+    } catch { /* 未生成 / 読めない */ }
+    if (Date.now() >= until) return { ok: false, state: last };
+    await new Promise(r => setTimeout(r, 250));
+  }
+}
+
 function appendAudit(entry) {
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG), { recursive: true });
@@ -397,6 +433,9 @@ function createServer(cfg) {
     dryRunOnly: process.env.STARTUP_WEB_DRY_RUN_ONLY === '1',
     stateTimeoutMs: 30000,
     planTimeoutMs: 120000,
+    // 背景起動 (S1) 後に supervisor の実在を確認する。0 で無効 (テスト用)
+    supervisorDir: process.env.CCSU_SUP_DIR || path.join(CLAUDEOS_HOME, 'supervisor'),
+    launchConfirmMs: 8000,
   }, cfg || {});
 
   const BIN_START = path.join(conf.root, 'bin', 'start-claude.sh');
@@ -558,6 +597,21 @@ function createServer(cfg) {
           exitCode: r.exitCode, pid: r.pid, args,
           log: projectLog, output: r.stdout, stderr: r.stderr,
         });
+      }
+      if (v.value.mode === 'background' && conf.launchConfirmMs > 0) {
+        const c = await confirmSupervisorRunning(conf.supervisorDir, v.value.project, conf.launchConfirmMs);
+        if (!c.ok) {
+          appendAudit({ action: 'launch-unconfirmed', project: v.value.project, mode: v.value.mode,
+                        goal: v.value.goal, pid: r.pid, supervisor: c.state && c.state.status, remote });
+          return json(res, 200, {
+            ok: false, started: false, error: 'START_NOT_CONFIRMED',
+            message: '起動コマンドは終了コード 0 で戻りましたが、supervisor の稼働を確認できませんでした'
+              + (c.state && c.state.status ? ' (status=' + c.state.status + (c.state.reason ? ': ' + c.state.reason : '') + ')' : ' (状態ファイルなし)')
+              + '。起動に時間がかかっている場合は、数秒後にセッション監視で再確認してください',
+            exitCode: r.exitCode, pid: r.pid, args, log: projectLog,
+            output: r.stdout, stderr: r.stderr, supervisor: c.state,
+          });
+        }
       }
       appendAudit({ action: 'launch', project: v.value.project, mode: v.value.mode,
                     goal: v.value.goal, pid: r.pid, remote });
@@ -1260,7 +1314,7 @@ module.exports = {
   createServer, parseArgs, usage, main,
   safeEqual, isLoopback, validateProject, validateMode, validateGoal, validateDuration,
   sanitizeIntent, buildLaunchArgs, buildStopArgs, buildApplyAllArgs, parseState,
-  projectNames, isCronSchedule, resolveLogFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
+  projectNames, isCronSchedule, supervisorStateFile, resolveLogFile, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,
 };
 

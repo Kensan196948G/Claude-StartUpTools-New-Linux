@@ -205,6 +205,48 @@ EOF
   grep -q "kill-session" "$TEST_TEMP/tmux.log"
 }
 
+@test "stop --now: supervisor 配下の子孫プロセスまで停止する (headless claude の孤児化を防ぐ)" {
+  export CCSU_STOP_GRACE_SEC=1
+  # supervisor(bash) → 子(bash) → 孫(sleep) の 3 階層を模擬する
+  bash -c 'bash -c "sleep 300 & echo \$! > \"$TEST_TEMP/grand.pid\"; wait" & echo $! > "$TEST_TEMP/child.pid"; wait' &
+  local sup=$!
+  local i
+  for i in $(seq 1 50); do
+    [[ -s "$TEST_TEMP/grand.pid" && -s "$TEST_TEMP/child.pid" ]] && break
+    sleep 0.1
+  done
+  [ -s "$TEST_TEMP/grand.pid" ]
+  mkdir -p "$CCSU_SUP_DIR"
+  printf '{ "project":"Demo","status":"running","pid": %s }\n' "$sup" > "$CCSU_SUP_DIR/Demo.json"
+
+  run bash "$SCRIPT" stop Demo --now
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"配下プロセス"* ]]
+  [[ "$output" != *"まだ残っています"* ]]
+  wait "$sup" 2>/dev/null || true
+  ! kill -0 "$(cat "$TEST_TEMP/child.pid")" 2>/dev/null
+  ! kill -0 "$(cat "$TEST_TEMP/grand.pid")" 2>/dev/null
+}
+
+@test "stop --now: 状態が running でない (古い pid の再利用) なら無関係なプロセスを kill しない" {
+  export CCSU_STOP_GRACE_SEC=1
+  bash -c 'sleep 300 & echo $! > "$TEST_TEMP/other-child.pid"; wait' &
+  local other=$!
+  local i
+  for i in $(seq 1 50); do [[ -s "$TEST_TEMP/other-child.pid" ]] && break; sleep 0.1; done
+  mkdir -p "$CCSU_SUP_DIR"
+  # status=stopped のまま古い pid が残っている (その pid は今は無関係なプロセス)
+  printf '{ "project":"Demo","status":"stopped","pid": %s }\n' "$other" > "$CCSU_SUP_DIR/Demo.json"
+
+  run bash "$SCRIPT" stop Demo --now
+  [ "$status" -eq 0 ]
+  kill -0 "$other"
+  kill -0 "$(cat "$TEST_TEMP/other-child.pid")"
+  # 後始末 (テスト自身が作ったプロセスのみ)
+  kill "$(cat "$TEST_TEMP/other-child.pid")" "$other" 2>/dev/null || true
+  wait "$other" 2>/dev/null || true
+}
+
 @test "list: supervisor なしのメッセージ" {
   run bash "$SCRIPT" list
   [ "$status" -eq 0 ]

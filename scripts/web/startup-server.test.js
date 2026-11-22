@@ -339,6 +339,55 @@ test('HTTP: 起動 CLI の即時失敗は started:true にしない (QA BUG-05)'
   }
 });
 
+test('HTTP: 背景起動は supervisor が実在するまで started:true にしない (CLI exit 0 だけでは不十分)', async () => {
+  const supDir = path.join(TMP, 'sup-unconfirmed');
+  fs.rmSync(supDir, { recursive: true, force: true });
+  fs.mkdirSync(supDir, { recursive: true });
+  await withServer({ supervisorDir: supDir, launchConfirmMs: 400 }, async (port) => {
+    // 状態ファイルなし (CLI は exit 0 だが supervisor が居ない)
+    const a = await req(port, 'POST', '/api/startup/launch',
+      { project: 'Alpha-App', mode: 'background', duration: 60, confirm: true });
+    assert.equal(a.json.ok, false);
+    assert.equal(a.json.started, false);
+    assert.equal(a.json.error, 'START_NOT_CONFIRMED');
+    assert.match(a.json.message, /稼働を確認できませんでした/);
+    // 即停止していた場合は理由を添える
+    fs.writeFileSync(path.join(supDir, 'Alpha-App.json'),
+      JSON.stringify({ status: 'blocked', last_reason: 'blocked_issues', pid: 999999 }));
+    const b = await req(port, 'POST', '/api/startup/launch',
+      { project: 'Alpha-App', mode: 'background', duration: 60, confirm: true });
+    assert.equal(b.json.started, false);
+    assert.match(b.json.message, /status=blocked: blocked_issues/);
+  });
+});
+
+test('HTTP: 背景起動は supervisor が running かつ pid 生存なら started:true', async () => {
+  const supDir = path.join(TMP, 'sup-confirmed');
+  fs.rmSync(supDir, { recursive: true, force: true });
+  fs.mkdirSync(supDir, { recursive: true });
+  fs.writeFileSync(path.join(supDir, 'Alpha-App.json'),
+    JSON.stringify({ status: 'running', pid: process.pid }));   // テストプロセス自身 = 生存
+  await withServer({ supervisorDir: supDir, launchConfirmMs: 400 }, async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch',
+      { project: 'Alpha-App', mode: 'background', duration: 60, confirm: true });
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.started, true);
+  });
+});
+
+test('supervisorStateFile: ccsu_safe_name と同じ規則 (非 [A-Za-z0-9_-] は 1 バイトずつ _)', () => {
+  assert.equal(srv.supervisorStateFile('/s', 'Alpha-App'), '/s/Alpha-App.json');
+  assert.equal(srv.supervisorStateFile('/s', 'a/b.c'), '/s/a_b_c.json');
+  assert.equal(srv.supervisorStateFile('/s', 'あ'), '/s/___.json');   // UTF-8 3 バイト
+  // bash 側 (lib/common.sh の ccsu_safe_name) と出力が一致すること (ASCII / 非 ASCII)
+  const { execFileSync } = require('child_process');
+  for (const name of ['Alpha-App', 'a/b.c', 'みらい-Project', 'x あ/y']) {
+    const bashSafe = execFileSync('bash', ['-c', 'source "$1/lib/common.sh"; ccsu_safe_name "$2"', '_', path.join(__dirname, '..', '..'), name],
+      { encoding: 'utf8' });
+    assert.equal(srv.supervisorStateFile('/s', name), '/s/' + bashSafe + '.json', name);
+  }
+});
+
 test('HTTP: 未登録プロジェクト / 不正モードは 400', async () => {
   await withServer({}, async (port) => {
     const a = await req(port, 'POST', '/api/startup/plan', { project: 'Nope', mode: 'background' });

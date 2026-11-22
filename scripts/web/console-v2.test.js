@@ -83,3 +83,25 @@ test('v2.html: Cron 表示 — リダイレクト除去・時刻の * 保持・�
   assert.equal(rows[2].project, 'monitor.sh（無効）');
   assert.deepEqual(rows[2].dow, [1, 2, 3, 0], 'mon-wed,sun を展開する');
 });
+
+test('v2.html: 背景起動の通知は tmux attach ではなく supervisor ログ追従を案内する', () => {
+  const { tpl } = loadTemplate();
+  // 単一起動 / 複数起動の通知とも、mode === background のとき tail を案内し、それ以外は従来どおり tmux attach
+  const single = tpl.indexOf("mode0 === 'background' ? '監視: tail -f ~/.claudeos/supervisor/'");
+  const multi = tpl.indexOf("mode === 'background' ? '監視: tail -f ~/.claudeos/supervisor/'");
+  assert.ok(single > 0, '単一起動の通知が背景モードを区別していない');
+  assert.ok(multi > 0, '複数起動の通知が背景モードを区別していない');
+  assert.ok(tpl.includes('背景実行は tmux を使いません'));
+  assert.ok(tpl.includes("'claudeos-team-' : 'claudeos-'"), 'tmux 系モードの案内が消えている');
+});
+
+test('v2.html: 要求欄は「指示文としては渡されない」ことを明記する', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes('Claude への指示文としては渡されません'));
+  assert.ok(!tpl.includes('Goal Router の Evidence になります'), '旧文言が残っている');
+});
+
+test('v2.html: 起動失敗はサーバーの日本語 message を生コードより優先して表示する', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes('r.message || r.error || r.stderr'), 'message を優先していない');
+});
