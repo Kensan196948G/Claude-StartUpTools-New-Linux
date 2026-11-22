@@ -145,7 +145,10 @@ rl_run_start() {
     rl_run_terminal "$parent" && { log_error "run-ledger: 親 run は終了済みです: $parent"; return 2; }
   fi
 
-  local id="run-$(date -u +%Y%m%dT%H%M%S)-$(rl__short_uuid)"
+  # local x="$(...)" は失敗を隠す (SC2155)。uuid が取れないと ID が run-<時刻>- となり衝突し得るため、分けて検査する
+  local suffix; suffix="$(rl__short_uuid)" || suffix=""
+  [[ -n "$suffix" ]] || { log_error "run-ledger: run-id の乱数部を生成できません"; return 1; }
+  local id; id="run-$(date -u +%Y%m%dT%H%M%S)-$suffix"
   local dir; dir="$(rl_run_dir "$id")"
   mkdir -p "$dir" || { log_error "run-ledger: ディレクトリ作成失敗: $dir"; return 1; }
 
