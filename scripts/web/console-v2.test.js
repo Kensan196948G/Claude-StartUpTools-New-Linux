@@ -419,7 +419,7 @@ test('v2.html: Systemd 再起動は「計画 → 確認 → 実行」の二段�
     const calls = { plan: [], post: [] };
     const fake = {
       state: Object.assign({ sdArm: '', sdArmAt: 0, notice: null }, st || {}),
-      opsPlan(op, proj) { calls.plan.push([op, proj]); this.state.notice = { tone: planTone, text: 'plan' }; return Promise.resolve(); },
+      opsPlan(op, proj) { calls.plan.push([op, proj]); this.state.notice = { tone: planTone, text: 'plan' }; return Promise.resolve(planTone === 'ok'); },
       livePost(url, payload) { calls.post.push({ url, payload }); return Promise.resolve(resp); },
       errText: loadErrText(tpl),
       logged(o, p, r) { return [o, p, r]; },
@@ -461,6 +461,14 @@ test('v2.html: Systemd 再起動は「計画 → 確認 → 実行」の二段�
     assert.equal(t.fake.state.notice.tone, 'warn');
     assert.match(t.fake.state.notice.text, re);
   }
+  // 連打: 確認済みの状態で 2 回続けて押しても、実行 API は 1 回だけ
+  const tr = make('ok', { ok: true, output: 'x' }, { sdArm: 'claudeos-Foo.service', sdArmAt: Date.now() });
+  const p1 = tr.run('claudeos-Foo.service');
+  const p2 = tr.run('claudeos-Foo.service');
+  await Promise.all([p1, p2]);
+  assert.equal(tr.calls.post.length, 1, '連打で二重に実行しない');
+  await tr.run('claudeos-Foo.service');
+  assert.equal(tr.calls.plan.length, 1, '実行完了後の次のクリックは計画から (確認待ちは解除済み)');
   assert.ok(tpl.includes('restart: () => this.sdRestart(u.name)'), '行の再起動ボタンが sdRestart を呼ぶ');
   assert.ok(tpl.includes('{{ u.restartLabel }}'), '再起動ボタンの描画');
 });

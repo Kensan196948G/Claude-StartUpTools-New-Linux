@@ -127,6 +127,13 @@ Web コンソールの Cron・Systemd・SubAgent 画面は、現在すべて**�
 
 - 認証・認可モデルの変更に当たるため、**Approval PR** で出す（head SHA 一致で明示の Y/N）。
 - 実在する unit での `restart` の実機確認（検証用 unit を一時登録して行い、終了後に登録解除する）。
+
+### 残存リスク（独立レビューで確認。いずれも Critical / High ではない）
+
+- 実行は `bash systemd-control.sh` の子プロセスで、環境変数は絞って渡す（`opsChildEnv`）。タイムアウト時に kill されるのは bash のみで、孫の systemctl が残り得る（既存の `runScript` の制約。ロックは解放される）。
+- 保護対象は名前の部分一致（`web-startup` / `cloudflared` / `tunnel`）のため、`tunnel` を含む正当な名前も拒否する（安全側の誤検知）。
+- `ccsu_safe_name` が `/` 等を `_` にするため、別フォルダが同じ unit 名に写り得る（保護対象の回避にはならない）。
+- 失敗時の stderr（最大 4000 文字）は認証済みの利用者へ返す。実行前の監査行は無い（実行後に結果を記録）。
 - 監査ログに、操作・対象・結果・認証主体を残す。
 
 ## 10. ロールバック

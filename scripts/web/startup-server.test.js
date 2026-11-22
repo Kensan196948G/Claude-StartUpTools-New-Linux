@@ -1917,6 +1917,12 @@ test('ops-restart: ヘルパ (checkOpsDailyLimit / isProtectedOpsTarget)', () =>
   ['Alpha-App', 'Mirai-DX-Project'].forEach(n => assert.equal(srv.isProtectedOpsTarget(n), false, n));
 });
 
+test('ops-restart: 子プロセスの環境は絞る (サーバーの秘密・claude の認証は渡さず、systemctl --user に必要な変数は通す)', () => {
+  const e = srv.opsChildEnv({ PATH: '/bin', HOME: '/h', XDG_RUNTIME_DIR: '/run/user/1000', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus', CLAUDEOS_HOME: '/h/.claudeos',
+    STARTUP_WEB_PASSWORD: 'p', CF_ACCESS_AUD: 'a', CLAUDE_CODE_OAUTH_TOKEN: 't', ANTHROPIC_API_KEY: 'k', GITHUB_TOKEN: 'g', MY_SECRET: 's', LANG: 'ja' });
+  assert.deepEqual(Object.keys(e).sort(), ['CLAUDEOS_HOME', 'DBUS_SESSION_BUS_ADDRESS', 'HOME', 'LANG', 'PATH', 'XDG_RUNTIME_DIR']);
+});
+
 test('ops-restart: 既定で無効 (STARTUP_WEB_OPS_RESTART_ENABLE 未設定は 403 で何も実行しない)', async () => {
   const f = opsExecFixture('disabled');
   await withServer(f.cfg({}), async (port) => {
@@ -1950,6 +1956,16 @@ test('ops-restart: 認証は Access JWT のみ — JWT 無し/不正は拒否、
     assert.equal(r.json.error, 'OPS_AUTH_FAILED');
   });
   assert.equal(f.callLines().length, 0, '拒否では systemd-control を一度も呼ばない');
+});
+
+test('ops-restart: 実行者 (メール) を特定できない JWT では実行しない', async () => {
+  const f = opsExecFixture('noemail');
+  await withServer(f.cfg2({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: '' }) });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error, 'OPS_AUTH_FAILED');
+  });
+  assert.equal(f.callLines().length, 0);
 });
 
 test('ops-restart: confirm=true が無ければ実行しない。不正な project・保護対象 (web-startup / cloudflared / tunnel) は拒否', async () => {

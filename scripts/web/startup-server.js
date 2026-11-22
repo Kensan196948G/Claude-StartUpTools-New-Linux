@@ -521,6 +521,16 @@ function checkOpsDailyLimit(usage, maxCount) {
 }
 
 /**
+ * opsChildEnv — 変更系の実行 (systemd-control) へ渡す環境。サーバー自身の秘密 (STARTUP_WEB_* / CF_ACCESS_* 等) と
+ *   claude の認証トークンは渡さない。--user の systemctl に必要な XDG_RUNTIME_DIR (XDG_ 接頭辞) と DBUS_SESSION_BUS_ADDRESS は通す。
+ */
+function opsChildEnv(env) {
+  const out = scrubEnv(env, ['DBUS_SESSION_BUS_ADDRESS', 'CLAUDEOS_HOME']);
+  Object.keys(out).forEach((k) => { if (k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_')) delete out[k]; });
+  return out;
+}
+
+/**
  * isProtectedOpsTarget — Web から再起動してはいけない対象 (自己ロックアウトの防止)。
  *   このサービス自身 (web-startup) を再起動すると実行中のリクエストごと止まり、
  *   公開トンネル (cloudflared / tunnel) を再起動すると、利用者の唯一の経路が切れる。
@@ -1244,6 +1254,7 @@ function createServer(cfg) {
     const jwt = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
       teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
     if (!jwt.ok) return reject(403, 'OPS_AUTH_FAILED');
+    if (!jwt.email) return reject(403, 'OPS_AUTH_FAILED');   // 実行者を監査に残せない JWT では実行しない
     user = jwt.email;
     if (body.confirm !== true) return reject(400, 'CONFIRM_REQUIRED');
     if (conf.dryRunOnly) return reject(403, 'DRY_RUN_ONLY');
@@ -1266,7 +1277,7 @@ function createServer(cfg) {
       }
       daily.count = u0.count + 1;
       const bin = path.join(conf.root, 'bin', 'systemd-control.sh');
-      const r = await runScript(bin, ['restart', proj.value], { cwd: conf.root, timeoutMs: conf.opsExecTimeoutMs });
+      const r = await runScript(bin, ['restart', proj.value], { cwd: conf.root, timeoutMs: conf.opsExecTimeoutMs, env: opsChildEnv(process.env) });
       appendAudit({ action: 'ops-restart', project: proj.value, exit: r.exitCode, user, remote });
       const clean = (t) => String(t || '').replace(/\u001b\[[0-9;]*m/g, '').trim().slice(0, 4000);
       const ok = r.exitCode === 0;
@@ -2123,7 +2134,7 @@ module.exports = {
   safeEqual, isLoopback, validateProject, validateMode, validateGoal, validateDuration,
   sanitizeIntent, buildLaunchArgs, buildStopArgs, buildApplyAllArgs, parseState,
   projectNames, isCronSchedule, supervisorStateFile, resolveLogFile,
-  scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, checkOpsDailyLimit, isProtectedOpsTarget, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
+  scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, checkOpsDailyLimit, isProtectedOpsTarget, opsChildEnv, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
   positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,

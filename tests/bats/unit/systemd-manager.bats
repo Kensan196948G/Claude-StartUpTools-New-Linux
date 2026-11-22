@@ -234,3 +234,13 @@ _mk_project() {   # <name> [files...]
   [ "$status" -eq 0 ]
   [[ "$output" == *"claudeos-Demo.service"* ]]
 }
+
+# systemctl が無い環境では sc__systemctl が警告だけで 0 を返す。Web API が「再起動した」と誤報しないよう、restart は失敗にする
+@test "systemd-control: systemctl が無い環境の restart は非 0 (再起動していないのに成功にしない)" {
+  _mk_project Demo >/dev/null
+  CCSU_SYSTEMCTL_BIN="/nonexistent/definitely/systemctl" run bash "$REPO_ROOT/bin/systemd-control.sh" restart Demo
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"restart: claudeos-Demo.service"* ]]
+  CCSU_SYSTEMCTL_BIN="/nonexistent/definitely/systemctl" run bash "$REPO_ROOT/bin/systemd-control.sh" restart Demo --dry-run
+  [ "$status" -eq 0 ]   # 計画 (dry-run) は従来どおり成功
+}
