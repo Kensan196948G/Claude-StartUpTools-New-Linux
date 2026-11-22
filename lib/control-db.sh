@@ -381,7 +381,7 @@ ctl__reconcile() {
 
   local reason_escaped="${reason//\'/\'\'}"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     UPDATE control.runs
        SET status = 'stale',
            reconciled_at = now(),
@@ -389,8 +389,7 @@ ctl__reconcile() {
      WHERE run_id IN (SELECT run_id FROM control.v_stale_runs)
        AND status IN ('leased','running')
     RETURNING run_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "reconcile 更新に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -452,7 +451,7 @@ ctl__approval_request() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.approvals
       (project_id, run_id, risk_category, required_approver_role, required_approvals,
        subject_kind, subject_ref, approved_object_sha256, head_sha, requested_by,
@@ -468,8 +467,7 @@ ctl__approval_request() {
       '$(_ctl__sqlq "$question")'
     )
     RETURNING approval_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "承認申請の作成に失敗しました: ${out:0:400}"
     return 1
   fi
@@ -509,7 +507,7 @@ ctl__approval_decide() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     BEGIN;
     INSERT INTO control.approval_decisions
       (approval_id, approver, approver_role, decision, decided_object_sha256, note)
@@ -543,8 +541,7 @@ ctl__approval_decide() {
 
     SELECT status FROM control.approvals WHERE approval_id = '$(_ctl__sqlq "$approval_id")';
     COMMIT;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "承認決定の記録に失敗しました: ${out:0:400}"
     return 1
   fi
@@ -666,13 +663,12 @@ ctl__eval_record() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.eval_results (eval_id, run_id, verdict, score, head_sha, message)
     SELECT eval_id, $run_id_sql, '$(_ctl__sqlq "$verdict")', $score_sql, $head_sha_sql, $message_sql
       FROM control.eval_definitions WHERE eval_key = '$(_ctl__sqlq "$key")'
     RETURNING result_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "eval 結果の記録に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -757,7 +753,7 @@ ctl__project_register() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.projects (project_key, display_name, repo_path, remote_slug, default_branch)
     VALUES ('$(_ctl__sqlq "$key")', '$(_ctl__sqlq "$display_name")', $repo_path_sql, $remote_slug_sql, '$(_ctl__sqlq "$default_branch")')
     ON CONFLICT (project_key) DO UPDATE
@@ -765,8 +761,7 @@ ctl__project_register() {
           remote_slug = excluded.remote_slug, default_branch = excluded.default_branch,
           updated_at = now()
     RETURNING project_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "project 登録に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -822,7 +817,7 @@ ctl__run_start() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.runs
       (project_id, task_id, run_kind, goal_type, status, lease_owner, lease_token,
        lease_expires_at, heartbeat_at, started_at, session_ref, git_head_sha)
@@ -835,8 +830,7 @@ ctl__run_start() {
       $session_ref_sql, $git_head_sha_sql
     )
     RETURNING run_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "run 開始に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -929,7 +923,7 @@ ctl__agent_register() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.agents (agent_name, agent_kind, execution_plane, model_id, instruction_ref, is_verifier)
     VALUES ('$(_ctl__sqlq "$name")', '$(_ctl__sqlq "$kind")', '$(_ctl__sqlq "$plane")', $model_id_sql, $instruction_ref_sql, $( (( verifier )) && echo true || echo false ))
     ON CONFLICT (agent_name) DO UPDATE
@@ -937,8 +931,7 @@ ctl__agent_register() {
           model_id = excluded.model_id, instruction_ref = excluded.instruction_ref,
           is_verifier = excluded.is_verifier, updated_at = now()
     RETURNING agent_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "agent 登録に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -993,7 +986,7 @@ ctl__agent_assign() {
   [[ -n "$branch" ]] && branch_sql="'$(_ctl__sqlq "$branch")'"
 
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.agent_assignments
       (project_id, run_id, agent_id, task_id, assigned_role, path_scope, worktree_path, branch_name)
     VALUES (
@@ -1001,8 +994,7 @@ ctl__agent_assign() {
       $task_id_sql, '$(_ctl__sqlq "$role")', $path_scope_sql, $worktree_path_sql, $branch_sql
     )
     RETURNING assignment_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     if [[ "$out" == *"uq_agent_assignments_active_scope"* ]]; then
       _ctl__err "衝突: path_scope '$path_scope' は project '$project_key' で既に割当済みです (同一ファイルへの並列割当は禁止)"
       return 5
@@ -1075,12 +1067,11 @@ ctl__handoff_offer() {
   [[ -n "$ttl_hours" ]] && expires_sql="now() + interval '${ttl_hours} hours'"
 
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.handoffs (run_id, from_agent_id, to_agent_id, handoff_kind, summary, expires_at)
     VALUES ('$(_ctl__sqlq "$run_id")', $from_agent_id_sql, '$(_ctl__sqlq "$to_agent_id")', '$(_ctl__sqlq "$kind")', '$(_ctl__sqlq "$summary")', $expires_sql)
     RETURNING handoff_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "handoff 作成に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1172,7 +1163,7 @@ ctl__passport_export() {
 
   local psql; psql="$(pg__cmd psql)"
   local body
-  body="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
+  if ! body="$("$psql" -h "$PGHOST" -d "$db" -Atqc "
     SELECT jsonb_build_object(
       'passport_version', '1.0',
       'issued_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
@@ -1188,8 +1179,7 @@ ctl__passport_export() {
       JOIN control.projects p ON p.project_id = r.project_id
       LEFT JOIN control.tasks t ON t.task_id = r.task_id
      WHERE r.run_id = '$(_ctl__sqlq "$run_id")';
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "passport export に失敗しました: ${body:0:300}"
     return 1
   fi
@@ -1268,7 +1258,7 @@ ctl__passport_import() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.runs
       (project_id, run_kind, goal_type, status, git_head_sha, summary, metadata)
     VALUES (
@@ -1276,8 +1266,7 @@ ctl__passport_import() {
       'queued', $git_head_sha_sql, $summary_sql, '$(_ctl__sqlq "$metadata_json")'::jsonb
     )
     RETURNING run_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "passport import (run 作成) に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1322,15 +1311,14 @@ ctl__failure_pattern_record() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.failure_patterns (signature, title, failure_kind, severity)
     VALUES ('$(_ctl__sqlq "$signature")', '$(_ctl__sqlq "$title")', '$(_ctl__sqlq "$failure_kind")', '$(_ctl__sqlq "$severity")')
     ON CONFLICT (signature) DO UPDATE
       SET occurrence_count = control.failure_patterns.occurrence_count + 1,
           last_seen_at = now(), updated_at = now()
     RETURNING pattern_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "failure_pattern の記録に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1366,12 +1354,11 @@ ctl__improvement_proposal_create() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.improvement_proposals (pattern_id, target_kind, target_ref, title, rationale, pr_ref)
     VALUES ($pattern_id_sql, '$(_ctl__sqlq "$target_kind")', '$(_ctl__sqlq "$target_ref")', '$(_ctl__sqlq "$title")', $rationale_sql, $pr_ref_sql)
     RETURNING proposal_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "improvement_proposal の作成に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1403,13 +1390,12 @@ ctl__skill_candidate_create() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.skill_candidates (candidate_key, origin, pattern_id, proposal_id, rationale)
     VALUES ('$(_ctl__sqlq "$key")', '$(_ctl__sqlq "$origin")', $pattern_id_sql, $proposal_id_sql, $rationale_sql)
     ON CONFLICT (candidate_key) DO UPDATE SET updated_at = now()
     RETURNING candidate_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "skill_candidate の作成に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1446,12 +1432,11 @@ ctl__skill_version_create() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.skill_versions (candidate_id, skill_key, version, content_sha256, source_ref, authored_by)
     VALUES ($candidate_id_sql, '$(_ctl__sqlq "$skill_key")', $version, '$(_ctl__sqlq "$content_sha256")', '$(_ctl__sqlq "$source_ref")', $authored_by_sql)
     RETURNING skill_version_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "skill_version の作成に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1484,12 +1469,11 @@ ctl__skill_evaluation_record() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.skill_evaluations (skill_version_id, verdict, score, baseline_score)
     VALUES ('$(_ctl__sqlq "$skill_version_id")', '$(_ctl__sqlq "$verdict")', $score_sql, $baseline_sql)
     RETURNING skill_evaluation_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "skill_evaluation の記録に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1547,7 +1531,7 @@ ctl__skill_promote() {
   [[ -n "$rationale" ]] && rationale_sql="'$(_ctl__sqlq "$rationale")'"
 
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     BEGIN;
     INSERT INTO control.skill_promotions
       (skill_version_id, from_status, to_status, approval_id, pr_ref, promoted_by, rationale)
@@ -1560,8 +1544,7 @@ ctl__skill_promote() {
      WHERE skill_version_id = '$(_ctl__sqlq "$skill_version_id")';
     SELECT status FROM control.skill_versions WHERE skill_version_id = '$(_ctl__sqlq "$skill_version_id")';
     COMMIT;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "skill_promote に失敗しました: ${out:0:400}"
     return 1
   fi
@@ -1591,12 +1574,11 @@ ctl__canary_run_start() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.canary_runs (skill_version_id, run_id, baseline_run_id)
     VALUES ('$(_ctl__sqlq "$skill_version_id")', $run_id_sql, $baseline_sql)
     RETURNING canary_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "canary_run の開始に失敗しました: ${out:0:300}"
     return 1
   fi
@@ -1664,7 +1646,7 @@ ctl__trust_score_record() {
 
   local psql; psql="$(pg__cmd psql)"
   local out
-  out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
+  if ! out="$("$psql" -h "$PGHOST" -d "$db" -v ON_ERROR_STOP=1 -Atqc "
     INSERT INTO control.trust_scores
       (subject_kind, subject_ref, score, sample_size, success_count, failure_count, window_start, window_end)
     VALUES (
@@ -1673,8 +1655,7 @@ ctl__trust_score_record() {
       '$(_ctl__sqlq "$window_start")', '$(_ctl__sqlq "$window_end")'
     )
     RETURNING trust_score_id;
-  " 2>&1)"
-  if [[ $? -ne 0 ]]; then
+  " 2>&1)"; then
     _ctl__err "trust_score の記録に失敗しました: ${out:0:300}"
     return 1
   fi
