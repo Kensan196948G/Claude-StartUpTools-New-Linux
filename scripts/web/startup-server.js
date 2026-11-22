@@ -448,14 +448,69 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SECRET_ENV_RE = /(^ANTHROPIC_API_KEY$|^CLAUDEOS_SMTP_|^STARTUP_WEB_|^DASHBOARD_PASSWORD$|^CF_ACCESS_|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_?KEY|_KEY$|_DSN$|^SSH_AUTH_SOCK$|^CLOUDFLARE_|^AWS_|^NEON_|^(DATABASE|POSTGRES|POSTGRESQL|DB|REDIS|MONGO|MONGODB|MYSQL)[A-Z_]*URL$|^PG(PASSWORD|PASSFILE)$)/i;
 const ENV_KEEP = new Set(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN']);   // claude 自身の認証 (消すと起動できない)
 
-/** scrubEnv — claude 子プロセスへ渡す環境から秘密を除く (cron-launcher の env -u 方針と同じ) */
-function scrubEnv(env) {
+// 子プロセスへ渡してよい環境変数 (allowlist)。ここに無い名前は、秘密らしくなくても渡さない。
+const ENV_ALLOW = new Set([
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'TERM', 'COLORTERM', 'TZ', 'TMPDIR', 'NO_COLOR', 'NODE_ENV',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE',
+]);
+const ENV_ALLOW_PREFIX = ['LC_', 'XDG_', 'CLAUDE_', 'ANTHROPIC_'];   // 秘密らしい名前 (API キー等) は下の denylist で更に除く
+
+/**
+ * scrubEnv — claude 子プロセスへ渡す環境を allowlist で絞り、更に秘密らしい名前を除く (二重の防御)。
+ *   extraPass: 運用者が明示した追加名 (STARTUP_WEB_PROMPT_ENV_PASS)。allowlist と denylist の両方を越えて渡す。
+ */
+function scrubEnv(env, extraPass) {
   const out = {};
+  const pass = new Set(Array.isArray(extraPass) ? extraPass : []);
   Object.keys(env || {}).forEach((k) => {
-    // claude 自身の認証だけは残す (消すと起動できない)。それ以外の秘密は子プロセスへ渡さない。
-    if (ENV_KEEP.has(k) || !SECRET_ENV_RE.test(k)) out[k] = env[k];
+    if (ENV_KEEP.has(k) || pass.has(k)) { out[k] = env[k]; return; }   // claude 自身の認証 / 運用者の明示
+    const allowed = ENV_ALLOW.has(k) || ENV_ALLOW_PREFIX.some(p => k.startsWith(p));
+    if (allowed && !SECRET_ENV_RE.test(k)) out[k] = env[k];
   });
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 日次の使用量 (回数と累計予算)。<webPromptDir>/usage-YYYY-MM-DD.json (ローカル日付)。
+//   起動時に予算ぶんを先に確保 (reserve) し、終了時に実コストへ精算する。中断・クラッシュでも使用済みとして残る。
+// ---------------------------------------------------------------------------
+function usageDay(d) {
+  const t = d || new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate());
+}
+function usageFile(dir, day) { return path.join(dir, 'usage-' + day + '.json'); }
+function readPromptUsage(dir, day) {
+  const file = usageFile(dir, day);
+  const j = readJsonFile(file);
+  // ファイルはあるのに読めない (破損) ときは「不明」として扱い、上限を守れないので送信させない (fail-closed)
+  if (!j && fs.existsSync(file)) return { day, count: 0, spentUsd: 0, corrupt: true };
+  const count = j && Number.isInteger(j.count) && j.count >= 0 ? j.count : 0;
+  const spentUsd = j && typeof j.spentUsd === 'number' && j.spentUsd >= 0 ? j.spentUsd : 0;
+  return { day, count, spentUsd };
+}
+function writePromptUsage(dir, u) {
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const file = usageFile(dir, u.day);
+    const tmp = file + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, JSON.stringify({ day: u.day, count: u.count, spentUsd: Math.round(u.spentUsd * 10000) / 10000 }) + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    // 古い日のファイルを掃除する (best-effort)
+    fs.readdirSync(dir).forEach((n) => {
+      // 今日より古い日だけ掃除する (日付をまたぐ精算が、当日の使用量ファイルを消して上限をリセットしないように)
+      if (/^usage-\d{4}-\d{2}-\d{2}\.json$/.test(n) && n !== path.basename(file) && n < 'usage-' + usageDay() + '.json') { try { fs.rmSync(path.join(dir, n), { force: true }); } catch { /* 無視 */ } }
+    });
+    return true;
+  } catch { return false; }
+}
+/** checkPromptDailyLimit — 回数または累計予算の上限に達していれば拒否理由を返す */
+function checkPromptDailyLimit(usage, limits) {
+  if (usage.corrupt) return { ok: false, error: 'PROMPT_USAGE_UNREADABLE' };
+  if (usage.count >= limits.maxCount) return { ok: false, error: 'PROMPT_DAILY_LIMIT' };
+  if (usage.spentUsd + limits.perRunUsd > limits.budgetUsd) return { ok: false, error: 'PROMPT_DAILY_BUDGET' };
+  return { ok: true };
 }
 
 /** validatePromptText — 長さ・制御文字 (NUL) を検証して整形済みの本文を返す */
@@ -709,14 +764,19 @@ function createServer(cfg) {
     promptEnabled: process.env.STARTUP_WEB_PROMPT_ENABLE === '1',   // 既定は無効 (高リスク機能)
     promptBudgetUsd: positiveNumber(process.env.STARTUP_WEB_PROMPT_BUDGET_USD, 2),
     promptTimeoutMs: Math.max(1000, positiveNumber(process.env.STARTUP_WEB_PROMPT_TIMEOUT_MS, 600000)),
+    promptDailyMax: Math.floor(positiveNumber(process.env.STARTUP_WEB_PROMPT_DAILY_MAX, 50)),          // 1 日の送信回数の上限
+    promptDailyBudgetUsd: positiveNumber(process.env.STARTUP_WEB_PROMPT_DAILY_BUDGET_USD, 10),        // 1 日の累計予算の上限 (USD)
+    promptEnvPass: String(process.env.STARTUP_WEB_PROMPT_ENV_PASS || '').split(',').map(x => x.trim()).filter(x => /^[A-Za-z_][A-Za-z0-9_]*$/.test(x)),
     promptPermission: PROMPT_PERMISSION_MODES.includes(process.env.STARTUP_WEB_PROMPT_PERMISSION)
       ? process.env.STARTUP_WEB_PROMPT_PERMISSION : 'acceptEdits',
     // 認証: Basic パスワード (STARTUP_WEB_PASSWORD) か Cloudflare Access の JWT 検証 (どちらも無ければ送信は拒否)
     accessTeamDomain: process.env.CF_ACCESS_TEAM_DOMAIN || '',
     accessAud: process.env.CF_ACCESS_AUD || '',
     // 公開ホスト名 (Cloudflare 経由の Host)。loopback (127.0.0.1 / localhost / [::1]) は常に許可
-    allowedHosts: String(process.env.STARTUP_WEB_ALLOWED_HOSTS || '').split(',').map(x => x.trim()).filter(Boolean),
+    allowedHosts: String(process.env.STARTUP_WEB_ALLOWED_HOSTS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
   }, cfg || {});
+
+  conf.allowedHosts = (conf.allowedHosts || []).map(x => String(x).trim().toLowerCase());
 
   const BIN_START = path.join(conf.root, 'bin', 'start-claude.sh');
   const BIN_AUTONOMY = path.join(conf.root, 'bin', 'autonomy.sh');
@@ -961,6 +1021,11 @@ function createServer(cfg) {
           exitCode: dry.exitCode, plan: dry.stdout, stderr: dry.stderr, args: dryArgs,
         });
       }
+      // Web 会話 (プロンプト送信) の実行中は全適用しない (同じ作業ツリーへ supervisor が起動して二重書き込みになる)
+      if (promptActive) {
+        appendAudit({ action: 'apply-all-blocked', error: 'PROMPT_IN_PROGRESS', project: promptActive.project, remote });
+        return json(res, 409, { ok: false, error: 'PROMPT_IN_PROGRESS', message: 'Web 会話の実行中は全適用できません。完了後に実行してください。' });
+      }
       if (dry.exitCode !== 0) {
         // dry-run が失敗した計画で実適用へ進まない (AGENTS.md: 計画を確認してから --yes)。
         // ここを素通りさせると、対象の検証に失敗したまま全プロジェクトへ適用してしまう (QA BUG-02)。
@@ -998,7 +1063,7 @@ function createServer(cfg) {
   function supportsPermissionPromptsFlag() {
     if (promptsFlagSupport !== null) return Promise.resolve(promptsFlagSupport);
     return new Promise((resolve) => {
-      execFile(conf.claudeBin, ['--help'], { timeout: 10000, env: scrubEnv(process.env), maxBuffer: 1 << 20 }, (err, stdout) => {
+      execFile(conf.claudeBin, ['--help'], { timeout: 10000, env: scrubEnv(process.env, conf.promptEnvPass), maxBuffer: 1 << 20 }, (err, stdout) => {
         if (err) return resolve(null);
         promptsFlagSupport = /--permission-prompts/.test(String(stdout));
         resolve(promptsFlagSupport);
@@ -1032,10 +1097,28 @@ function createServer(cfg) {
     return { ok: false, error: 'PROMPT_AUTH_NOT_CONFIGURED' };
   }
 
+  /**
+   * checkMutationRequest — 変更系 POST (launch / stop / apply-all / plan / release-check) の共通検査。
+   *   Host: loopback / IP リテラル / STARTUP_WEB_ALLOWED_HOSTS のみ (DNS rebinding は名前解決を悪用するため、名前だけ縛る)。
+   *   本文があるなら JSON のみ (text/plain の単純リクエストによる CSRF を避ける)。Sec-Fetch-Site が same-origin/none 以外は拒否。
+   *   Origin は従来どおり (付いていれば Host と一致が必須)。CLI からの直接呼び出しを壊さないため、無い場合は許可する。
+   */
+  function checkMutationRequest(req) {
+    const host = String(req.headers.host || '').toLowerCase();
+    const loop = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
+    const ipLit = /^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(:\d+)?$/;
+    if (!loop.test(host) && !ipLit.test(host) && !conf.allowedHosts.includes(host)) return { ok: false, status: 403, error: 'HOST_REJECTED' };
+    const hasBody = Number(req.headers['content-length'] || 0) > 0 || !!req.headers['transfer-encoding'];
+    if (hasBody && !/^application\/json(\s*;|$)/i.test(String(req.headers['content-type'] || ''))) return { ok: false, status: 415, error: 'UNSUPPORTED_MEDIA_TYPE' };
+    const sfs = req.headers['sec-fetch-site'];
+    if (sfs && sfs !== 'same-origin' && sfs !== 'none') return { ok: false, status: 403, error: 'CROSS_SITE_REJECTED' };
+    return { ok: true };
+  }
+
   /** checkPromptRequest — Host 許可リスト / JSON のみ / Origin 必須かつ Host 一致 / Sec-Fetch-Site */
   function checkPromptRequest(req) {
-    const host = String(req.headers.host || '');
-    const loop = /^(127\.0\.0\.1|localhost|\[::1\]):\d+$/;
+    const host = String(req.headers.host || '').toLowerCase();
+    const loop = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
     if (!loop.test(host) && !conf.allowedHosts.includes(host)) return { ok: false, status: 403, error: 'HOST_REJECTED' };
     if (!/^application\/json(\s*;|$)/i.test(String(req.headers['content-type'] || ''))) {
       return { ok: false, status: 415, error: 'UNSUPPORTED_MEDIA_TYPE' };
@@ -1102,9 +1185,17 @@ function createServer(cfg) {
       permissionMode: conf.promptPermission, noPermissionPrompts: promptsNone,
     });
 
+    const dailyLimits = { maxCount: conf.promptDailyMax, budgetUsd: conf.promptDailyBudgetUsd, perRunUsd: conf.promptBudgetUsd };
+    const usageNow = readPromptUsage(conf.webPromptDir, usageDay());
+    const dl = checkPromptDailyLimit(usageNow, dailyLimits);
+    if (!dl.ok) {
+      return reject(429, dl.error, { daily: { count: usageNow.count, max: conf.promptDailyMax, spentUsd: usageNow.spentUsd, budgetUsd: conf.promptDailyBudgetUsd },
+        message: '本日の上限に達しました (翌日 0 時にリセット、または STARTUP_WEB_PROMPT_DAILY_MAX / STARTUP_WEB_PROMPT_DAILY_BUDGET_USD で変更)。' });
+    }
     if (body.confirm !== true) {
       return json(res, 200, {
         ok: true, requiresConfirm: true, project: proj.value, cwd: dir,
+        daily: { count: usageNow.count, max: conf.promptDailyMax, spentUsd: usageNow.spentUsd, budgetUsd: conf.promptDailyBudgetUsd },
         resumed: !!resumeId, forked: fork, model: model.value,
         permissionMode: conf.promptPermission, budgetUsd: conf.promptBudgetUsd, timeoutMs: conf.promptTimeoutMs,
         command: 'claude ' + args.slice(0, -1).join(' ') + ' <本文 ' + text.value.length + ' 文字>',
@@ -1114,15 +1205,25 @@ function createServer(cfg) {
     // spawn 直前に再判定 (await の間に自律実行が始まった場合の二重書き込みを避ける)
     if (isSupervisorActive(proj.value)) return reject(409, 'SESSION_RUNNING', { message: '自律実行中のプロジェクトにはプロンプトを送れません。先に停止してください。' });
 
+    // 日次使用量を spawn 前に確保する (await の間の競合を避けるため、ここで再読込して書く)
+    const usageDayKey = usageDay();
+    const u0 = readPromptUsage(conf.webPromptDir, usageDayKey);
+    const dl2 = checkPromptDailyLimit(u0, dailyLimits);
+    if (!dl2.ok) return reject(429, dl2.error);
+    const reservedUsd = conf.promptBudgetUsd;
+    if (!writePromptUsage(conf.webPromptDir, { day: usageDayKey, count: u0.count + 1, spentUsd: u0.spentUsd + reservedUsd })) {
+      return reject(500, 'USAGE_WRITE_FAILED', { message: '使用量の記録に失敗したため送信しません (上限を守れないため)。' });
+    }
+
     const t0 = Date.now();
     const sha = crypto.createHash('sha256').update(text.value).digest('hex').slice(0, 12);
     const baseAudit = { project: proj.value, chars: text.value.length, sha, resumed: !!resumeId, forked: fork, model: model.value, user, remote };
     // detached: 子をプロセスグループの先頭にし、タイムアウト/切断/停止時に孫 (ツールが起動したプロセス) ごと止める
-    const child = spawn(conf.claudeBin, args, { cwd: dir, env: scrubEnv(process.env), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const child = spawn(conf.claudeBin, args, { cwd: dir, env: scrubEnv(process.env, conf.promptEnvPass), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     ACTIVE_PROMPT_CHILDREN.add(child);
     promptActive = { project: proj.value, child };
     let started = false, finalized = false, aborted = false, timedOut = false, sawInit = false;
-    let sessionId = '', stderrTail = '', lineBuf = '', exitTimer = null, killTimer = null;
+    let sessionId = '', stderrTail = '', lineBuf = '', exitTimer = null, killTimer = null, costUsd = null;
 
     const killGroup = (sig) => {
       if (!child.pid) return;
@@ -1154,6 +1255,7 @@ function createServer(cfg) {
       try { ev = JSON.parse(line); } catch { writeLine({ type: 'web/raw', text: line.slice(0, 300) }); return; }
       if (ev && typeof ev.session_id === 'string' && UUID_RE.test(ev.session_id)) sessionId = ev.session_id;
       if (ev && ev.type === 'system' && ev.subtype === 'init') sawInit = true;
+      if (ev && ev.type === 'result' && typeof ev.total_cost_usd === 'number' && ev.total_cost_usd >= 0) costUsd = ev.total_cost_usd;
       const out = sanitizePromptEvent(ev);
       if (out) writeLine(out);
     };
@@ -1174,7 +1276,12 @@ function createServer(cfg) {
                   durationMs: Date.now() - t0, stderr: code === 0 ? '' : stderrTail.slice(-1000) });
       if (started && !res.writableEnded) res.end();
       if (promptActive && promptActive.child === child) promptActive = null;
-      appendAudit(Object.assign({ action: 'prompt', exit: code, signal: signal || null, timedOut, aborted, lineageReset, durationMs: Date.now() - t0 }, baseAudit));
+      // 確保した予算を実コストへ精算する (コスト不明 = 予算ぶんを使ったものとして残す)
+      if (costUsd !== null) {
+        const cur = readPromptUsage(conf.webPromptDir, usageDayKey);
+        if (!cur.corrupt) writePromptUsage(conf.webPromptDir, { day: usageDayKey, count: cur.count, spentUsd: Math.max(0, cur.spentUsd - reservedUsd + costUsd) });
+      }
+      appendAudit(Object.assign({ action: 'prompt', costUsd, exit: code, signal: signal || null, timedOut, aborted, lineageReset, durationMs: Date.now() - t0 }, baseAudit));
     };
 
     child.on('error', (e) => {
@@ -1183,6 +1290,10 @@ function createServer(cfg) {
       clearTimeout(timer);
       ACTIVE_PROMPT_CHILDREN.delete(child);
       if (promptActive && promptActive.child === child) promptActive = null;
+      { // 起動できなかった送信は使用量に数えない (誤設定の claude で上限を使い切る自己 DoS を避ける)
+        const cur = readPromptUsage(conf.webPromptDir, usageDayKey);
+        if (!cur.corrupt) writePromptUsage(conf.webPromptDir, { day: usageDayKey, count: Math.max(0, cur.count - 1), spentUsd: Math.max(0, cur.spentUsd - reservedUsd) });
+      }
       appendAudit(Object.assign({ action: 'prompt-failed', error: 'SPAWN_FAILED' }, baseAudit));
       if (!res.headersSent) json(res, 500, { ok: false, error: 'SPAWN_FAILED', detail: String(e && e.message).slice(0, 200) });
     });
@@ -1616,6 +1727,18 @@ function createServer(cfg) {
       if (!checkOrigin(req.headers.origin, req.headers.host)) {
         return json(res, 403, { ok: false, error: 'ORIGIN_REJECTED' });
       }
+      // プロンプト送信は handlePrompt 内でより厳格に検査する。それ以外の変更系はここで共通検査する
+      if (pn !== '/api/session/prompt') {
+        const mg = checkMutationRequest(req);
+        if (!mg.ok) {
+          const nowMs = Date.now();
+          if (!(promptRejectAudit[mg.error] && nowMs - promptRejectAudit[mg.error] < 60000)) {
+            promptRejectAudit[mg.error] = nowMs;
+            appendAudit({ action: 'mutation-rejected', error: mg.error, path: pn, remote });
+          }
+          return json(res, mg.status, { ok: false, error: mg.error });
+        }
+      }
     }
 
     try {
@@ -1842,7 +1965,7 @@ module.exports = {
   safeEqual, isLoopback, validateProject, validateMode, validateGoal, validateDuration,
   sanitizeIntent, buildLaunchArgs, buildStopArgs, buildApplyAllArgs, parseState,
   projectNames, isCronSchedule, supervisorStateFile, resolveLogFile,
-  scrubEnv, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
+  scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
   positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT,

@@ -980,6 +980,7 @@ function promptFixture(name) {
   ].join('\n') + '\n', { mode: 0o755 });
   f.cfg = (extra) => Object.assign({ root: f.root, claudeBin: f.claude, supervisorDir: f.sup, sessionsDir: f.sess,
     webPromptDir: f.web, promptTimeoutMs: 20000,
+    promptEnvPass: ['STUB_ARGV', 'STUB_ENV', 'STUB_PID', 'STUB_GPID', 'STUB_MODE'],   // スタブが使うテスト用変数だけ明示的に通す
     promptEnabled: true, accessTeamDomain: 'test.cloudflareaccess.com', accessAud: 'aud-1', accessKeys: async () => [ACC_JWK] }, extra || {});
   return f;
 }
@@ -1583,5 +1584,171 @@ test('HTTP: 登録外フォルダの稼働中セッションも停止できる (
     const idle = await req(port, 'POST', '/api/startup/stop', { project: 'Delta' });
     assert.equal(idle.status, 409, '稼働していない登録外フォルダは NOT_RUNNING');
     assert.equal(idle.json.error, 'NOT_RUNNING');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ハードニング (Approval PR): 環境変数 allowlist / 日次上限 / 変更系の共通検査 / apply-all の排他
+// ---------------------------------------------------------------------------
+test('hardening: scrubEnv は allowlist 方式 (未知の名前は渡さない・接頭辞内の秘密は除く・運用者の明示は渡す)', () => {
+  const e = srv.scrubEnv({
+    PATH: '/bin', HOME: '/h', LANG: 'ja', LC_ALL: 'C', XDG_RUNTIME_DIR: '/run', CLAUDE_CONFIG_DIR: '/c', ANTHROPIC_BASE_URL: 'https://x',
+    SOME_APP_VAR: 'v', GIT_ASKPASS: 'a', MY_INTERNAL_URL: 'u',                   // allowlist に無い → 渡さない
+    ANTHROPIC_API_KEY: 'k', CLAUDE_FOO_TOKEN: 't', CLAUDE_CODE_OAUTH_TOKEN: 'keep',  // 接頭辞に合っても秘密らしい名前は除く / 認証は残す
+  });
+  assert.deepEqual(Object.keys(e).sort(),
+    ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'HOME', 'LANG', 'LC_ALL', 'PATH', 'XDG_RUNTIME_DIR']);
+  const x = srv.scrubEnv({ SOME_APP_VAR: 'v', ANTHROPIC_API_KEY: 'k', OTHER: 'o' }, ['SOME_APP_VAR', 'ANTHROPIC_API_KEY']);
+  assert.deepEqual(Object.keys(x).sort(), ['ANTHROPIC_API_KEY', 'SOME_APP_VAR'], '運用者が明示した名前は allowlist / denylist を越えて渡る');
+});
+
+test('hardening: 日次使用量のヘルパ (読み書き・上限判定・古い日の掃除・破損ファイルは 0 扱い)', () => {
+  const dir = path.join(TMP, 'usage-helper');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const day = srv.usageDay(new Date(2026, 10, 5));
+  assert.equal(day, '2026-11-05');
+  assert.deepEqual(srv.readPromptUsage(dir, day), { day, count: 0, spentUsd: 0 });
+  // 掃除は「今日より古い日」だけ。日付をまたぐ精算 (昨日のファイルへの書き込み) で当日分を消さない
+  const today = srv.usageDay();
+  const yesterday = srv.usageDay(new Date(Date.now() - 86400000));
+  const old = srv.usageDay(new Date(Date.now() - 5 * 86400000));
+  assert.equal(srv.writePromptUsage(dir, { day: old, count: 3, spentUsd: 1.5 }), true);
+  assert.equal(srv.writePromptUsage(dir, { day: today, count: 2, spentUsd: 0.5 }), true);
+  assert.equal(srv.writePromptUsage(dir, { day: yesterday, count: 1, spentUsd: 0.2 }), true, '昨日 (日付またぎ) の精算');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['usage-' + yesterday + '.json', 'usage-' + today + '.json'].sort(), '当日分は消えず、古い日だけ掃除される');
+  assert.equal(srv.readPromptUsage(dir, today).count, 2, '当日の使用量は日付またぎの精算でリセットされない');
+  fs.writeFileSync(path.join(dir, 'usage-' + today + '.json'), '{broken');
+  const bad = srv.readPromptUsage(dir, today);
+  assert.equal(bad.corrupt, true, '破損は「不明」(fail-closed)');
+  assert.equal(srv.checkPromptDailyLimit(bad, { maxCount: 99, budgetUsd: 99, perRunUsd: 1 }).error, 'PROMPT_USAGE_UNREADABLE');
+  assert.deepEqual(srv.readPromptUsage(dir, '2000-01-01'), { day: '2000-01-01', count: 0, spentUsd: 0 }, 'ファイル無しは 0');
+  const lim = { maxCount: 2, budgetUsd: 3, perRunUsd: 1 };
+  assert.equal(srv.checkPromptDailyLimit({ count: 2, spentUsd: 0 }, lim).error, 'PROMPT_DAILY_LIMIT');
+  assert.equal(srv.checkPromptDailyLimit({ count: 1, spentUsd: 2.5 }, lim).error, 'PROMPT_DAILY_BUDGET');
+  assert.equal(srv.checkPromptDailyLimit({ count: 1, spentUsd: 2 }, lim).ok, true);
+});
+
+test('hardening: 日次の回数上限と累計予算 (実コストで精算し、上限到達で 429)', async () => {
+  const f = promptFixture('daily');
+  await withPromptEnv(f, 'ok', async () => {
+    // 回数上限 1: 1 件目は通り、2 件目は 429
+    await withServer(f.cfg({ promptDailyMax: 1 }), async (port) => {
+      const pre = await pp(port, { project: 'Alpha-App', text: 'x' });
+      assert.equal(pre.json.daily.count, 0);
+      assert.equal(pre.json.daily.max, 1);
+      const r1 = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r1.status, 200);
+      const u = srv.readPromptUsage(f.web, srv.usageDay());
+      assert.equal(u.count, 1);
+      assert.ok(Math.abs(u.spentUsd - 0.01) < 1e-9, '予約 (予算 2 USD) ではなく実コスト 0.01 USD で精算される: ' + u.spentUsd);
+      const r2 = await pp(port, { project: 'Alpha-App', text: 'y', confirm: true });
+      assert.equal(r2.status, 429);
+      assert.equal(r2.json.error, 'PROMPT_DAILY_LIMIT');
+      const pre2 = await pp(port, { project: 'Alpha-App', text: 'y' });
+      assert.equal(pre2.status, 429, 'プレビューの時点でも拒否する');
+    });
+    // 累計予算: 既に 0.01 USD 使用済み。上限 2.005 USD、1 回の予算 2 USD → 0.01 + 2 > 2.005 で拒否
+    await withServer(f.cfg({ promptDailyBudgetUsd: 2.005, promptDailyMax: 50 }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'z', confirm: true });
+      assert.equal(r.status, 429);
+      assert.equal(r.json.error, 'PROMPT_DAILY_BUDGET');
+      assert.equal(srv.readPromptUsage(f.web, srv.usageDay()).count, 1, '拒否した送信は回数に数えない');
+    });
+  });
+});
+
+test('hardening: 使用量を書き込めないときは送信しない (上限を守れないため)', async () => {
+  const f = promptFixture('usage-fail');
+  fs.mkdirSync(f.web, { recursive: true });
+  fs.writeFileSync(path.join(f.web, 'blocker'), 'x');
+  await withPromptEnv(f, 'ok', async () => {
+    // webPromptDir にファイルを指定 → mkdir/書き込みが失敗する
+    await withServer(f.cfg({ webPromptDir: path.join(f.web, 'blocker') }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r.status, 500);
+      assert.equal(r.json.error, 'USAGE_WRITE_FAILED');
+      assert.equal(fs.existsSync(f.argv), false, 'claude は起動していない');
+    });
+  });
+});
+
+test('hardening: 変更系 POST の共通検査 (Host 許可リスト / JSON のみ / Sec-Fetch-Site)', async () => {
+  await withServer({}, async (port) => {
+    const evil = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { Host: 'evil.example.com' });
+    assert.equal(evil.status, 403);
+    assert.equal(evil.json.error, 'HOST_REJECTED', 'DNS rebinding: 許可リスト外の名前は拒否');
+    const lan = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { Host: '192.168.1.10:3812' });
+    assert.notEqual(lan.status, 403, 'IP リテラルは許可 (DNS 名を使う rebinding の対象外)');
+    const text = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { 'Content-Type': 'text/plain' });
+    assert.equal(text.status, 415);
+    assert.equal(text.json.error, 'UNSUPPORTED_MEDIA_TYPE');
+    const cross = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { 'Sec-Fetch-Site': 'cross-site' });
+    assert.equal(cross.status, 403);
+    assert.equal(cross.json.error, 'CROSS_SITE_REJECTED');
+    const same = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { 'Sec-Fetch-Site': 'same-origin' });
+    assert.notEqual(same.status, 403);
+    const get = await req(port, 'GET', '/api/startup/state', undefined, { Host: 'evil.example.com' });
+    assert.equal(get.status, 200, '読み取り (GET) は対象外');
+  });
+  await withServer({ allowedHosts: ['claude-startuptools.example.com'] }, async (port) => {
+    const ok = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { Host: 'claude-startuptools.example.com' });
+    assert.notEqual(ok.status, 403, '許可リストの公開ホスト名は通る');
+  });
+});
+
+test('hardening: Web 会話の実行中は apply-all を実適用しない (起動と同じ排他)', async () => {
+  const f = promptFixture('applyall-excl');
+  await withPromptEnv(f, 'sleep', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const first = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/session/prompt',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() } });
+      const got = new Promise((resolve) => { first.on('response', (res) => { res.once('data', () => resolve(res)); }); });
+      first.on('error', () => { /* 切断時の ECONNRESET は想定内 */ });
+      first.end(JSON.stringify({ project: 'Alpha-App', text: 'long', confirm: true }));
+      const res1 = await got;
+      // スタブが pid を書くまで待つ (切断すると子を即停止するため、先に待たないと CI のような遅い環境で pid が書かれない)
+      for (let i = 0; i < 100 && !fs.existsSync(f.pid); i++) await new Promise(r => setTimeout(r, 100));
+      const blocked = await req(port, 'POST', '/api/startup/apply-all', { confirm: true });
+      assert.equal(blocked.status, 409);
+      assert.equal(blocked.json.error, 'PROMPT_IN_PROGRESS');
+      const pid = fs.existsSync(f.pid) ? Number(fs.readFileSync(f.pid, 'utf8').trim()) : 0;
+      res1.destroy();
+      first.destroy();
+      for (let i = 0; i < 60 && pid > 0; i++) { await new Promise(r => setTimeout(r, 100)); try { process.kill(pid, 0); } catch { break; } }
+    });
+  });
+});
+
+test('hardening: 起動できなかった送信 (spawn 失敗) は使用量に数えない / 使用量ファイル破損時は送信しない', async () => {
+  const f = promptFixture('refund');
+  // --help だけ成功し、その直後に自分自身を消す → 本番の spawn が ENOENT になる
+  fs.writeFileSync(f.claude, '#!/usr/bin/env bash\nif [ "${1:-}" = "--help" ]; then echo "  --permission-prompts <target>"; rm -f "$0"; exit 0; fi\nexit 0\n', { mode: 0o755 });
+  await withServer(f.cfg(), async (port) => {
+    const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+    assert.equal(r.status, 500);
+    assert.equal(r.json.error, 'SPAWN_FAILED');
+    const u = srv.readPromptUsage(f.web, srv.usageDay());
+    assert.equal(u.count, 0, '起動できなかった送信は回数に数えない');
+    assert.equal(u.spentUsd, 0, '確保した予算も戻る');
+  });
+  const g = promptFixture('corrupt');
+  fs.mkdirSync(g.web, { recursive: true });
+  fs.writeFileSync(path.join(g.web, 'usage-' + srv.usageDay() + '.json'), '{broken');
+  await withPromptEnv(g, 'ok', async () => {
+    await withServer(g.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r.status, 429);
+      assert.equal(r.json.error, 'PROMPT_USAGE_UNREADABLE');
+      assert.equal(fs.existsSync(g.argv), false, '使用量が読めないときは claude を起動しない');
+    });
+  });
+});
+
+test('hardening: Host は大文字小文字を区別せず比較し、loopback はポート省略も許可する', async () => {
+  await withServer({ allowedHosts: ['Claude-StartUpTools.Example.com'] }, async (port) => {
+    const up = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { Host: 'CLAUDE-startuptools.example.COM' });
+    assert.notEqual(up.status, 403, '大文字小文字違いの Host は許可リストと一致扱い');
+    const lo = await req(port, 'POST', '/api/startup/stop', { project: 'Alpha' }, { Host: 'localhost' });
+    assert.notEqual(lo.status, 403, 'ポート省略の localhost (リバースプロキシ経由) も許可');
   });
 });
