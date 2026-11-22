@@ -29,7 +29,31 @@ if command -v crontab >/dev/null 2>&1; then
 fi
 
 # 5 フィールド + コマンド。先頭 # は無効行 (DISABLED マーカー付きも含む)。
+# 先頭 5 語が cron のスケジュール書式でない行 (説明コメント等) はエントリにしない。
+#   例: "# 2>&1 then not Do ..." のように 6 語以上ある説明コメントを無効 cron と誤認しない。
 entries_json="$(printf '%s\n' "$crontab_text" | awk '
+  # 1 要素: * / 数字 / 範囲 / 名前(names に含まれる 3 文字) + 任意の /step
+  function okend(s, names) {
+    if (s == "*" || s ~ /^[0-9]+$/) return 1
+    return (length(s) == 3 && index(names, " " tolower(s) " ") > 0)
+  }
+  function okpart(p, names,   a, k) {
+    sub(/\/[0-9]+$/, "", p)
+    k = split(p, a, "-")
+    if (k == 1) return okend(a[1], names)
+    if (k == 2) return (a[1] != "*" && okend(a[1], names) && okend(a[2], names))
+    return 0
+  }
+  function okfield(s, names,   parts, n, i) {
+    n = split(s, parts, ",")
+    for (i = 1; i <= n; i++) if (!okpart(parts[i], names)) return 0
+    return (n > 0)
+  }
+  function okschedule(f) {
+    return okfield(f[1], "") && okfield(f[2], "") && okfield(f[3], "") \
+        && okfield(f[4], " jan feb mar apr may jun jul aug sep oct nov dec ") \
+        && okfield(f[5], " sun mon tue wed thu fri sat ")
+  }
   BEGIN { first = 1; printf "[" }
   {
     line = $0
@@ -45,6 +69,7 @@ entries_json="$(printf '%s\n' "$crontab_text" | awk '
     }
     n = split(body, f, /[ \t]+/)
     if (n < 6) next
+    if (!okschedule(f)) next
     cmd = f[6]
     for (i = 7; i <= n; i++) cmd = cmd " " f[i]
     gsub(/\\/, "\\\\", cmd); gsub(/"/, "\\\"", cmd)
