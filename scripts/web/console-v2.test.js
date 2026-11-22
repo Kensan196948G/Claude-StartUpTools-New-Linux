@@ -166,7 +166,7 @@ test('v2.html: セッション画面はライブログを表示し、送信は�
   assert.ok(tpl.includes('this._logTimer = setInterval'), 'ライブログのポーリングが無い');
   assert.ok(tpl.includes('if (this._logTimer) clearInterval(this._logTimer);'), 'アンマウント時に停止していない');
   assert.ok(!tpl.includes('の Claude Code がこのプロンプトを受け取り'), 'セッション画面のプロトタイプ固定応答が残っている');
-  assert.ok(tpl.includes('プロンプト送信は未接続です'), '送信が未接続であることを明示していない');
+  assert.ok(!tpl.includes('プロンプト送信は未接続です'), '未接続の通知が残っている (実送信に置き換わっている)');
   assert.ok(!tpl.includes('プロンプトを送り、応答をストリーミングで確認します'), '旧い見出し説明が残っている');
 });
 
@@ -176,4 +176,88 @@ test('v2.html: 同時実行の上限は固定の 4 ではなく state.limits.max
   assert.ok(tpl.includes('{{ maxSessions }}'), 'ヘッダの上限が固定のまま');
   assert.ok(tpl.includes('s.sessions.length >= (s.maxSessions || 4)'), '起動の事前判定が固定のまま');
   assert.ok(!tpl.includes('s.sessions.length >= 4)'), '旧い固定判定が残っている');
+});
+
+test('v2.html: プロンプト送信は確認ダイアログを通して /api/session/prompt へ NDJSON で送り、中断できる', () => {
+  const { tpl } = loadTemplate();
+  assert.ok(tpl.includes("this.livePost('/api/session/prompt', { project: proj, text: text, model: model })"), '確認用の事前リクエスト (confirm 無し) が無い');
+  assert.ok(tpl.includes('this.ask('), '送信前の確認ダイアログを通っていない');
+  assert.ok(tpl.includes('confirm: true'), '確認後の実送信に confirm:true が無い');
+  assert.ok(tpl.includes("accept: 'application/x-ndjson'") && tpl.includes('r.body.getReader()'), 'NDJSON を逐次読んでいない');
+  assert.ok(tpl.includes('new AbortController()') && tpl.includes('this._pAbort.abort()'), '中断 (切断) の仕組みが無い');
+  assert.ok(tpl.includes('!!pRunSess'), '稼働中セッションへの送信を無効化していない');
+  assert.ok(tpl.includes('id=\\"f-ppick\\"') || tpl.includes('f-ppick'), '停止中プロジェクトの指定欄が無い');
+  assert.ok(tpl.includes('curPromptTarget()'), '送信先の解決が共通化されていない');
+});
+
+test('v2.html: ストリームイベントの反映 (実コードを実行): 部分テキスト・ツール・結果・終了・エラー', () => {
+  const { tpl } = loadTemplate();
+  const a = tpl.indexOf('/*pe-start*/');
+  const b = tpl.indexOf('/*pe-end*/');
+  assert.ok(a > 0 && b > a, 'promptApply が見つからない');
+  const apply = new Function('m', 'ev', tpl.slice(a + '/*pe-start*/'.length, b));
+  const run = (evs) => evs.reduce((m, ev) => apply(m, ev), { id: 'a1', role: 'assistant', text: '', events: [], streaming: true });
+  const delta = (text) => ({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } });
+
+  // 部分テキスト (--include-partial-messages): 逐次連結し、最終の assistant で二重にならない
+  let m = run([
+    { type: 'web/start', resumed: true, forked: true },
+    { type: 'system', subtype: 'init', session_id: 's' },
+    { type: 'stream_event', event: { type: 'message_start' } },
+    delta('He'), delta('llo'),
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }, { type: 'tool_use', name: 'Bash' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result' }] } },
+    { type: 'stream_event', event: { type: 'message_start' } },
+    delta('Done'),
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Done' }] } },
+    { type: 'result', subtype: 'success', total_cost_usd: 0.0123 },
+    { type: 'web/raw', text: 'raw line' },
+    { type: 'web/end', exitCode: 0, signal: null, timedOut: false, aborted: false },
+  ]);
+  assert.equal(m.text, 'Hello\n\nDone', '部分テキストは連結し、最終メッセージで二重にしない');
+  assert.equal(m.streaming, false);
+  assert.equal(m.stopped, false);
+  assert.ok(m.events.some(e => e.label === 'start' && e.detail.includes('分岐')));
+  const tool = m.events.find(e => e.label === 'tool_use');
+  assert.equal(tool.detail, 'Bash');
+  assert.equal(tool.done, true, 'tool_result で完了にする');
+  assert.ok(m.events.some(e => e.label === 'result' && e.detail.includes('$0.0123') && e.after === true));
+  assert.ok(m.events.every(e => e.done === true), '終了時は全イベントを完了にする');
+
+  // 部分テキストが無い (--include-partial-messages 非対応) 場合は assistant の本文を使う
+  m = run([{ type: 'assistant', message: { content: [{ type: 'text', text: 'A' }] } }, { type: 'assistant', message: { content: [{ type: 'text', text: 'B' }] } }]);
+  assert.equal(m.text, 'A\n\nB');
+
+  // 異常終了 / タイムアウト / 中断
+  m = run([{ type: 'web/end', exitCode: 3, stderr: 'boom', timedOut: false, aborted: false }]);
+  assert.equal(m.streaming, false);
+  assert.ok(m.events.some(e => e.label === 'exit 3' && e.detail === 'boom'));
+  assert.match(m.text, /エラーで終了/);
+  m = run([{ type: 'web/end', exitCode: null, signal: 'SIGTERM', timedOut: true, aborted: false }]);
+  assert.match(m.text, /時間上限/);
+  m = run([{ type: 'web/end', exitCode: null, signal: 'SIGTERM', timedOut: false, aborted: true }]);
+  assert.equal(m.stopped, true);
+  // 入力を壊さない (純粋関数)
+  const orig = { text: 'x', events: [] };
+  apply(orig, { type: 'web/raw', text: 'y' });
+  assert.deepEqual(orig, { text: 'x', events: [] });
+});
+
+test('v2.html: web/end の追加ケース (シグナル終了・系譜の破棄・中断は誤ってエラー表示しない) と新しいエラー文言', () => {
+  const { tpl } = loadTemplate();
+  const a = tpl.indexOf('/*pe-start*/');
+  const b = tpl.indexOf('/*pe-end*/');
+  const apply = new Function('m', 'ev', tpl.slice(a + '/*pe-start*/'.length, b));
+  const base = { text: '', events: [], streaming: true };
+  let m = apply(base, { type: 'web/end', exitCode: null, signal: 'SIGKILL', timedOut: false, aborted: false });
+  assert.ok(m.events.some(e => e.label === 'signal SIGKILL'), 'シグナルで終了した場合も表示する (吹き出しが空のまま消えない)');
+  assert.match(m.text, /エラーで終了/);
+  m = apply(base, { type: 'web/end', exitCode: 1, lineageReset: true, stderr: 'x' });
+  assert.ok(m.events.some(e => e.label === 'session' && e.detail.includes('破棄')), '履歴を破棄したことを知らせる');
+  m = apply(base, { type: 'web/end', exitCode: null, signal: 'SIGTERM', aborted: true });
+  assert.equal(m.stopped, true);
+  assert.ok(!m.events.some(e => String(e.label).startsWith('signal')), '利用者が中断した場合はエラー扱いにしない');
+  ['PROMPT_DISABLED', 'PROMPT_AUTH_NOT_CONFIGURED', 'PROMPT_AUTH_FAILED', 'HOST_REJECTED', 'ORIGIN_REQUIRED', 'CROSS_SITE_REJECTED', 'CLAUDE_UNAVAILABLE', 'PROMPT_IN_PROGRESS']
+    .forEach((k) => assert.ok(tpl.includes(k + ':'), k + ' の日本語メッセージが無い'));
+  assert.ok(tpl.includes("let cur = { id: aid, role: 'assistant'"), '1 メッセージ分をローカルに蓄積していない');
 });

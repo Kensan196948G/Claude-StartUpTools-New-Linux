@@ -915,3 +915,634 @@ test('HTTP: 旧画面 URL は 302 で / へリダイレクトする', async () =
     assert.equal(legacy.status, 200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 5) プロンプト送信 (POST /api/session/prompt) — Approval PR で導入した高リスク機能
+//    実 claude は呼ばず、スタブで引数・環境・ストリームを検証する。
+// ---------------------------------------------------------------------------
+const SID1 = '11111111-1111-4111-8111-111111111111';
+const SID2 = '22222222-2222-4222-8222-222222222222';
+
+const { publicKey: ACC_PUB, privateKey: ACC_PRIV } = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048 });
+const ACC_JWK = Object.assign(ACC_PUB.export({ format: 'jwk' }), { kid: 'test-kid', alg: 'RS256', use: 'sig' });
+const b64u = (b) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function signJwt(over, key, hdr) {
+  const header = Object.assign({ alg: 'RS256', kid: 'test-kid', typ: 'JWT' }, hdr || {});
+  const payload = Object.assign({ iss: 'https://test.cloudflareaccess.com', aud: ['aud-1'], email: 'kensan@example.test',
+    exp: Math.floor(Date.now() / 1000) + 300 }, over || {});
+  const input = b64u(JSON.stringify(header)) + '.' + b64u(JSON.stringify(payload));
+  return input + '.' + b64u(require('crypto').sign('RSA-SHA256', Buffer.from(input), key || ACC_PRIV));
+}
+// 既定で正しい Origin と Access JWT を付けて POST する (個別の拒否テストでは headers で上書き)
+function pp(port, body, headers) {
+  return req(port, 'POST', '/api/session/prompt', body,
+    Object.assign({ Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() }, headers || {}));
+}
+
+function promptFixture(name) {
+  const base = path.join(TMP, 'prompt-' + name);
+  fs.rmSync(base, { recursive: true, force: true });
+  const f = {
+    base,
+    root: path.join(base, 'repo'),
+    projects: path.join(base, 'projects'),
+    sup: path.join(base, 'sup'),
+    sess: path.join(base, 'sess'),
+    web: path.join(base, 'web'),
+    argv: path.join(base, 'argv.txt'),
+    env: path.join(base, 'env.txt'),
+    pid: path.join(base, 'stub.pid'),
+    gpid: path.join(base, 'stub-grand.pid'),
+    claude: path.join(base, 'claude-stub'),
+  };
+  [f.root + '/libexec', f.projects + '/Alpha-App', f.projects + '/Mirai-DX-Project/Beta-Site', f.sup, f.sess].forEach(d => fs.mkdirSync(d, { recursive: true }));
+  const stateSh = fs.readFileSync(path.join(FIXTURE, 'libexec', 'startup-state.sh'), 'utf8').split('/tmp/projects').join(f.projects);
+  fs.writeFileSync(path.join(f.root, 'libexec', 'startup-state.sh'), stateSh);
+  fs.writeFileSync(f.claude, [
+    '#!/usr/bin/env bash',
+    'if [ "${1:-}" = "--help" ]; then echo "  --permission-prompts <target>"; exit 0; fi',
+    'printf "%s\\n" "$*" >> "$STUB_ARGV"',
+    'env | sort > "$STUB_ENV"',
+    'echo $$ > "$STUB_PID"',
+    'case "${STUB_MODE:-ok}" in',
+    '  sleep) exec sleep 30 ;;',
+    '  grandchild) sleep 30 & echo $! > "$STUB_GPID"; wait ;;',
+    '  holdpipe) ( sleep 20 & ) ; echo \'{"type":"result","subtype":"success","session_id":"' + SID1 + '"}\'; exit 0 ;;',
+    '  noresult) exit 1 ;;',
+    '  initsleep) echo \'{"type":"system","subtype":"init","session_id":"' + SID1 + '"}\'; exec sleep 30 ;;',
+    '  errresult) echo \'{"type":"system","subtype":"init","session_id":"' + SID1 + '"}\'; echo \'{"type":"result","subtype":"error_max_budget_usd","is_error":true,"session_id":"' + SID1 + '"}\'; exit 1 ;;',
+    '  fail) echo "boom" >&2; exit 3 ;;',
+    'esac',
+    'echo \'{"type":"system","subtype":"init","session_id":"' + SID1 + '"}\'',
+    'echo \'{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]},"session_id":"' + SID1 + '"}\'',
+    'echo "not-json line"',
+    'echo \'{"type":"result","subtype":"success","session_id":"' + SID1 + '","total_cost_usd":0.01}\'',
+  ].join('\n') + '\n', { mode: 0o755 });
+  f.cfg = (extra) => Object.assign({ root: f.root, claudeBin: f.claude, supervisorDir: f.sup, sessionsDir: f.sess,
+    webPromptDir: f.web, promptTimeoutMs: 20000,
+    promptEnabled: true, accessTeamDomain: 'test.cloudflareaccess.com', accessAud: 'aud-1', accessKeys: async () => [ACC_JWK] }, extra || {});
+  return f;
+}
+
+async function withPromptEnv(f, mode, fn) {
+  const keep = {};
+  const set = { STUB_ARGV: f.argv, STUB_ENV: f.env, STUB_PID: f.pid, STUB_GPID: f.gpid, STUB_MODE: mode || 'ok' };
+  Object.keys(set).forEach((k) => { keep[k] = process.env[k]; process.env[k] = set[k]; });
+  try { await fn(); } finally {
+    Object.keys(set).forEach((k) => { if (keep[k] === undefined) delete process.env[k]; else process.env[k] = keep[k]; });
+  }
+}
+
+const argvLines = (f) => (fs.existsSync(f.argv) ? fs.readFileSync(f.argv, 'utf8').split('\n').filter(Boolean) : []);
+const ndjson = (body) => body.split('\n').filter(Boolean).map(l => JSON.parse(l));
+
+test('prompt: ヘルパ (scrubEnv / validate / buildPromptArgs / findAutonomousSessionId / resolveProjectDir)', () => {
+  const e = srv.scrubEnv({ PATH: '/bin', HOME: '/h', ANTHROPIC_API_KEY: 'k', GITHUB_TOKEN: 't', STARTUP_WEB_PASSWORD: 'p',
+    CLAUDEOS_SMTP_PASS: 's', MY_SECRET: 'x', CLOUDFLARE_API_TOKEN: 'c', DATABASE_URL: 'd', CLAUDE_CODE_OAUTH_TOKEN: 'keep', LANG: 'ja' });
+  assert.deepEqual(Object.keys(e).sort(), ['CLAUDE_CODE_OAUTH_TOKEN', 'HOME', 'LANG', 'PATH']);
+  const e2 = srv.scrubEnv({ OPENAI_API_KEY: 'a', GOOGLE_API_KEY: 'b', SSH_AUTH_SOCK: '/s', POSTGRES_URL: 'u', SENTRY_DSN: 'd', CF_ACCESS_AUD: 'x', STARTUP_WEB_ALLOWED_HOSTS: 'h', ANTHROPIC_AUTH_TOKEN: 'keep', TERM: 'xterm', NODE_ENV: 'test' });
+  assert.deepEqual(Object.keys(e2).sort(), ['ANTHROPIC_AUTH_TOKEN', 'NODE_ENV', 'TERM'], '強化した denylist (API キー・DSN・接続文字列・ssh agent) と、claude 自身の認証の例外');
+  assert.equal(srv.validatePromptText('  hi  ').value, 'hi');
+  assert.equal(srv.validatePromptText('').error, 'PROMPT_REQUIRED');
+  assert.equal(srv.validatePromptText(5).error, 'PROMPT_REQUIRED');
+  assert.equal(srv.validatePromptText('x'.repeat(srv.PROMPT_MAX_CHARS + 1)).error, 'PROMPT_TOO_LONG');
+  assert.equal(srv.validatePromptText('a\u0000b').error, 'PROMPT_INVALID');
+  assert.equal(srv.validatePromptModel(undefined).value, 'auto');
+  assert.equal(srv.validatePromptModel('opus').value, 'opus');
+  assert.equal(srv.validatePromptModel('gpt').error, 'MODEL_INVALID');
+  const a = srv.buildPromptArgs({ text: '--rm -rf', resumeId: SID1, fork: true, model: 'sonnet', budgetUsd: 2, permissionMode: 'auto', noPermissionPrompts: true });
+  assert.deepEqual(a.slice(-2), ['--', '--rm -rf'], '本文は -- の後ろ (先頭が - でもオプション扱いにしない)');
+  assert.ok(a.join(' ').includes('--resume ' + SID1 + ' --fork-session'));
+  assert.ok(a.join(' ').includes('--permission-prompts none'));
+  assert.ok(a.join(' ').includes('--model sonnet'));
+  assert.ok(a.join(' ').includes('--max-budget-usd 2'));
+  assert.ok(!srv.buildPromptArgs({ text: 'x', model: 'auto' }).includes('--model'));
+  assert.ok(!srv.buildPromptArgs({ text: 'x', fork: true }).includes('--fork-session'), 'resume 無しでは fork しない');
+  // 自律セッション ID は JSON の project フィールドで照合 (非 ASCII 名は safe 名が衝突する)
+  const d = path.join(TMP, 'sess-find');
+  fs.rmSync(d, { recursive: true, force: true });
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, '20260101-___.json'), JSON.stringify({ project: 'みらい', sessionId: SID1 }));
+  fs.writeFileSync(path.join(d, '20260102-___.json'), JSON.stringify({ project: 'ほか', sessionId: SID2 }));
+  fs.writeFileSync(path.join(d, 'bad.json'), JSON.stringify({ project: 'みらい', sessionId: 'not-a-uuid' }));
+  assert.equal(srv.findAutonomousSessionId(d, 'みらい'), SID1);
+  assert.equal(srv.findAutonomousSessionId(d, 'ほか'), SID2);
+  assert.equal(srv.findAutonomousSessionId(d, 'none'), '');
+  // 系譜の保存/読み出し
+  const w = path.join(TMP, 'web-lineage');
+  fs.rmSync(w, { recursive: true, force: true });
+  assert.equal(srv.writeWebLineage(w, 'a/b', SID1, ''), true);
+  assert.equal(srv.readWebLineage(w, 'a/b'), SID1);
+  assert.equal(srv.writeWebLineage(w, 'a/b', 'bad', ''), false);
+  // projects_dir の外へ出るシンボリックリンクは拒否
+  const pd = path.join(TMP, 'projdir');
+  fs.rmSync(pd, { recursive: true, force: true });
+  fs.mkdirSync(path.join(pd, 'ok'), { recursive: true });
+  fs.symlinkSync(TMP, path.join(pd, 'escape'));
+  assert.equal(srv.resolveProjectDir({ projects_dir: pd }, 'ok'), fs.realpathSync(path.join(pd, 'ok')));
+  assert.equal(srv.resolveProjectDir({ projects_dir: pd }, 'escape'), '');
+  assert.equal(srv.resolveProjectDir({ projects_dir: pd }, '../x'), '');
+  assert.equal(srv.resolveProjectDir({}, 'ok'), '');
+});
+
+test('prompt: confirm 無しは実行せず確認内容 (Human Gate) を返す', async () => {
+  const f = promptFixture('gate');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'こんにちは', model: 'sonnet' });
+      assert.equal(r.status, 200);
+      assert.equal(r.json.requiresConfirm, true);
+      assert.equal(r.json.resumed, false);
+      assert.match(r.json.command, /^claude -p --output-format stream-json .* -- <本文 5 文字>$/);
+      assert.ok(!r.json.command.includes('こんにちは'), '確認画面のコマンドに本文は含めない');
+      assert.equal(argvLines(f).length, 0, '実行していない');
+    });
+  });
+});
+
+test('prompt: confirm 付きは NDJSON でストリーミングし、会話系譜を保存して次回は --resume する', async () => {
+  const f = promptFixture('stream');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'hello', confirm: true });
+      assert.equal(r.status, 200);
+      assert.match(r.headers['content-type'], /application\/x-ndjson/);
+      const ev = ndjson(r.body);
+      assert.equal(ev[0].type, 'web/start');
+      assert.equal(ev[0].resumed, false);
+      assert.ok(ev.some(e => e.type === 'system' && e.subtype === 'init'));
+      assert.ok(ev.some(e => e.type === 'assistant'));
+      assert.ok(ev.some(e => e.type === 'web/raw' && e.text === 'not-json line'), 'JSON でない行は web/raw として包む');
+      assert.ok(ev.some(e => e.type === 'result'));
+      const end = ev[ev.length - 1];
+      assert.equal(end.type, 'web/end');
+      assert.equal(end.exitCode, 0);
+      assert.equal(end.sessionId, SID1);
+      assert.equal(srv.readWebLineage(f.web, 'Alpha-App'), SID1, '会話系譜を保存した');
+      const first = argvLines(f)[0];
+      assert.ok(first.includes('--permission-prompts none') && first.includes('--max-budget-usd 2') && first.includes('-- hello'));
+      assert.ok(!first.includes('--resume'), '初回は新規会話');
+
+      const r2 = await pp(port, { project: 'Alpha-App', text: 'next', confirm: true });
+      const ev2 = ndjson(r2.body);
+      assert.equal(ev2[0].resumed, true);
+      const second = argvLines(f)[1];
+      assert.ok(second.includes('--resume ' + SID1), '2 回目は Web の会話系譜を --resume');
+      assert.ok(!second.includes('--fork-session'));
+    });
+  });
+});
+
+test('prompt: 初回は直近の自律セッションを --fork-session で分岐する (元の会話に書き込まない)', async () => {
+  const f = promptFixture('fork');
+  fs.writeFileSync(path.join(f.sess, '20260101-Alpha-App.json'), JSON.stringify({ project: 'Alpha-App', sessionId: SID2 }));
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'hi', confirm: true });
+      const ev = ndjson(r.body);
+      assert.equal(ev[0].resumed, true);
+      assert.equal(ev[0].forked, true);
+      assert.ok(argvLines(f)[0].includes('--resume ' + SID2 + ' --fork-session'));
+      assert.equal(srv.readWebLineage(f.web, 'Alpha-App'), SID1, '以後は分岐後の Web 専用 ID を使う');
+    });
+  });
+});
+
+test('prompt: 入力検証 (長さ・空・NUL・モデル・未登録プロジェクト) と先頭が - の本文', async () => {
+  const f = promptFixture('validate');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const post = (b) => pp(port, Object.assign({ project: 'Alpha-App', text: 'x', confirm: true }, b));
+      assert.equal((await post({ text: 'x'.repeat(srv.PROMPT_MAX_CHARS + 1) })).json.error, 'PROMPT_TOO_LONG');
+      assert.equal((await post({ text: '   ' })).json.error, 'PROMPT_REQUIRED');
+      assert.equal((await post({ text: 'a\u0000b' })).json.error, 'PROMPT_INVALID');
+      assert.equal((await post({ model: 'gpt-9' })).json.error, 'MODEL_INVALID');
+      assert.equal((await post({ project: 'Nope' })).status, 400);
+      assert.equal((await post({ project: '../etc' })).status, 400);
+      assert.equal(argvLines(f).length, 0, '検証エラーでは実行しない');
+      const r = await post({ text: '--help me' });
+      assert.equal(r.status, 200);
+      assert.ok(argvLines(f)[0].includes('-- --help me'), '先頭が - の本文もオプションにならない');
+    });
+  });
+});
+
+test('prompt: dryRunOnly では拒否し、Origin が不正な POST も拒否する', async () => {
+  const f = promptFixture('guards');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg({ dryRunOnly: true }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r.status, 403);
+      assert.equal(r.json.error, 'DRY_RUN_ONLY');
+    });
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true }, { Origin: 'http://evil.example' });
+      assert.equal(r.status, 403);
+      assert.equal(r.json.error, 'ORIGIN_REJECTED');
+    });
+    assert.equal(argvLines(f).length, 0);
+  });
+});
+
+test('prompt: 自律実行中 (state 上 running / supervisor 稼働) のプロジェクトには送らない', async () => {
+  const f = promptFixture('running');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      // fixture の Beta-Site は running:true / headless
+      const a = await pp(port, { project: 'Mirai-DX-Project/Beta-Site', text: 'x', confirm: true });
+      assert.equal(a.status, 409);
+      assert.equal(a.json.error, 'SESSION_RUNNING');
+      // supervisor が稼働 (status=running かつ pid 生存) していれば Alpha-App も拒否
+      fs.writeFileSync(path.join(f.sup, 'Alpha-App.json'), JSON.stringify({ status: 'running', pid: process.pid }));
+      const b = await pp(port, { project: 'Alpha-App', text: 'x' });
+      assert.equal(b.status, 409, '確認前の段階でも拒否 (無駄な確認をさせない)');
+      assert.equal(b.json.error, 'SESSION_RUNNING');
+      assert.equal(argvLines(f).length, 0);
+    });
+  });
+});
+
+test('prompt: claude の機能確認に失敗したら 503 (起動しない)、異常終了は web/end に stderr を載せる', async () => {
+  const f = promptFixture('fail');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg({ claudeBin: path.join(f.base, 'no-such-claude') }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r.status, 503);
+      assert.equal(r.json.error, 'CLAUDE_UNAVAILABLE');
+    });
+  });
+  await withPromptEnv(f, 'fail', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      const end = ndjson(r.body).pop();
+      assert.equal(end.type, 'web/end');
+      assert.equal(end.exitCode, 3);
+      assert.match(end.stderr, /boom/);
+    });
+  });
+});
+
+test('prompt: 子プロセスへ秘密の環境変数を渡さない (claude 自身の認証だけ残す)', async () => {
+  const f = promptFixture('env');
+  const keys = { ANTHROPIC_API_KEY: 'k', GITHUB_TOKEN: 'g', SERVICE_PASSWORD: 'p', MY_SECRET_X: 's', CLAUDE_CODE_OAUTH_TOKEN: 'keepme' };
+  const saved = {};
+  Object.keys(keys).forEach((k) => { saved[k] = process.env[k]; process.env[k] = keys[k]; });
+  try {
+    await withPromptEnv(f, 'ok', async () => {
+      await withServer(f.cfg(), async (port) => {
+        await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+        const envText = fs.readFileSync(f.env, 'utf8');
+        assert.ok(envText.includes('CLAUDE_CODE_OAUTH_TOKEN=keepme'));
+        ['ANTHROPIC_API_KEY=', 'GITHUB_TOKEN=', 'SERVICE_PASSWORD=', 'MY_SECRET_X='].forEach(k => assert.ok(!envText.includes(k), k + ' が渡っている'));
+      });
+    });
+  } finally {
+    Object.keys(keys).forEach((k) => { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; });
+  }
+});
+
+test('prompt: 同時 1 件 / クライアント切断で子プロセスを終了して解放する', async () => {
+  const f = promptFixture('abort');
+  await withPromptEnv(f, 'sleep', async () => {
+    await withServer(f.cfg(), async (port) => {
+      // 1 件目 (30 秒 sleep) を開始し、web/start を受け取るまで待つ
+      const first = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/session/prompt',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() } });
+      const got = new Promise((resolve) => {
+        first.on('response', (res) => { res.once('data', () => resolve(res)); });
+      });
+      first.on('error', () => { /* 切断時の ECONNRESET は想定内 */ });
+      first.end(JSON.stringify({ project: 'Alpha-App', text: 'long', confirm: true }));
+      const res1 = await got;
+      // 実行中に 2 件目 → 409
+      const second = await pp(port, { project: 'Alpha-App', text: 'again', confirm: true });
+      assert.equal(second.status, 409);
+      assert.equal(second.json.error, 'OPERATION_IN_PROGRESS');
+      // 切断 → 子プロセス (sleep) が終了する
+      for (let i = 0; i < 50 && !fs.existsSync(f.pid); i++) await new Promise(r => setTimeout(r, 100));
+      const pid = Number(fs.readFileSync(f.pid, 'utf8').trim());
+      assert.ok(pid > 0);
+      res1.destroy();
+      first.destroy();
+      let alive = true;
+      for (let i = 0; i < 60 && alive; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        try { process.kill(pid, 0); } catch { alive = false; }
+      }
+      assert.equal(alive, false, '切断後も子プロセスが残っている');
+      // 解放され、次の送信ができる
+      await withPromptEnv(f, 'ok', async () => {
+        const r3 = await pp(port, { project: 'Alpha-App', text: 'after', confirm: true });
+        assert.equal(r3.status, 200);
+      });
+    });
+  });
+});
+
+test('prompt: 時間上限を超えたら終了し timedOut を返す', async () => {
+  const f = promptFixture('timeout');
+  await withPromptEnv(f, 'sleep', async () => {
+    await withServer(f.cfg({ promptTimeoutMs: 400 }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      const end = ndjson(r.body).pop();
+      assert.equal(end.type, 'web/end');
+      assert.equal(end.timedOut, true);
+    });
+  });
+});
+
+test('prompt: 既定で無効 (STARTUP_WEB_PROMPT_ENABLE 未設定は 403)。拒否は監査ログに残り、本文は記録しない', async () => {
+  const f = promptFixture('disabled');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg({ promptEnabled: false }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'TOPSECRET-PROMPT-XYZ', confirm: true });
+      assert.equal(r.status, 403);
+      assert.equal(r.json.error, 'PROMPT_DISABLED');
+      assert.equal(argvLines(f).length, 0);
+    });
+  });
+  const audit = path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log');
+  const log = fs.readFileSync(audit, 'utf8');
+  assert.ok(log.includes('prompt-rejected') && log.includes('PROMPT_DISABLED'), '拒否も監査に残す');
+  assert.ok(!log.includes('TOPSECRET-PROMPT-XYZ'), '監査ログに本文を残さない');
+});
+
+test('prompt: 認証 (Access JWT) — 無し/署名不正/aud 不一致/期限切れ/alg 不正は拒否、未設定でも拒否 (fail-closed)', async () => {
+  const f = promptFixture('auth');
+  const { privateKey: otherKey } = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048 });
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const post = (jwt) => req(port, 'POST', '/api/session/prompt', { project: 'Alpha-App', text: 'x', confirm: true },
+        Object.assign({ Origin: 'http://127.0.0.1:' + port }, jwt === undefined ? {} : { 'Cf-Access-Jwt-Assertion': jwt }));
+      const detail = async (jwt) => { const r = await post(jwt); assert.equal(r.status, 403); assert.equal(r.json.error, 'PROMPT_AUTH_FAILED'); return r.json.detail; };
+      assert.equal(await detail(undefined), 'JWT_MALFORMED');
+      assert.equal(await detail('a.b.c'), 'JWT_INVALID');
+      assert.equal(await detail(signJwt({}, otherKey)), 'JWT_SIGNATURE');
+      assert.equal(await detail(signJwt({ aud: ['other'] })), 'JWT_AUD');
+      assert.equal(await detail(signJwt({ iss: 'https://evil.cloudflareaccess.com' })), 'JWT_ISS');
+      assert.equal(await detail(signJwt({ exp: Math.floor(Date.now() / 1000) - 10 })), 'JWT_EXPIRED');
+      assert.equal(await detail(signJwt({}, null, { alg: 'none' })), 'JWT_ALG');
+      assert.equal(await detail(signJwt({}, null, { kid: 'unknown' })), 'JWT_KEY_UNKNOWN');
+      assert.equal(argvLines(f).length, 0, '認証できないときは実行しない');
+      const ok = await post(signJwt());
+      assert.equal(ok.status, 200);
+    });
+    // 認証が一切設定されていなければ、有効化されていても拒否する
+    await withServer(f.cfg({ accessTeamDomain: '', accessAud: '' }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r.status, 403);
+      assert.equal(r.json.error, 'PROMPT_AUTH_NOT_CONFIGURED');
+    });
+    // Basic パスワードが設定されていればそれで通る (共通の Basic 認証)
+    await withServer(f.cfg({ accessTeamDomain: '', accessAud: '', authPass: 'pw' }), async (port) => {
+      const basic = 'Basic ' + Buffer.from('claudeos:pw').toString('base64');
+      const r = await req(port, 'POST', '/api/session/prompt', { project: 'Alpha-App', text: 'x', confirm: true },
+        { Origin: 'http://127.0.0.1:' + port, Authorization: basic });
+      assert.equal(r.status, 200);
+      const bad = await req(port, 'POST', '/api/session/prompt', { project: 'Alpha-App', text: 'x', confirm: true },
+        { Origin: 'http://127.0.0.1:' + port });
+      assert.equal(bad.status, 401);
+    });
+  });
+});
+
+test('prompt: Host 許可リスト・Origin 必須・JSON のみ・Sec-Fetch-Site (DNS rebinding / CSRF 対策)', async () => {
+  const f = promptFixture('origin');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg({ allowedHosts: ['claude.example.com'] }), async (port) => {
+      const body = { project: 'Alpha-App', text: 'x', confirm: true };
+      // DNS rebinding: 攻撃者のドメインへ向けた Host / Origin は (一致していても) 拒否
+      const a = await pp(port, body, { Host: 'evil.example', Origin: 'http://evil.example' });
+      assert.equal(a.status, 403);
+      assert.equal(a.json.error, 'HOST_REJECTED');
+      // 公開ホスト名 (許可リスト) は通る
+      const b = await pp(port, body, { Host: 'claude.example.com', Origin: 'https://claude.example.com' });
+      assert.equal(b.status, 200);
+      // Origin 無しは拒否 (curl や他のプロセスからの無署名 POST)
+      const c = await req(port, 'POST', '/api/session/prompt', body, { 'Cf-Access-Jwt-Assertion': signJwt() });
+      assert.equal(c.status, 403);
+      assert.equal(c.json.error, 'ORIGIN_REQUIRED');
+      // Content-Type が JSON でなければ拒否 (単純リクエストでの CSRF を避ける)
+      const d = await pp(port, body, { 'Content-Type': 'text/plain' });
+      assert.equal(d.status, 415);
+      // クロスサイトのブラウザ文脈は拒否
+      const e = await pp(port, body, { 'Sec-Fetch-Site': 'cross-site' });
+      assert.equal(e.status, 403);
+      assert.equal(e.json.error, 'CROSS_SITE_REJECTED');
+      assert.equal(argvLines(f).length, 1, '通った 1 件 (公開ホスト) だけ実行された');
+    });
+  });
+});
+
+test('prompt: 本文が JSON オブジェクトでなければ 400 (null / 配列でサーバーが落ちない)', async () => {
+  const f = promptFixture('body');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      for (const raw of ['null', '[]', '"x"', '5']) {
+        const r = await new Promise((resolve, reject) => {
+          const h = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/session/prompt',
+            headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt(), 'Content-Length': Buffer.byteLength(raw) } },
+            (res) => { let d = ''; res.on('data', c => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, body: d })); });
+          h.on('error', reject);
+          h.end(raw);
+        });
+        assert.equal(r.status, 400, raw);
+      }
+      const alive = await pp(port, { project: 'Alpha-App', text: 'x' });
+      assert.equal(alive.status, 200, 'サーバーは生きている');
+    });
+  });
+});
+
+test('prompt: 予算・時間の設定が不正でも上限は無効化されない (NaN / 0 / 負数は既定値へ)', async () => {
+  assert.equal(srv.positiveNumber('abc', 2), 2);
+  assert.equal(srv.positiveNumber(0, 2), 2);
+  assert.equal(srv.positiveNumber(-1, 2), 2);
+  assert.equal(srv.positiveNumber(undefined, 2), 2);
+  assert.equal(srv.positiveNumber('0.5', 2), 0.5);
+  const f = promptFixture('budget');
+  const keep = process.env.STARTUP_WEB_PROMPT_BUDGET_USD;
+  process.env.STARTUP_WEB_PROMPT_BUDGET_USD = 'abc';
+  try {
+    await withPromptEnv(f, 'ok', async () => {
+      await withServer(f.cfg(), async (port) => {
+        const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+        assert.equal(r.status, 200);
+        assert.ok(argvLines(f)[0].includes('--max-budget-usd 2'), '不正値でも既定の上限が付く');
+      });
+    });
+  } finally {
+    if (keep === undefined) delete process.env.STARTUP_WEB_PROMPT_BUDGET_USD; else process.env.STARTUP_WEB_PROMPT_BUDGET_USD = keep;
+  }
+});
+
+test('prompt: ブラウザへ中継するイベントは許可リスト (ツール結果・入力・hook は中継しない)', () => {
+  const s = srv.sanitizePromptEvent;
+  assert.equal(s({ type: 'system', subtype: 'hook_response', output: 'x' }), null);
+  assert.equal(s({ type: 'rate_limit_event' }), null);
+  assert.deepEqual(s({ type: 'user', message: { content: [{ type: 'tool_result', content: 'FILE CONTENTS SECRET' }] } }), { type: 'user' });
+  const a = s({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'Bash', input: { command: 'cat ~/.env' } }, { type: 'thinking', thinking: 'x' }] } });
+  assert.deepEqual(a.message.content, [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'Bash' }], 'tool_use の入力は中継しない');
+  assert.equal(s({ type: 'stream_event', event: { type: 'content_block_start' } }), null);
+  assert.equal(s({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{' } } }), null);
+  assert.equal(s({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'a' } } }).event.delta.text, 'a');
+  assert.equal(s({ type: 'system', subtype: 'init', session_id: SID1, model: 'm', permissionMode: 'plan', cwd: '/secret', tools: ['x'] }).cwd, undefined);
+  assert.equal(s({ type: 'result', subtype: 'success', result: 'ok', total_cost_usd: 0.1, session_id: SID1, usage: { x: 1 } }).usage, undefined);
+});
+
+test('prompt: 中断/切断で孫プロセスも停止する (プロセスグループ)', async () => {
+  const f = promptFixture('group');
+  await withPromptEnv(f, 'grandchild', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const first = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/session/prompt',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() } });
+      const got = new Promise((resolve) => { first.on('response', (res) => { res.once('data', () => resolve(res)); }); });
+      first.on('error', () => { /* 切断時は想定内 */ });
+      first.end(JSON.stringify({ project: 'Alpha-App', text: 'long', confirm: true }));
+      const res1 = await got;
+      for (let i = 0; i < 50 && !fs.existsSync(f.gpid); i++) await new Promise(r => setTimeout(r, 100));
+      const child = Number(fs.readFileSync(f.pid, 'utf8').trim());
+      const grand = Number(fs.readFileSync(f.gpid, 'utf8').trim());
+      assert.ok(child > 0 && grand > 0);
+      res1.destroy();
+      first.destroy();
+      const alive = (p) => { try { process.kill(p, 0); return true; } catch { return false; } };
+      for (let i = 0; i < 80 && (alive(child) || alive(grand)); i++) await new Promise(r => setTimeout(r, 100));
+      assert.equal(alive(child), false, 'claude 本体が残っている');
+      assert.equal(alive(grand), false, '孫プロセス (ツールが起動したもの) が残っている');
+    });
+  });
+});
+
+test('prompt: 孫が stdout を握ったままでも、終了後 数秒でロックを解放して応答を終える', async () => {
+  const f = promptFixture('holdpipe');
+  await withPromptEnv(f, 'holdpipe', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const t0 = Date.now();
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      assert.equal(r.status, 200);
+      assert.ok(Date.now() - t0 < 12000, '孫 (20 秒) の終了を待たずに確定する');
+      assert.equal(ndjson(r.body).pop().type, 'web/end');
+      const r2 = await pp(port, { project: 'Alpha-App', text: 'again', confirm: true });
+      assert.equal(r2.status, 200, 'ロックが解放されている');
+    });
+  });
+});
+
+test('prompt: resume に失敗した系譜は捨てて、次回は新規会話から始められる', async () => {
+  const f = promptFixture('lineage-reset');
+  srv.writeWebLineage(f.web, 'Alpha-App', SID2, '');
+  await withPromptEnv(f, 'noresult', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      const end = ndjson(r.body).pop();
+      assert.equal(end.type, 'web/end');
+      assert.equal(end.lineageReset, true);
+      assert.equal(srv.readWebLineage(f.web, 'Alpha-App'), '', '壊れた系譜を捨てた');
+    });
+  });
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'again', confirm: true });
+      assert.equal(ndjson(r.body)[0].resumed, false, '新規会話から再開できる');
+    });
+  });
+});
+
+test('prompt: 系譜ファイルは project ごとに分離され、別 project の ID は使わない', () => {
+  const d = path.join(TMP, 'lineage-sep');
+  fs.rmSync(d, { recursive: true, force: true });
+  assert.notEqual(srv.webLineageFile(d, 'a.b'), srv.webLineageFile(d, 'a_b'), 'safe 名が同じでもファイルは別');
+  srv.writeWebLineage(d, 'a.b', SID1, '');
+  assert.equal(srv.readWebLineage(d, 'a.b'), SID1);
+  assert.equal(srv.readWebLineage(d, 'a_b'), '');
+  // ファイルを別 project の位置へ置き換えられても、project 不一致なら使わない
+  fs.copyFileSync(srv.webLineageFile(d, 'a.b'), srv.webLineageFile(d, 'a_b'));
+  assert.equal(srv.readWebLineage(d, 'a_b'), '');
+  srv.removeWebLineage(d, 'a.b');
+  assert.equal(srv.readWebLineage(d, 'a.b'), '');
+});
+
+test('prompt: 会話の実行中は同じプロジェクトを起動できない (逆方向の排他)', async () => {
+  const f = promptFixture('exclusive');
+  await withPromptEnv(f, 'sleep', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const first = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/session/prompt',
+        headers: { 'Content-Type': 'application/json', Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': signJwt() } });
+      const got = new Promise((resolve) => { first.on('response', (res) => { res.once('data', () => resolve(res)); }); });
+      first.on('error', () => { /* 切断時は想定内 */ });
+      first.end(JSON.stringify({ project: 'Alpha-App', text: 'long', confirm: true }));
+      const res1 = await got;
+      const l = await req(port, 'POST', '/api/startup/launch', { project: 'Alpha-App', mode: 'background', duration: 60, confirm: true });
+      assert.equal(l.status, 409);
+      assert.equal(l.json.error, 'PROMPT_IN_PROGRESS');
+      res1.destroy();
+      first.destroy();
+      for (let i = 0; i < 50; i++) { await new Promise(r => setTimeout(r, 100)); }
+    });
+  });
+});
+
+test('prompt: 系譜を捨てるのは resume 自体が失敗したときだけ (エラー結果・タイムアウトでは会話を保持する)', async () => {
+  const f = promptFixture('lineage-keep');
+  srv.writeWebLineage(f.web, 'Alpha-App', SID2, '');
+  // 予算超過などのエラー結果 (init は来ている) → 会話は claude 側に残っているので保持する
+  await withPromptEnv(f, 'errresult', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      const end = ndjson(r.body).pop();
+      assert.equal(end.exitCode, 1);
+      assert.equal(end.lineageReset, false);
+      assert.equal(srv.readWebLineage(f.web, 'Alpha-App'), SID1, '会話 (session_id) を保持・更新する');
+    });
+  });
+  // タイムアウト (init 後に長時間実行) → 保持する
+  srv.writeWebLineage(f.web, 'Alpha-App', SID2, '');
+  await withPromptEnv(f, 'initsleep', async () => {
+    await withServer(f.cfg({ promptTimeoutMs: 400 }), async (port) => {
+      const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true });
+      const end = ndjson(r.body).pop();
+      assert.equal(end.timedOut, true);
+      assert.equal(end.lineageReset, false);
+      assert.notEqual(srv.readWebLineage(f.web, 'Alpha-App'), '', 'タイムアウトでも会話を失わない');
+    });
+  });
+});
+
+test('prompt: JWT の kid は文字列必須 / JWKS 取得失敗は区別 / 未知 kid は鍵を 1 度だけ再取得 (ローテーション)', async () => {
+  const f = promptFixture('jwks');
+  await withPromptEnv(f, 'ok', async () => {
+    const body = { project: 'Alpha-App', text: 'x', confirm: true };
+    await withServer(f.cfg(), async (port) => {
+      const r = await pp(port, body, { 'Cf-Access-Jwt-Assertion': signJwt({}, null, { kid: undefined }) });
+      assert.equal(r.json.detail, 'JWT_KEY_UNKNOWN', 'kid が無いトークンは拒否');
+    });
+    await withServer(f.cfg({ accessKeys: async () => { throw new Error('network down'); } }), async (port) => {
+      const r = await pp(port, body);
+      assert.equal(r.status, 403);
+      assert.equal(r.json.detail, 'JWKS_UNAVAILABLE', '鍵を取得できないときは fail-closed で、理由を区別する');
+    });
+    const calls = [];
+    await withServer(f.cfg({ accessKeys: async (force) => { calls.push(!!force); return force ? [ACC_JWK] : []; } }), async (port) => {
+      const r = await pp(port, body);
+      assert.equal(r.status, 200, '鍵のローテーション直後でも、再取得して検証できる');
+      assert.deepEqual(calls, [false, true]);
+    });
+  });
+});
+
+test('prompt: 認証前の拒否の監査は同じ理由につき 1 分に 1 件へ間引く (ログ肥大の防止)', async () => {
+  const f = promptFixture('audit-throttle');
+  const audit = path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log');
+  const count = () => (fs.existsSync(audit) ? fs.readFileSync(audit, 'utf8').split('\n').filter(l => l.includes('prompt-rejected') && l.includes('HOST_REJECTED')).length : 0);
+  const before = count();
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      for (let i = 0; i < 5; i++) {
+        const r = await pp(port, { project: 'Alpha-App', text: 'x', confirm: true }, { Host: 'evil.example', Origin: 'http://evil.example' });
+        assert.equal(r.json.error, 'HOST_REJECTED');
+      }
+    });
+  });
+  assert.equal(count() - before, 1, '5 回拒否しても監査は 1 件');
+});
