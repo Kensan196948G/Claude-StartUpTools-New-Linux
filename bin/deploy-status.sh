@@ -9,7 +9,8 @@
 #   3. health (http://127.0.0.1:<port>/api/health の ok / commit / version)
 #      失敗しても表示は継続する (exit は 0 のまま)
 #   4. unit 状態 (systemctl --user show <unit> -p ActiveState -p NRestarts)
-#   5. 直近の昇格 5 件 (<CLAUDEOS_HOME>/releases/promotions.jsonl の末尾 5 行)
+#   5. 直近の昇格 5 件 (<CLAUDEOS_HOME>/releases/promotions.jsonl の末尾 5 行。
+#      台帳は閾値超過で .1〜.N へ回転するため、古い世代 (.N→.1) と現行を連結して読む)
 #   6. state.json の deploy サマリ (ready / environment / runbook_path / checklist)
 #
 # **読み取り専用**: symlink・unit・state・台帳を一切変更しない。
@@ -250,12 +251,41 @@ ds__env_json() {
       health:$health, unit:$unit_info}'
 }
 
+# ds__promotions_files — 台帳の読み順 (古い世代 → 現行)
+#   promotions.jsonl は閾値超過で .1〜.N へ回転する (lib/release-promote.sh)。
+#   suffix が大きいほど古いので、降順に並べてから現行を最後に置く。
+ds__promotions_files() {
+  local dir base p name
+  local -a gens=()
+  dir="$(ds__releases)"
+  base="promotions.jsonl"
+
+  for p in "$dir/$base".*; do
+    [[ -e "$p" ]] || continue
+    name="${p##*/}"
+    name="${name#"$base".}"
+    [[ "$name" =~ ^[0-9]+$ ]] || continue
+    gens+=("$name")
+  done
+
+  if (( ${#gens[@]} > 0 )); then
+    while IFS= read -r name; do
+      printf '%s\n' "$dir/$base.$name"
+    done < <(printf '%s\n' "${gens[@]}" | sort -rn)
+  fi
+  printf '%s\n' "$dir/$base"
+}
+
 # ds__promotions_json — 台帳の末尾 5 行 (JSON として妥当な行のみ)
+#   回転後も「直近」を出せるよう、古い世代 (.N → .1) と現行を連結してから末尾 5 行を取る。
 ds__promotions_json() {
-  local file line parsed
-  local -a objs=()
-  file="$(ds__releases)/promotions.jsonl"
-  if [[ -f "$file" ]]; then
+  local p line parsed
+  local -a objs=() files=()
+  while IFS= read -r p; do
+    [[ -f "$p" ]] && files+=("$p")
+  done < <(ds__promotions_files)
+
+  if (( ${#files[@]} > 0 )); then
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
       if parsed="$(printf '%s' "$line" | jq -c \
@@ -264,7 +294,7 @@ ds__promotions_json() {
           result:(.result // ""), unit:(.unit // ""), port:(.port // null)}' 2>/dev/null)"; then
         objs+=("$parsed")
       fi
-    done < <(tail -n 5 -- "$file" 2>/dev/null || true)
+    done < <(cat -- "${files[@]}" 2>/dev/null | tail -n 5 || true)
   fi
   if (( ${#objs[@]} == 0 )); then
     printf '[]'

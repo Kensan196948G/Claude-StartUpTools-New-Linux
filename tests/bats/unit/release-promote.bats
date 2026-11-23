@@ -443,3 +443,150 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   run bash "$SCRIPT" --env staging --release "$REL_A" --rollback
   [ "$status" -eq 2 ]
 }
+
+# ------------------------------------------------------------
+# 台帳 (promotions.jsonl) のローテーション (第4バッチ #6)
+#   既定: 1 MiB × 3 世代。RELEASE_PROMOTIONS_MAX_BYTES / RELEASE_PROMOTIONS_KEEP で上書き。
+#   行の内容は書き換えない。回転失敗は昇格を止めない (fail-open)。
+# ------------------------------------------------------------
+
+# _append_promotion_direct <commit> [max_bytes] [keep] — lib の関数を直接呼んで 1 行追記する
+#   RP_* は lib のロード時に初期化されるため、source 後に前置して渡す。
+_append_promotion_direct() {
+  local commit="$1" max="${2-}" keep="${3-}"
+  bash -c '
+    source "$1/lib/common.sh"
+    source "$1/lib/release-promote.sh"
+    if [ -n "$3" ]; then export RELEASE_PROMOTIONS_MAX_BYTES="$3"; fi
+    if [ -n "$4" ]; then export RELEASE_PROMOTIONS_KEEP="$4"; fi
+    RP_ENV=production RP_COMMIT="$2" RP_TREE=tree1 RP_UNIT=u.service RP_PORT=3740 \
+      rp__append_promotion PROMOTED
+  ' _ "$REPO_ROOT" "$commit" "$max" "$keep"
+}
+
+# _seed_promotions <commit...> — 台帳を指定 commit の行で初期化する
+_seed_promotions() {
+  : > "$RELEASES/promotions.jsonl"
+  local i=0 commit
+  for commit in "$@"; do
+    i=$((i + 1))
+    printf '{"at":"2026-01-%02dT00:00:00Z","env":"staging","commit":"%s","tree_sha256":"tree-%s","result":"PROMOTED","unit":"u","port":3742}\n' \
+      "$i" "$commit" "$commit" >> "$RELEASES/promotions.jsonl"
+  done
+}
+
+@test "回転: 閾値以上なら追記前に .1 へ rename し、行の内容は書き換えない" {
+  local seed
+  seed="$(printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"deadbeef","result":"PROMOTED","unit":"u","port":3742}\n{"at":"2026-01-02T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"beefdead","result":"PROMOTED","unit":"u","port":3742}\n' "$COMMIT_B" "$COMMIT_B")"
+  printf '%s' "$seed" > "$RELEASES/promotions.jsonl"
+
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  run env RELEASE_PROMOTIONS_MAX_BYTES=64 bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+
+  # .1 は回転前の内容と完全一致 (行の書き換えなし)
+  [ -f "$RELEASES/promotions.jsonl.1" ]
+  [ "$(cat "$RELEASES/promotions.jsonl.1")" = "$seed" ]
+
+  # 現行は新しい 1 行だけ
+  [ "$(wc -l < "$RELEASES/promotions.jsonl")" -eq 1 ]
+  [ "$(jq -r .commit "$RELEASES/promotions.jsonl")" = "$COMMIT_A" ]
+  [ "$(jq -r .result "$RELEASES/promotions.jsonl")" = "PROMOTED" ]
+}
+
+@test "回転: 閾値未満なら回転しない (.1 を作らない・行は追記される)" {
+  printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"x","result":"PROMOTED","unit":"u","port":3742}\n' \
+    "$COMMIT_B" > "$RELEASES/promotions.jsonl"
+
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  # 既定 (1 MiB) では小さい台帳は回転しない
+  run bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+  [ ! -e "$RELEASES/promotions.jsonl.1" ]
+  [ "$(wc -l < "$RELEASES/promotions.jsonl")" -eq 2 ]
+}
+
+@test "世代上限: keep=3 で .1〜.3 に収まり .4 は残らない" {
+  _seed_promotions "$COMMIT_B"
+
+  local i
+  for i in 1 2 3 4 5; do
+    _append_promotion_direct "c$i" 1 3
+  done
+
+  [ -f "$RELEASES/promotions.jsonl.1" ]
+  [ -f "$RELEASES/promotions.jsonl.2" ]
+  [ -f "$RELEASES/promotions.jsonl.3" ]
+  [ ! -e "$RELEASES/promotions.jsonl.4" ]
+  # 現行 + 3 世代 = 4 ファイル
+  [ "$(ls -1 "$RELEASES"/promotions.jsonl* | wc -l)" -eq 4 ]
+
+  # 最新は現行、1 つ前は .1 に入る (時系列が保たれる)
+  [ "$(jq -r .commit "$RELEASES/promotions.jsonl")" = "c5" ]
+  [ "$(jq -r .commit "$RELEASES/promotions.jsonl.1")" = "c4" ]
+}
+
+@test "世代上限: keep=0 は履歴を残さず truncate する" {
+  _seed_promotions "$COMMIT_B"
+
+  _append_promotion_direct "c1" 1 0
+
+  [ ! -e "$RELEASES/promotions.jsonl.1" ]
+  [ "$(wc -l < "$RELEASES/promotions.jsonl")" -eq 1 ]
+  [ "$(jq -r .commit "$RELEASES/promotions.jsonl")" = "c1" ]
+}
+
+@test "回転失敗でも追記は続行する (fail-open・stderr 1 行)" {
+  printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"x","result":"PROMOTED","unit":"u","port":3742}\n' \
+    "$COMMIT_B" > "$RELEASES/promotions.jsonl"
+  # 最古世代 (.3) を非空ディレクトリにして rm -f を失敗させる
+  mkdir -p "$RELEASES/promotions.jsonl.3/blocker"
+
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  run env RELEASE_PROMOTIONS_MAX_BYTES=10 bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+
+  # 回転は失敗しても昇格自体は成功し、行は追記される
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ローテーションに失敗"* ]]
+  [ "$(wc -l < "$RELEASES/promotions.jsonl")" -eq 2 ]
+  # 既存行 (seed) の後ろに新しい昇格が追記されている
+  [ "$(jq -r .commit "$RELEASES/promotions.jsonl" | head -1)" = "$COMMIT_B" ]
+  [ "$(jq -r .commit "$RELEASES/promotions.jsonl" | tail -1)" = "$COMMIT_A" ]
+  # 回転は中断しているので .1 は作られない
+  [ ! -e "$RELEASES/promotions.jsonl.1" ]
+  [ -d "$RELEASES/promotions.jsonl.3" ]
+}
+
+@test "deploy-status: 回転後も直近 5 件を古い順に読める" {
+  # .1 に 3 行 (c1〜c3)、現行に 2 行 (c4, c5)
+  {
+    printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"c1","tree_sha256":"t1","result":"PROMOTED","unit":"u","port":3742}\n'
+    printf '{"at":"2026-01-02T00:00:00Z","env":"staging","commit":"c2","tree_sha256":"t2","result":"PROMOTED","unit":"u","port":3742}\n'
+    printf '{"at":"2026-01-03T00:00:00Z","env":"staging","commit":"c3","tree_sha256":"t3","result":"PROMOTED","unit":"u","port":3742}\n'
+  } > "$RELEASES/promotions.jsonl.1"
+  {
+    printf '{"at":"2026-01-04T00:00:00Z","env":"staging","commit":"c4","tree_sha256":"t4","result":"PROMOTED","unit":"u","port":3742}\n'
+    printf '{"at":"2026-01-05T00:00:00Z","env":"staging","commit":"c5","tree_sha256":"t5","result":"PROMOTED","unit":"u","port":3742}\n'
+  } > "$RELEASES/promotions.jsonl"
+
+  run bash "$REPO_ROOT/bin/deploy-status.sh" --json
+  [ "$status" -eq 0 ]
+
+  local last
+  last="$(_last_json "$output")"
+  [ "$(printf '%s' "$last" | jq -r '.promotions | length')" = "5" ]
+  [ "$(printf '%s' "$last" | jq -r '[.promotions[].commit] | join(",")')" = "c1,c2,c3,c4,c5" ]
+  [ "$(printf '%s' "$last" | jq -r '.promotions[4].commit')" = "c5" ]
+}
+
+@test "--dry-run: 閾値超過でも台帳を回転させない" {
+  local seed
+  seed="$(printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"x","result":"PROMOTED","unit":"u","port":3742}\n' "$COMMIT_B")"
+  printf '%s' "$seed" > "$RELEASES/promotions.jsonl"
+
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  run env RELEASE_PROMOTIONS_MAX_BYTES=10 bash "$SCRIPT" --env staging --release "$REL_A" --dry-run
+  [ "$status" -eq 0 ]
+  [ ! -e "$RELEASES/promotions.jsonl.1" ]
+  [ "$(cat "$RELEASES/promotions.jsonl")" = "$seed" ]
+}

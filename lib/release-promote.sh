@@ -416,12 +416,95 @@ rp__wait_health() {
 # 台帳 (promotions.jsonl)
 # ============================================================
 
+# 回転の既定値: 1 MiB × 3 世代 (.1〜.3)
+#   環境変数で上書き可 (RELEASE_PROMOTIONS_MAX_BYTES / RELEASE_PROMOTIONS_KEEP)。
+ROTATE_MAX_BYTES_DEFAULT=$((1024 * 1024))
+ROTATE_KEEP_DEFAULT=3
+# 設定ミス (1e9 等) で世代シフトが暴走しないための上限
+ROTATE_KEEP_MAX=100
+
+# rp__rotate_max_bytes — 回転閾値 (バイト)。不正値は既定へ
+rp__rotate_max_bytes() {
+  local v="${RELEASE_PROMOTIONS_MAX_BYTES:-}"
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( 10#$v > 0 )); then
+    printf '%s' "$(( 10#$v ))"
+    return 0
+  fi
+  printf '%s' "$ROTATE_MAX_BYTES_DEFAULT"
+}
+
+# rp__rotate_keep — 保持世代数。不正値は既定、上限で丸める
+rp__rotate_keep() {
+  local v="${RELEASE_PROMOTIONS_KEEP:-}" n
+  if [[ "$v" =~ ^[0-9]+$ ]]; then
+    n=$(( 10#$v ))
+    (( n > ROTATE_KEEP_MAX )) && n="$ROTATE_KEEP_MAX"
+    printf '%s' "$n"
+    return 0
+  fi
+  printf '%s' "$ROTATE_KEEP_DEFAULT"
+}
+
+# rp__rotate_promotions <file>
+#   追記前に呼ぶ。閾値以上なら世代シフトする (行の内容は書き換えない)。
+#     古い世代から順に: .N は捨て、.N-1 → .N、…、.1 → .2、無印 → .1
+#   返り値: 0=回転した / 1=不要 (対象なし・閾値未満) / 2=失敗
+#   失敗しても呼び出し側は追記を続行する (fail-open)。
+rp__rotate_promotions() {
+  local file="$1" size max_bytes keep i from to dir base p n
+  max_bytes="$(rp__rotate_max_bytes)"
+  keep="$(rp__rotate_keep)"
+
+  [[ -e "$file" ]] || return 1
+  size="$(stat -c %s -- "$file" 2>/dev/null)" || return 2
+  [[ "$size" =~ ^[0-9]+$ ]] || return 2
+  (( size < max_bytes )) && return 1
+
+  # keep=0 は履歴を残さない (truncate)
+  if (( keep == 0 )); then
+    : > "$file" 2>/dev/null || return 2
+    return 0
+  fi
+
+  for (( i = keep; i >= 1; i-- )); do
+    if (( i == 1 )); then from="$file"; else from="$file.$((i - 1))"; fi
+    to="$file.$i"
+    # 最古の世代は捨てる
+    if (( i == keep )); then
+      rm -f -- "$to" 2>/dev/null || return 2
+    fi
+    if [[ -e "$from" ]]; then
+      mv -f -- "$from" "$to" 2>/dev/null || return 2
+    fi
+  done
+
+  # 設定変更で keep を減らしたときの余剰世代 (.keep+1 以降) を掃除する。
+  #   回転時にしか走らないので通常経路のコストは増えない。
+  dir="$(dirname -- "$file")"
+  base="$(basename -- "$file")"
+  for p in "$dir/$base".*; do
+    [[ -e "$p" ]] || continue
+    n="${p##*/}"
+    n="${n#"$base".}"
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    if (( 10#$n > keep )); then
+      rm -f -- "$p" 2>/dev/null || true
+    fi
+  done
+
+  return 0
+}
+
 # rp__append_promotion <result>
 #   $CLAUDEOS_HOME/releases/promotions.jsonl に 1 行追記する。
+#   追記前に閾値判定して回転する (回転失敗は昇格を止めない: fail-open)。
 #   1 行 < 4KB の追記は Linux 上で原子的 (O_APPEND)。
 rp__append_promotion() {
-  local result="$1" line
+  local result="$1" line file rot_rc=0
+  file="$(rp__releases_dir)/promotions.jsonl"
   mkdir -p -- "$(rp__releases_dir)" || return 1
+
+  # 行は回転より先に組み立てる (組み立てに失敗しても台帳を回転させない)
   line="$(jq -cn \
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg env "$RP_ENV" \
@@ -431,7 +514,14 @@ rp__append_promotion() {
     --arg unit "$RP_UNIT" \
     --argjson port "$RP_PORT" \
     '{at:$at,env:$env,commit:$commit,tree_sha256:$tree,result:$result,unit:$unit,port:$port}' 2>/dev/null)" || return 1
-  printf '%s\n' "$line" >> "$(rp__releases_dir)/promotions.jsonl"
+
+  # 回転は best-effort。失敗時は stderr に 1 行だけ出し、追記はそのまま続行する。
+  rp__rotate_promotions "$file" || rot_rc=$?
+  if (( rot_rc == 2 )); then
+    log_warn "promotions 台帳のローテーションに失敗しました (追記は続行): $file"
+  fi
+
+  printf '%s\n' "$line" >> "$file"
 }
 
 # ============================================================
