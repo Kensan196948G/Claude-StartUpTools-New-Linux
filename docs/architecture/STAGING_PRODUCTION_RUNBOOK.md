@@ -144,6 +144,34 @@ bin/pre-promote-check.sh --release <40hex> [--json]
 
 ## 4. Production を artifact 化する（人間の Y/N 後）
 
+### 4-A. 推奨: 1 コマンドで実行する（`bin/promote-production.sh`）
+
+```bash
+# 計画を確認（何も書かない）
+CCSU_PROMOTE_CONFIG_PATH=/home/kensan/Projects/Claude-StartUpTools-New-Linux/config/config.json \
+  bin/promote-production.sh --release <sha> --dry-run
+
+# 人間の Y 後に実行
+CCSU_PROMOTE_CONFIG_PATH=/home/kensan/Projects/Claude-StartUpTools-New-Linux/config/config.json \
+  bin/promote-production.sh --release <sha> --yes --json
+```
+
+| 手順 | 内容 | 失敗時 |
+|---|---|---|
+| (0) | `pre-promote-check`（7 項目） | 中止（何も変えない） |
+| (0b) | 実機設定 `CCSU_PROMOTE_CONFIG_PATH` の存在・JSON 妥当性 | 中止（何も変えない） |
+| (1) | 本番 unit を `.bak-<ts>` へ退避（sha256 記録） | 中止 |
+| (2) | `production-current` を準備（`--no-restart`） | 中止（unit 未変更） |
+| (3) | unit を成果物起動へ差し替え（restart） | **自動復旧** |
+| (4) | 昇格確定（health + 台帳 PROMOTED） | **自動復旧** |
+| (5) | `post-deploy-smoke --env production` | **自動復旧** |
+
+exit: 0 成功 / 1 失敗（復旧済み）/ 2 引数 / 3 確認待ち（`--yes` 無し）/ 4 復旧も失敗（要人手 → §5）。
+**注意**: worktree や成果物から実行する場合、git 管理外の実機設定は既定パスに無いため、必ず
+`CCSU_PROMOTE_CONFIG_PATH` を指定する（未指定なら (0b) で安全に中止する）。
+
+### 4-B. 手動手順（4-A が使えない場合）
+
 **現状の課題**: 本番 unit は作業ツリー直実行で commit pin が無い。起動後にコードが進んでも実態が変わらない（2026-11-23 実測: 起動 06:46:37 に対し HEAD 09:41:47、4 commit 先行）。
 
 実行順序（記録と実体を一致させるため、この順で行う）:
