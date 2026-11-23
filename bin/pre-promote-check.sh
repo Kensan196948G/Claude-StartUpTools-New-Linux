@@ -7,21 +7,28 @@
 #
 # 使い方:
 #   bin/pre-promote-check.sh --release <40hex> [--json] [--home DIR]
+#                            [--dashboard-unit NAME] [--no-dashboard]
 #
-#   --release <40hex>  昇格対象の release（$CLAUDEOS_HOME/releases/<40hex>）
-#   --json             最終行に 1 行 JSON を出す（人間向けログは stderr）
-#   --home DIR         ClaudeOS ホームを上書き（既定 $CLAUDEOS_HOME か ~/.claudeos）
-#   -h, --help         このヘルプ
+#   --release <40hex>     昇格対象の release（$CLAUDEOS_HOME/releases/<40hex>）
+#   --json                最終行に 1 行 JSON を出す（人間向けログは stderr）
+#   --home DIR            ClaudeOS ホームを上書き（既定 $CLAUDEOS_HOME か ~/.claudeos）
+#   --dashboard-unit NAME 本番 dashboard の unit 名（既定 claude-startuptools-dashboard.service）
+#   --no-dashboard        検査 8（dashboard）を省略する
+#   -h, --help            このヘルプ
 #
 # 検査項目（PASS / FAIL / WARN）:
 #   1. artifact         release dir / manifest / files[].sha256 / tree_sha256 を再計算照合
 #                       （scripts/release/verify-artifact.sh があればそれを使う）
 #   2. staging 一致     staging-current の manifest.tree_sha256 が対象と一致（未検証は FAIL）
-#   3. unit バックアップ 本番 unit の .bak-* が 1 件以上（無ければ作成コマンドを表示して FAIL）
+#   3. unit バックアップ 最新 .bak-* が現行 unit と sha256 一致なら PASS。
+#                       古い backup / 0 件は WARN（orchestrator の (1) が昇格直前に
+#                       新しい退避を作るため。0 件でも FAIL にしない）
 #   4. production health 3740 が 200 + ok:true（落ちていれば FAIL）
 #   5. staging health    3742 が 200 + ok:true（落ちていても WARN）
 #   6. disk             releases のファイルシステム空き >= 1 GiB（不足は WARN）
 #   7. production-current 現状（初回昇格は previous 不在の戻し手順を表示）
+#   8. dashboard unit   本番 dashboard unit の存在 + 3737 health が 200 + status=ok（FAIL）
+#                       drop-in が既にあれば情報として表示。--no-dashboard で省略
 #
 # 環境変数:
 #   CCSU_SYSTEMCTL_BIN             systemctl 実体（bats スタブ差し替え用）
@@ -43,12 +50,16 @@ source "$SCRIPT_DIR/../lib/common.sh"
 PRODUCTION_PORT=3740
 STAGING_PORT=3742
 PRODUCTION_UNIT="claudeos-web-startup.service"
+DASHBOARD_PORT=3737
+DASHBOARD_UNIT_DEFAULT="claude-startuptools-dashboard.service"
 
 PC_JSON=0
 PC_HOME="${CLAUDEOS_HOME:-$HOME/.claudeos}"
 PC_RELEASE_ARG=""
 PC_TIMEOUT="${CCSU_PRE_PROMOTE_TIMEOUT:-5}"
 PC_MIN_FREE_MB="${CCSU_PRE_PROMOTE_MIN_FREE_MB:-1024}"
+PC_DASHBOARD_UNIT="$DASHBOARD_UNIT_DEFAULT"
+PC_NO_DASHBOARD=0
 
 PC_CHECKS=0
 PC_FAILED=0
@@ -62,14 +73,17 @@ pc__log() { if (( PC_JSON )); then printf '%s\n' "$*" >&2; else printf '%s\n' "$
 usage() {
   cat <<'EOF'
 Usage: pre-promote-check.sh --release <40hex> [--json] [--home DIR]
+                            [--dashboard-unit NAME] [--no-dashboard]
 
-  --release <40hex>  昇格対象の release（$CLAUDEOS_HOME/releases/<40hex>）
-  --json             最終行に 1 行 JSON を出力（人間向けログは stderr）
-  --home DIR         ClaudeOS ホームを上書き（既定 $CLAUDEOS_HOME か ~/.claudeos）
-  -h, --help         このヘルプ
+  --release <40hex>     昇格対象の release（$CLAUDEOS_HOME/releases/<40hex>）
+  --json                最終行に 1 行 JSON を出力（人間向けログは stderr）
+  --home DIR            ClaudeOS ホームを上書き（既定 $CLAUDEOS_HOME か ~/.claudeos）
+  --dashboard-unit NAME 本番 dashboard unit 名（既定 claude-startuptools-dashboard.service）
+  --no-dashboard        検査 8（dashboard unit / 3737 health）を省略
+  -h, --help            このヘルプ
 
 検査: artifact / staging 一致 / unit バックアップ / production health /
-      staging health / disk / production-current
+      staging health / disk / production-current / dashboard unit
 exit: 0 FAIL 0 / 1 FAIL あり / 2 引数エラー
 
 このスクリプトは読み取り専用です。バックアップ作成・symlink・unit 変更は行いません。
@@ -273,7 +287,7 @@ pc__check_staging() {
 # 3. 本番 unit のバックアップ
 # ------------------------------------------------------------
 pc__check_unit_backup() {
-  local unit_dir unit backups=() newest cmd
+  local unit_dir unit backups=() newest cmd newest_sha unit_sha
   unit_dir="$(pc__unit_dir)"
   unit="$unit_dir/$PRODUCTION_UNIT"
   shopt -s nullglob
@@ -282,17 +296,33 @@ pc__check_unit_backup() {
 
   cmd="cp -a \"$unit\" \"$unit.bak-\$(date +%Y%m%d-%H%M%S)\""
 
-  if (( ${#backups[@]} > 0 )); then
-    newest="$(printf '%s\n' "${backups[@]}" | LC_ALL=C sort | tail -n 1)"
-    pc__record PASS "unit バックアップ" "found $(basename "$newest")"
+  # 0 件は FAIL にしない: promote-production の (1) が実行直前に新しい退避を作る。
+  # 手動で昇格する場合に備えて作成コマンドは表示する。
+  if (( ${#backups[@]} == 0 )); then
+    pc__record WARN "unit バックアップ" \
+      "バックアップなし（orchestrator の (1) で新しい退避が作られます。手動作成: $cmd）"
     return 0
   fi
+
+  newest="$(printf '%s\n' "${backups[@]}" | LC_ALL=C sort | tail -n 1)"
 
   if [[ ! -f "$unit" ]]; then
     pc__record FAIL "unit バックアップ" "本番 unit が見つかりません: $unit（作成: $cmd）"
     return 0
   fi
-  pc__record FAIL "unit バックアップ" "バックアップがありません。作成: $cmd"
+
+  # 最新 backup が「現行 unit と同じ内容」なら実質有効。古い backup しか無い場合は
+  # orchestrator の (1) が昇格直前に新しい退避を作るため WARN に留める。
+  newest_sha="$(sha256sum -- "$newest" 2>/dev/null | cut -d' ' -f1)" || true
+  unit_sha="$(sha256sum -- "$unit" 2>/dev/null | cut -d' ' -f1)" || true
+  if [[ -n "$newest_sha" && "$newest_sha" == "$unit_sha" ]]; then
+    pc__record PASS "unit バックアップ" \
+      "最新 backup が現行 unit と一致 ($(basename "$newest") sha256=${unit_sha:0:12}…)"
+    return 0
+  fi
+
+  pc__record WARN "unit バックアップ" \
+    "最新 backup が現行 unit と異なります（$(basename "$newest") / orchestrator の (1) で新しい退避が作られます）"
   return 0
 }
 
@@ -392,6 +422,51 @@ pc__check_production_current() {
 }
 
 # ------------------------------------------------------------
+# 8. dashboard unit + 3737 health
+# ------------------------------------------------------------
+#   本番 dashboard が「存在し、健全である」ことも昇格の前提に含める。
+#   unit は file の存在 or systemctl の LoadState=loaded で判定する
+#   （テストは CCSU_SYSTEMD_USER_DIR / CCSU_SYSTEMCTL_BIN で差し替える）。
+pc__check_dashboard() {
+  local unit_dir unit dropin_dir load_state exists=0
+  local url resp code body status
+  unit_dir="$(pc__unit_dir)"
+  unit="$unit_dir/$PC_DASHBOARD_UNIT"
+  dropin_dir="$unit_dir/$PC_DASHBOARD_UNIT.d"
+
+  # drop-in は「情報」として表示する（合否には使わない）
+  if [[ -d "$dropin_dir" ]]; then
+    pc__log "  [INFO] dashboard drop-in: $dropin_dir ($(ls -1 "$dropin_dir" 2>/dev/null | tr '\n' ' '))"
+  fi
+
+  load_state="$("$(pc__systemctl_bin)" --user show "$PC_DASHBOARD_UNIT" -p LoadState 2>/dev/null | head -n 1 || true)"
+  if [[ -f "$unit" ]]; then exists=1; fi
+  if [[ "$load_state" == "LoadState=loaded" ]]; then exists=1; fi
+
+  if (( exists == 0 )); then
+    pc__record FAIL "dashboard unit" "本番 dashboard unit が見つかりません: $PC_DASHBOARD_UNIT（$unit）"
+    return 0
+  fi
+
+  url="http://127.0.0.1:${DASHBOARD_PORT}/api/health"
+  resp="$(pc__fetch "$url")"
+  code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
+
+  if [[ "$code" != "200" ]]; then
+    pc__record FAIL "dashboard unit" "GET $url -> ${code:-000} (200 期待 / unit=$PC_DASHBOARD_UNIT)"
+    return 0
+  fi
+  status="$(printf '%s' "$body" | jq -r '.status // empty' 2>/dev/null || true)"
+  if [[ "$status" != "ok" ]]; then
+    pc__record FAIL "dashboard unit" "GET $url -> 200 だが status=ok ではありません (status=${status:-none} / unit=$PC_DASHBOARD_UNIT)"
+    return 0
+  fi
+  pc__record PASS "dashboard unit" "$PC_DASHBOARD_UNIT / GET $url -> 200, status=ok"
+  return 0
+}
+
+# ------------------------------------------------------------
 # main
 # ------------------------------------------------------------
 main() {
@@ -413,6 +488,13 @@ main() {
         PC_HOME="$2"; shift 2 ;;
       --home=*)
         PC_HOME="${1#--home=}"; shift ;;
+      --dashboard-unit)
+        (( $# >= 2 )) || pc__arg_error "--dashboard-unit には値が必要です"
+        PC_DASHBOARD_UNIT="$2"; shift 2 ;;
+      --dashboard-unit=*)
+        PC_DASHBOARD_UNIT="${1#--dashboard-unit=}"; shift ;;
+      --no-dashboard)
+        PC_NO_DASHBOARD=1; shift ;;
       --json)
         shift ;;
       -h|--help)
@@ -425,6 +507,9 @@ main() {
   [[ -n "$PC_RELEASE_ARG" ]] || pc__arg_error "--release <40hex> は必須です"
   [[ "$PC_RELEASE_ARG" =~ ^[0-9a-f]{40}$ ]] \
     || pc__arg_error "--release は 40 桁 hex で指定してください: $PC_RELEASE_ARG"
+  [[ -n "$PC_DASHBOARD_UNIT" ]] || pc__arg_error "--dashboard-unit が空です"
+  [[ "$PC_DASHBOARD_UNIT" =~ ^[A-Za-z0-9:_.@-]+$ ]] \
+    || pc__arg_error "--dashboard-unit に使えない文字が含まれています: $PC_DASHBOARD_UNIT"
 
   export CLAUDEOS_HOME="$PC_HOME"
   local release_dir
@@ -451,6 +536,11 @@ main() {
   pc__check_health "staging" "$STAGING_PORT" WARN
   pc__check_disk
   pc__check_production_current
+  if (( PC_NO_DASHBOARD )); then
+    pc__log "  [SKIP] dashboard unit（--no-dashboard）"
+  else
+    pc__check_dashboard
+  fi
 
   pc__finish
 }

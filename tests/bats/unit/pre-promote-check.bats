@@ -42,18 +42,24 @@ setup() {
 
   printf 'unit\n' > "$UNIT_DIR/claudeos-web-startup.service"
   printf 'unit\n' > "$UNIT_DIR/claudeos-web-startup.service.bak-20260101-000000"
+  printf 'dashboard\n' > "$UNIT_DIR/claude-startuptools-dashboard.service"
 
-  # curl スタブ: URL のポートで status/body を切り替える（既定 200 / ok:true）
+  # curl スタブ: URL のポートで status/body を切り替える
+  #   （既定 200 / health は ok:true / dashboard(3737) は status=ok）
   cat > "$STUB_BIN/fake-curl" <<'STUB'
 #!/usr/bin/env bash
 url=""
 for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
 code="${FAKE_CURL_CODE:-200}"
+body="${FAKE_CURL_BODY:-}"
 case "$url" in
   *:3740/*) [ -n "${FAKE_PROD_CODE:-}" ] && code="$FAKE_PROD_CODE" ;;
   *:3742/*) [ -n "${FAKE_STG_CODE:-}" ] && code="$FAKE_STG_CODE" ;;
+  *:3737/api/health)
+    [ -n "${FAKE_DASH_CODE:-}" ] && code="$FAKE_DASH_CODE"
+    [ -z "$body" ] && body="{\"status\":\"${FAKE_DASH_STATUS:-ok}\"}"
+    ;;
 esac
-body="${FAKE_CURL_BODY:-}"
 if [ -z "$body" ]; then body='{"ok":true}'; fi
 printf '%s\n%s' "$body" "$code"
 STUB
@@ -61,7 +67,12 @@ STUB
 
   cat > "$STUB_BIN/fake-systemctl" <<'STUB'
 #!/usr/bin/env bash
-echo "ActiveState=active"
+case " $* " in
+  *" -p LoadState "*)
+    printf 'LoadState=%s\n' "${FAKE_LOAD_STATE:-loaded}"
+    exit 0 ;;
+esac
+printf 'ActiveState=%s\n' "${FAKE_ACTIVE_STATE:-active}"
 STUB
   chmod +x "$STUB_BIN/fake-systemctl"
 
@@ -89,7 +100,7 @@ snapshot() {
   [ "$(printf '%s' "$json" | jq -r .ok)" = "true" ]
   [ "$(printf '%s' "$json" | jq -r .release)" = "$SHA" ]
   [ "$(printf '%s' "$json" | jq -r .tree_sha256)" = "$TREE" ]
-  [ "$(printf '%s' "$json" | jq -r .checks)" -eq 7 ]
+  [ "$(printf '%s' "$json" | jq -r .checks)" -eq 8 ]
   [ "$(printf '%s' "$json" | jq -r .failed)" -eq 0 ]
   [ "$(printf '%s' "$json" | jq -r .warnings)" -eq 0 ]
 }
@@ -110,12 +121,32 @@ snapshot() {
   [ "$(json_line | jq -r .failed)" -ge 1 ]
 }
 
-@test "pre-promote-check: unit バックアップ無しは FAIL し作成コマンドを表示" {
+@test "pre-promote-check: unit バックアップ無しは WARN（orchestrator の (1) が退避を作る）" {
   rm -f "$UNIT_DIR"/claudeos-web-startup.service.bak-*
   run bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"[FAIL] unit バックアップ"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[WARN] unit バックアップ"* ]]
+  [[ "$output" == *"orchestrator の (1)"* ]]
   [[ "$output" == *"cp -a"* ]]
+  [ "$(json_line | jq -r .warnings)" -ge 1 ]
+  [ "$(json_line | jq -r .failed)" -eq 0 ]
+}
+
+@test "pre-promote-check: 最新 backup が現行 unit と sha256 一致なら PASS" {
+  run bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[PASS] unit バックアップ"* ]]
+  [[ "$output" == *"現行 unit と一致"* ]]
+}
+
+@test "pre-promote-check: 古い backup しか無ければ WARN（FAIL にしない）" {
+  # 最新（sort で最後）の backup だけ内容が古いケースを作る
+  printf 'old unit contents\n' > "$UNIT_DIR/claudeos-web-startup.service.bak-20990101-000000"
+  run bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[WARN] unit バックアップ"* ]]
+  [[ "$output" == *"orchestrator の (1)"* ]]
+  [ "$(json_line | jq -r .failed)" -eq 0 ]
 }
 
 @test "pre-promote-check: 本番 health が落ちていれば FAIL" {
@@ -212,4 +243,64 @@ STUB
 
   run bash "$SCRIPT" --release "$SHA" --bogus
   [ "$status" -eq 2 ]
+}
+
+# ---- 検査 8: dashboard unit + 3737 health ----------------------
+
+@test "pre-promote-check: dashboard unit が無ければ FAIL" {
+  rm -f "$UNIT_DIR/claude-startuptools-dashboard.service"
+  run env FAKE_LOAD_STATE=not-found bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[FAIL] dashboard unit"* ]]
+  [[ "$output" == *"claude-startuptools-dashboard.service"* ]]
+}
+
+@test "pre-promote-check: dashboard 3737 が 500 なら FAIL" {
+  run env FAKE_DASH_CODE=500 bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[FAIL] dashboard unit"* ]]
+  [[ "$output" == *"3737"* ]]
+}
+
+@test "pre-promote-check: dashboard が 200 でも status=ok でなければ FAIL" {
+  run env FAKE_DASH_STATUS=degraded bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"status=ok ではありません"* ]]
+}
+
+@test "pre-promote-check: --no-dashboard は検査 8 を省略する (checks=7)" {
+  run bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME" --no-dashboard
+  [ "$status" -eq 0 ]
+  json="$(json_line)"
+  [ "$(printf '%s' "$json" | jq -r .checks)" -eq 7 ]
+  [ "$(printf '%s' "$json" | jq -r .ok)" = "true" ]
+  [[ "$output" == *"SKIP"*"dashboard unit"* ]]
+}
+
+@test "pre-promote-check: --dashboard-unit で unit 名を変更できる" {
+  rm -f "$UNIT_DIR/claude-startuptools-dashboard.service"
+  printf 'dashboard\n' > "$UNIT_DIR/custom-dash.service"
+  # 既定名では FAIL、--dashboard-unit 指定では PASS になること
+  run env FAKE_LOAD_STATE=not-found bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 1 ]
+
+  run env FAKE_LOAD_STATE=not-found bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME" \
+    --dashboard-unit custom-dash.service
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$(json_line)" | jq -r .checks)" -eq 8 ]
+}
+
+@test "pre-promote-check: dashboard の drop-in があれば情報として表示する" {
+  mkdir -p "$UNIT_DIR/claude-startuptools-dashboard.service.d"
+  printf '[Service]\nEnvironment=STAGING=0\n' > "$UNIT_DIR/claude-startuptools-dashboard.service.d/override.conf"
+  run bash "$SCRIPT" --release "$SHA" --json --home "$TEST_HOME"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"drop-in"* ]]
+  [[ "$output" == *"override.conf"* ]]
+}
+
+@test "pre-promote-check: 不正な --dashboard-unit 名は exit 2" {
+  run bash "$SCRIPT" --release "$SHA" --dashboard-unit "../evil"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--dashboard-unit"* ]]
 }

@@ -4,17 +4,22 @@
 #
 # 使い方:
 #   post-deploy-smoke.sh [--env production|staging] [--json] [--public-url URL]
+#                        [--expect-commit <40hex>]
 #     --env production|staging  対象環境（既定 production）
 #     --json                    最終行に 1 行 JSON を出す
 #     --public-url URL          公開 URL を上書き（既定 https://claude-startuptools.mirai-dx-platform.com/）
+#     --expect-commit <40hex>   配備した commit。指定時は console（と dashboard に commit が
+#                               あれば dashboard）の commit 一致を必須にする（不一致は FAIL）
 #     -h, --help                このヘルプ
 #
 # 検査項目（各 PASS / FAIL / WARN / SKIP を記録）:
 #   1. health        http://127.0.0.1:<port>/api/health が 200 かつ ok:true
-#                    commit が空なら WARN（health に commit を載せる変更が未マージのため FAIL にしない）
+#                    commit が空なら WARN。--expect-commit 指定時は一致必須（不一致/空は FAIL）
 #   2. web root      GET /  が 200
 #   3. dashboard     production: 3737 /api/health が 200
 #                    staging   : 3743 /api/health が 200（未起動なら SKIP）
+#                    health に commit があればコンソール（3740/3742）と一致するか検査
+#                    （不一致は FAIL。dashboard 側に commit が無ければ WARN）
 #   4. terminal      production のみ: 3741 /terminal/ が 200
 #   5. public url    公開 URL が 200 か 302（Cloudflare Access は 302 を正常扱い）
 #   6. promotions    $CLAUDEOS_HOME/releases/promotions.jsonl の最終行が 30 日以内
@@ -57,14 +62,21 @@ SMOKE_FAILED=0
 SMOKE_WARNINGS=0
 SMOKE_FAIL_LIST=""
 SMOKE_WARN_LIST=""
+# コンソール (3740/3742) の health が返した commit。dashboard 検査の比較に使う
+SMOKE_CONSOLE_COMMIT=""
+# --expect-commit: 配備したはずの commit。指定時は console / dashboard の commit を照合する
+SMOKE_EXPECT_COMMIT=""
 
 usage() {
   cat <<'EOF'
 Usage: post-deploy-smoke.sh [--env production|staging] [--json] [--public-url URL]
+                            [--expect-commit <40hex>]
 
   --env production|staging  対象環境 (既定: production)
   --json                    最終行に 1 行 JSON を出力
   --public-url URL          公開 URL を上書き
+  --expect-commit <40hex>   配備した commit。指定時は console（と、dashboard に
+                            commit があれば dashboard）の commit 一致を必須にする
   -h, --help                このヘルプ
 
 検査: health / web root / dashboard / terminal / 公開 URL / promotions 台帳 / systemd unit
@@ -184,11 +196,27 @@ smoke__check_health() {
   fi
 
   commit="$(printf '%s' "$body" | jq -r '.commit // empty' 2>/dev/null || true)"
+  if [[ -n "$SMOKE_EXPECT_COMMIT" ]]; then
+    if [[ -z "$commit" ]]; then
+      smoke__record FAIL "health" "commit が空 (expect=$SMOKE_EXPECT_COMMIT)"
+      return 0
+    fi
+    if [[ "$commit" != "$SMOKE_EXPECT_COMMIT" ]]; then
+      smoke__record FAIL "health" "commit 不一致: expect=$SMOKE_EXPECT_COMMIT actual=$commit"
+      return 0
+    fi
+    SMOKE_CONSOLE_COMMIT="$commit"
+    smoke__record PASS "health" "HTTP 200, ok:true, commit=$commit (expect と一致)"
+    return 0
+  fi
+
   if [[ -z "$commit" ]]; then
     smoke__record WARN "health" "HTTP 200, ok:true / commit が空 (health に commit を載せる変更が未反映)"
     return 0
   fi
 
+  # dashboard 検査が「コンソールと同じ成果物か」を比較できるよう commit を保持する
+  SMOKE_CONSOLE_COMMIT="$commit"
   smoke__record PASS "health" "HTTP 200, ok:true, commit=$commit"
   return 0
 }
@@ -210,28 +238,64 @@ smoke__check_root() {
 
 # ------------------------------------------------------------
 # 3. dashboard — production: 3737。staging: 3743 があれば検査、無ければ SKIP
+#    health に commit があれば、コンソール（3740/3742）の commit と一致するかを検査する。
+#    dashboard 側に commit が無い場合は WARN（dashboard の commit 追加 PR が
+#    未マージでも赤にしない）。
 # ------------------------------------------------------------
 smoke__check_dashboard() {
-  local env_arg="$1" url code
+  local env_arg="$1" url code body dash_commit
   if [[ "$env_arg" == "production" ]]; then
     url="http://127.0.0.1:3737/api/health"
     code="$(smoke__http_code "$url")"
-    if [[ "$code" == "200" ]]; then
-      smoke__record PASS "dashboard" "GET $url -> 200"
-    else
+    if [[ "$code" != "200" ]]; then
       smoke__record FAIL "dashboard" "GET $url -> $code (200 期待)"
+      return 0
+    fi
+  else
+    url="http://127.0.0.1:3743/api/health"
+    code="$(smoke__http_code "$url")"
+    if [[ "$code" == "000" ]]; then
+      smoke__record SKIP "dashboard" "staging dashboard (3743) が未起動"
+      return 0
+    elif [[ "$code" != "200" ]]; then
+      smoke__record FAIL "dashboard" "GET $url -> $code (200 期待)"
+      return 0
+    fi
+  fi
+
+  body="$(smoke__body "$url")"
+  dash_commit="$(printf '%s' "$body" | jq -r '.commit // empty' 2>/dev/null || true)"
+
+  # 比較対象: --expect-commit があればそれ、無ければコンソール health の commit
+  local target="$SMOKE_CONSOLE_COMMIT"
+  if [[ -n "$SMOKE_EXPECT_COMMIT" ]]; then target="$SMOKE_EXPECT_COMMIT"; fi
+
+  if [[ -z "$dash_commit" ]]; then
+    smoke__record WARN "dashboard" \
+      "GET $url -> 200 / dashboard health に commit が無い (commit 追加 PR 未マージ。console=${SMOKE_CONSOLE_COMMIT:-なし})"
+    return 0
+  fi
+  if [[ -z "$target" ]]; then
+    # コンソール側 commit も --expect-commit も無い。比較対象が無いので
+    # dashboard 自身の検査（200 + commit あり）は PASS とし、詳細で明示する。
+    smoke__record PASS "dashboard" \
+      "GET $url -> 200, commit=$dash_commit (コンソール commit が空のため一致比較はスキップ)"
+    return 0
+  fi
+  if [[ "$dash_commit" != "$target" ]]; then
+    if [[ -n "$SMOKE_EXPECT_COMMIT" ]]; then
+      smoke__record FAIL "dashboard" \
+        "commit 不一致: expect=$SMOKE_EXPECT_COMMIT / dashboard=$dash_commit"
+    else
+      smoke__record FAIL "dashboard" \
+        "commit 不一致: console=$SMOKE_CONSOLE_COMMIT / dashboard=$dash_commit"
     fi
     return 0
   fi
-
-  url="http://127.0.0.1:3743/api/health"
-  code="$(smoke__http_code "$url")"
-  if [[ "$code" == "000" ]]; then
-    smoke__record SKIP "dashboard" "staging dashboard (3743) が未起動"
-  elif [[ "$code" == "200" ]]; then
-    smoke__record PASS "dashboard" "GET $url -> 200"
+  if [[ -n "$SMOKE_EXPECT_COMMIT" ]]; then
+    smoke__record PASS "dashboard" "GET $url -> 200, commit=$dash_commit (expect と一致)"
   else
-    smoke__record FAIL "dashboard" "GET $url -> $code (200 期待)"
+    smoke__record PASS "dashboard" "GET $url -> 200, commit=$dash_commit (console と一致)"
   fi
   return 0
 }
@@ -379,6 +443,11 @@ main() {
       --public-url)
         [[ $# -ge 2 ]] || { log_error "--public-url には値が必要です"; return 2; }
         SMOKE_PUBLIC_URL="$2"; shift 2 ;;
+      --expect-commit)
+        [[ $# -ge 2 ]] || { log_error "--expect-commit には値が必要です"; return 2; }
+        SMOKE_EXPECT_COMMIT="$2"; shift 2 ;;
+      --expect-commit=*)
+        SMOKE_EXPECT_COMMIT="${1#--expect-commit=}"; shift ;;
       --json)
         SMOKE_JSON=1; shift ;;
       -h|--help)
@@ -403,6 +472,11 @@ main() {
       log_error "--public-url は http(s):// で始まる URL を指定してください: $SMOKE_PUBLIC_URL"
       return 2 ;;
   esac
+
+  if [[ -n "$SMOKE_EXPECT_COMMIT" && ! "$SMOKE_EXPECT_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+    log_error "--expect-commit は 40 桁 hex で指定してください: $SMOKE_EXPECT_COMMIT"
+    return 2
+  fi
 
   if [[ ! "$SMOKE_HTTP_TIMEOUT" =~ ^[0-9]+$ ]] || (( SMOKE_HTTP_TIMEOUT < 1 )); then
     log_error "CCSU_SMOKE_TIMEOUT は 1 以上の整数です: $SMOKE_HTTP_TIMEOUT"
