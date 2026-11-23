@@ -270,7 +270,11 @@ pp__print_plan() {
   printf '  unit         : %s\n' "$PP_UNIT_PATH"
   printf '  unit backup  : %s.bak-%s\n' "$PP_UNIT_PATH" "${PP_TS:-<ts>}"
   printf '  systemctl    : %s\n' "$(pp__systemctl)"
-  printf '  config       : %s\n' "$PP_CONFIG_PATH"
+  if [[ -f "$PP_CONFIG_PATH" ]]; then
+    printf '  config       : %s\n' "$PP_CONFIG_PATH"
+  else
+    printf '  config       : %s  ← 存在しません（実行時は (0b) で中止。CCSU_PROMOTE_CONFIG_PATH を指定）\n' "$PP_CONFIG_PATH"
+  fi
   printf '  steps:\n'
   printf '    (0) %s --release %s --json\n' "$(pp__bin pre-promote-check.sh)" "$rel"
   printf '    (1) cp -p %s %s.bak-%s (+ sha256 記録)\n' "$PP_UNIT_PATH" "$PP_UNIT_PATH" "${PP_TS:-<ts>}"
@@ -425,6 +429,21 @@ main() {
   fi
   pp__record_step "pre-promote-check" "true"
   pp__log "  (0) pre-promote-check: OK"
+
+  # (0b) 実機設定 (git 管理外) の存在確認。
+  #   worktree や成果物から実行すると <repo>/config/config.json が無く、unit 差し替え後に
+  #   本番が設定を読めなくなる。差し替え前に必ず止める（何も変更しない）。
+  if [[ ! -f "$PP_CONFIG_PATH" || ! -r "$PP_CONFIG_PATH" ]] || ! jq -e 'type == "object"' "$PP_CONFIG_PATH" >/dev/null 2>&1; then
+    pp__record_step "config-check" "false"
+    PP_FAILED_STEP="config-check"
+    PP_RESULT="ABORTED"
+    PP_REASON="AI_STARTUP_CONFIG_PATH が読めない/JSON でない: $PP_CONFIG_PATH（CCSU_PROMOTE_CONFIG_PATH で実機設定を指定してください。何も変更していません）"
+    pp__log "中止: $PP_REASON"
+    if (( PP_JSON )); then pp__json_line "false" "ABORTED" "$PP_REASON"; fi
+    return 1
+  fi
+  pp__record_step "config-check" "true"
+  pp__log "  (0b) config: $PP_CONFIG_PATH"
 
   # (1) unit バックアップ
   if [[ ! -f "$PP_UNIT_PATH" ]]; then
