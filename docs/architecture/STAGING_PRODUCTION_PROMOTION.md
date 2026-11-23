@@ -224,3 +224,31 @@
 | ロールバック | 初回のため `previous` なし。**unit バックアップ `claudeos-web-startup.service.bak-<ts>` が必須** |
 | 現在の本番 unit sha256 | `7883f90cfc3a882751a2616c3beb0ed1b44dbb161085d4f9180211ce01f82f00`（戻し先の同一性確認用） |
 | 計画 unit の dry-run | `WorkingDirectory=~/.claudeos/releases/production-current` / `Environment=AI_STARTUP_CONFIG_PATH=…` / `ExecStart=node …/production-current/scripts/web/startup-server.js --port 3740 --host 127.0.0.1` |
+
+## 17. 第4バッチ（2026-11-23 13:10 時点）
+
+| # | 項目 | 状態 |
+|---|---|---|
+| 1 | 滞留 PR の分類（`--classify`） | 完了 #196。**33 件 = deps 22 / docs 3 / fix 4 / unknown 4**、経過 <7日 14 / 7-30日 4 / 30-90日 11 / >90日 4 |
+| 2 | ruleset 適用可否（CI 有無） | 完了 #196。ruleset なし 21 = **CI あり 16 / CI なし 5** |
+| 3 | 中央ポリシー v2→v3 差分 | 完了 #194。**v3 は v2 の上位互換**。除外は `mirai-construction-dx/Mirai-Platform-Infra` 限定で本リポジトリは対象外 |
+| 4 | Staging 定期検証タイマー | 完了 #193（登録は lead が実行） |
+| 5 | 監査ログ閲覧 CLI | 完了 #197 |
+| 6 | promotions 台帳のローテーション | 完了 #198（1 MiB × 3 世代・fail-open） |
+| 7 | artifact 独立検証 CLI | 完了 #199（実 artifact 4 世代すべて OK） |
+| 8 | 本番昇格のリハーサル | **完了（実測）** Staging で rollback → 再 promote を実施し、health の commit が追従することを確認 |
+| 9 | 文書・索引 | 本 PR |
+| 10 | 昇格前ゲート CLI | 完了 #195（実環境で 7/7 PASS） |
+
+## 18. 横断是正の判断材料（#196 実測）
+
+- 滞留 33 件の内訳: **deps 22（メジャー 8 / マイナー・パッチ 14）/ docs 3 / fix 4 / unknown 4**。機能追加は 0 件。一方で**実バグ修正 `fix` が 4 件**（最長 55 日）滞留しており、一括クローズは危険。
+- ruleset なし 21 repo のうち **CI なしは 5 件**（Cybersecurity-Sovereign-AgentOS / Construction-Public-Twin-Portal / Server-Disk-Management / BLB-Safe-Renamer / Codex-StartUpTools）。**CI が無い repo に ruleset を先に当てると全 PR が永久マージ不可**になる。
+- 推奨順序: ①CI 整備（5 repo、または対象外の明示）→ ②ruleset 適用（CI あり 16 repo）→ ③滞留 PR 処理（`fix` 4 件とメジャー 8 件を除外してから）→ ④controller 定常化。
+- 未検証: 16 repo の required check 名と実報告名の一致（適用前に 1 PR で突合が必要）。
+
+## 19. ポリシーの位置づけ（#194 実測）
+
+- 中央 `GITHUB_POLICY.md` は **v3**、本リポジトリのコピーは **v2（stale mirror）**。差分は 3 箇所のみで v3 は上位互換。§10 の除外は特定リポジトリ限定で本リポジトリは対象外 → **現運用は v3 でも許容**。
+- 本リポジトリが参照する `bin/policy-pr.sh` / `bin/github-controller.sh` / `docs/architecture/全リポジトリAutoMerge統一方針.md` は**中央リポジトリに存在**し、v3 でもリポジトリ名で修飾されていない。
+- 推奨: 案 A（v3 へ追随し、参照をリポジトリ名で修飾）。決定は人間。
