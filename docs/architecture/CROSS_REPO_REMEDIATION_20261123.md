@@ -176,3 +176,37 @@ CI なし 5 repo:
 - 16 repo の required check 名が実報告名と一致するか（突合は未実施）
 - auto-merge が過去に一度でも発火したか（履歴 API では判別不能）
 - `ci_presence` は `.github/workflows` の**存在**を見ている。ワークフローはあるが CI が走らない repo は「CI あり」に数えられる
+
+## 9. 実施結果（2026-11-23 16:00〜16:30, 人間承認 3=Y）
+
+### 9-1. 段階①: CI 整備
+| repo | 結果 |
+|---|---|
+| Cybersecurity-Sovereign-AgentOS | 最小 CI（`ci`）をマージ。テスト 7 件失敗中のため構文検査のみ |
+| Construction-Public-Twin-Portal | 最小 CI（`ci`: npm ci → lint → typecheck → test）をマージ |
+| Server-Disk-Management | 最小 CI（`ci`: .ps1 構文検査）をマージ |
+| BLB-Safe-Renamer | 最小 CI（`ci`）をマージ |
+| SiteLive-Twin | 最小 CI（`ci`: 唯一のコードの構文検査）をマージ |
+| Codex-StartUpTools | **対象外（人間判断 1=N）**。既存 `bin/nightly_codex.sh:130` が新しい shellcheck の SC2329 で失敗。lint を緩めず、PR はクローズ |
+| open-design | 対象外（fork） |
+
+### 9-2. 段階②: ruleset 適用（`central-auto-merge`、16 repo）
+本リポジトリの ruleset を雛形にし、対象は `~DEFAULT_BRANCH`、必須チェックだけを repo ごとに差し替えた。
+**必須チェックは「既定ブランチ」と「人間が出した直近 PR」の両方で実際に成功を報告している名前だけ**に限定した。
+
+| 種別 | repo |
+|---|---|
+| 段階①の後に適用（`ci`） | Construction-Public-Twin-Portal / Server-Disk-Management / BLB-Safe-Renamer / SiteLive-Twin |
+| 計画どおり適用 | Drawing-to-4D-Studio / dd-e2e-sandbox / Development-Dispatcher / AI-Company-Control-Center / Mirai-Skill-Crystal-Board / Construction-AI-CAD-Platform / AI-HelpDesk-Platform / Financial-Sovereign-AgentOS / AI-Security-Verification-Center / 3D-Portal-Google3D |
+| PR で走らないチェックを除外して適用 | Software-Factory（`Dependabot` を除外）/ RIHRP-Research-Studio（`Dependency audit (Node)` / `(Python)` を除外） |
+| **適用しない（人間判断 2=N）** | CivilTiwn-3D（既定ブランチ `feat/coords-core`）/ Cybersecurity-Sovereign-AgentOS（既定ブランチ `auto/baseline-preservation`）。いずれも作業用ブランチが既定になっており、既定を `main` に戻すのが先 |
+
+### 9-3. 段階③: 滞留 PR（マージ候補 14 件）
+- 自動マージは「依存更新のマイナー/パッチ」かつ「CLEAN・失敗チェック 0・保留 0」のときだけ。
+- マージ済み: Software-Factory#220 / CivilPDF-Editor#128 / Construction-DX-Idea#85 / Civil-IT-Operation-Enterprised-Platform#162 / Mirai-AI-Agent-Business-Platform#55 / Development-Dispatcher#85
+- 人間判断に残す: CivilPDF-Editor#126・#114（`Lint / Typecheck / Test / Build` が失敗）、Construction-DX-Idea#84・#83・#81（競合 CONFLICTING）
+- 人間判断 19 件（fix 4 / メジャー 8 / docs 3 / unknown 4）は自動処理の対象外のまま。
+
+### 9-4. 段階④: 定常化
+- 承認済み（3=Y）。上記③の基準を `bin/cross-repo-automerge.sh` として実装し、systemd timer で毎時巡回させる（別 PR）。
+
