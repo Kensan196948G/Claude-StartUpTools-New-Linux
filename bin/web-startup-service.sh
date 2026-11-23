@@ -43,7 +43,8 @@ SYSTEMCTL="${CCSU_SYSTEMCTL_BIN:-systemctl}"
 WS_PROFILE=""
 WS_UNIT=""
 WS_ROOT=""
-WS_ENV_FILE=""
+WS_ENV_FILES=()
+WS_ENV_EXTRA=()
 WS_CLAUDEOS_HOME=""
 WS_PORT="${WEB_STARTUP_PORT:-}"
 WS_ACTION=""
@@ -53,7 +54,7 @@ WS_DRY_RUN=0
 UNIT=""
 UNIT_PATH=""
 ROOT=""
-ENV_FILE=""
+ENV_FILES=()
 CLAUDEOS_HOME=""
 
 # ws_svc__require_value <opt> <value> — 値を伴うオプションの欠落を exit 2 で落とす
@@ -123,13 +124,13 @@ ws_svc__resolve() {
   # root (unit の WorkingDirectory / server パス)
   ROOT="${WS_ROOT:-$CCSU_ROOT}"
 
-  # env-file
-  if [[ -n "$WS_ENV_FILE" ]]; then
-    ENV_FILE="$WS_ENV_FILE"
+  # env-file (複数指定可: --env-file を繰り返すと unit に複数の EnvironmentFile を出す)
+  if (( ${#WS_ENV_FILES[@]} > 0 )); then
+    ENV_FILES=("${WS_ENV_FILES[@]}")
   elif (( staging )); then
-    ENV_FILE="$HOME/.config/claudeos-web-startup-stg.env"
+    ENV_FILES=("$HOME/.config/claudeos-web-startup-stg.env")
   else
-    ENV_FILE="$HOME/.config/claudeos-web-startup.env"
+    ENV_FILES=("$HOME/.config/claudeos-web-startup.env")
   fi
 
   # CLAUDEOS_HOME (既定では unit に入れない = 従来どおり環境変数を追加しない)
@@ -148,7 +149,14 @@ ws_svc__resolve() {
 
   ws_svc__validate_unit_name "$UNIT"
   ws_svc__no_control_chars "--root" "$ROOT"
-  ws_svc__no_control_chars "--env-file" "$ENV_FILE"
+  local _f
+  for _f in "${ENV_FILES[@]}"; do
+    ws_svc__no_control_chars "--env-file" "$_f"
+  done
+  local _kv0
+  for _kv0 in "${WS_ENV_EXTRA[@]}"; do
+    ws_svc__no_control_chars "--env" "$_kv0"
+  done
   ws_svc__no_control_chars "--claudeos-home" "$CLAUDEOS_HOME"
 
   UNIT_PATH="${CCSU_SYSTEMD_UNIT_PATH:-$HOME/.config/systemd/user/$UNIT}"
@@ -171,8 +179,16 @@ Type=simple
 WorkingDirectory=$ROOT
 # STARTUP_WEB_PASSWORD / STARTUP_WEB_USER を置く場合のみ (0600)。'-' = 無くても起動する
 # (loopback bind + Cloudflare Access が入口制御の主体。Basic は多層防御)
-EnvironmentFile=-$ENV_FILE
 EOF
+  local _ef
+  for _ef in "${ENV_FILES[@]}"; do
+    printf 'EnvironmentFile=-%s\n' "$_ef"
+  done
+  local _kv
+  for _kv in "${WS_ENV_EXTRA[@]}"; do
+    # --env KEY=VALUE (systemd の Environment=)。値の検証は ws_svc__resolve 側で行う
+    printf 'Environment=%s\n' "$(ws_svc__env_value "$_kv")"
+  done
   if [[ -n "$CLAUDEOS_HOME" ]]; then
     # 状態ディレクトリの分離 (Staging が本番の ~/.claudeos を共有しない)
     printf 'Environment=CLAUDEOS_HOME=%s\n' "$(ws_svc__env_value "$CLAUDEOS_HOME")"
@@ -197,9 +213,11 @@ ws_svc__register() {
   if (( WS_DRY_RUN )); then
     log_info "dry-run: Web スタートアップコンソール systemd --user 登録計画"
     log_info "  unit=$UNIT_PATH"
-    log_info "  env-file=$ENV_FILE (任意。無ければ Basic 認証なしで起動)"
+    log_info "  env-file=$(printf '%s,' "${ENV_FILES[@]}" | sed 's/,$//') (任意。無ければ Basic 認証なしで起動)"
     if [[ -n "$WS_ROOT" ]]; then log_info "  root=$ROOT"; fi
     if [[ -n "$CLAUDEOS_HOME" ]]; then log_info "  claudeos-home=$CLAUDEOS_HOME"; fi
+    local _kv2
+    for _kv2 in "${WS_ENV_EXTRA[@]}"; do log_info "  env=$_kv2"; done
     printf '%s\n' "$body" | sed 's/^/    /'
     log_info "dry-run: systemd への書き込みは行いません"
     return 0
@@ -239,7 +257,13 @@ main() {
       --port)       ws_svc__require_value "$1" "${2:-}"; WS_PORT="$2"; shift 2 ;;
       --unit)       ws_svc__require_value "$1" "${2:-}"; WS_UNIT="$2"; shift 2 ;;
       --root)       ws_svc__require_value "$1" "${2:-}"; WS_ROOT="$2"; shift 2 ;;
-      --env-file)   ws_svc__require_value "$1" "${2:-}"; WS_ENV_FILE="$2"; shift 2 ;;
+      --env-file)   ws_svc__require_value "$1" "${2:-}"; WS_ENV_FILES+=("$2"); shift 2 ;;
+      --env)        ws_svc__require_value "$1" "${2:-}"
+                    case "$2" in
+                      [A-Za-z_][A-Za-z0-9_]*=*) WS_ENV_EXTRA+=("$2") ;;
+                      *) log_error "--env は KEY=VALUE 形式です: $2"; exit 2 ;;
+                    esac
+                    shift 2 ;;
       --claudeos-home)
                     ws_svc__require_value "$1" "${2:-}"; WS_CLAUDEOS_HOME="$2"; shift 2 ;;
       --profile)

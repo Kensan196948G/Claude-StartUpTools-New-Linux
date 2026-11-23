@@ -760,6 +760,53 @@ function buildPromptArgs(o) {
   return args;
 }
 
+// ---------------------------------------------------------------------------
+// ビルド識別子 — /api/health が返す「いま動いている成果物」の同一性
+// ---------------------------------------------------------------------------
+
+/** COMMIT_SHA_RE — manifest と env が持つ commit の表現 (git の完全 SHA のみ) */
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
+
+/**
+ * readCommitFromManifest — release 成果物ルートの manifest.json から commit を読む。
+ *   成果物には .git が無いため、commit の出所はマニフェストだけになる。
+ *   無い・壊れている・形が 40 桁 SHA でない場合は '' (例外は投げない)。
+ */
+function readCommitFromManifest(root) {
+  if (!root) return '';
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+    const c = String((m && m.commit) || '').trim().toLowerCase();
+    return COMMIT_SHA_RE.test(c) ? c : '';
+  } catch { return ''; }
+}
+
+/** readPackageVersion — package.json の version (無い・壊れている場合は '') */
+function readPackageVersion(root) {
+  if (!root) return '';
+  try {
+    const p = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    return typeof p.version === 'string' ? p.version.trim() : '';
+  } catch { return ''; }
+}
+
+/**
+ * resolveBuildInfo — 稼働中成果物の識別子 { commit, version } を解決する。
+ *   commit の解決順: env.GIT_COMMIT → <root>/manifest.json の commit → ''。
+ *     - 40 桁 SHA 以外の値は「無い」ものとして次の出所へ進む
+ *       (health は 40 桁 SHA か空文字しか返さない契約)。
+ *     - git コマンドは実行しない (release 成果物には .git が無い)。
+ *   version は <root>/package.json の version (無ければ '')。
+ *   返り値は引数 (root, env) だけで決まる (テストはこれを直接叩く)。
+ */
+function resolveBuildInfo(opts) {
+  const { root, env } = opts || {};
+  const e = env || {};
+  const fromEnv = String(e.GIT_COMMIT == null ? '' : e.GIT_COMMIT).trim().toLowerCase();
+  const commit = COMMIT_SHA_RE.test(fromEnv) ? fromEnv : readCommitFromManifest(root);
+  return { commit, version: readPackageVersion(root) };
+}
+
 function appendAudit(entry) {
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG), { recursive: true });
@@ -813,6 +860,10 @@ function createServer(cfg) {
   }, cfg || {});
 
   conf.allowedHosts = (conf.allowedHosts || []).map(x => String(x).trim().toLowerCase());
+
+  // いま動いている成果物の識別子 (health で公開)。起動時に 1 回だけ解決する。
+  //   env (release-promote / unit が注入) → 成果物ルートの manifest.json → 空文字。
+  const buildInfo = resolveBuildInfo({ root: conf.root, env: process.env });
 
   const BIN_START = path.join(conf.root, 'bin', 'start-claude.sh');
   const BIN_AUTONOMY = path.join(conf.root, 'bin', 'autonomy.sh');
@@ -1907,7 +1958,12 @@ function createServer(cfg) {
     const remote = (req.socket && req.socket.remoteAddress) || '?';
 
     if (pn === '/api/health') {
-      return json(res, 200, { ok: true, service: 'claudeos-web-startup', dryRunOnly: conf.dryRunOnly });
+      // commit/version は「いま動いている成果物」の識別子 (配備後の同一性確認用)。
+      // 既存キー (ok/service/dryRunOnly) は後方互換のため維持する。
+      return json(res, 200, {
+        ok: true, service: 'claudeos-web-startup', dryRunOnly: conf.dryRunOnly,
+        commit: buildInfo.commit, version: buildInfo.version,
+      });
     }
 
     if (!checkBasicAuth(req.headers['authorization'], conf.authUser, conf.authPass)) {
@@ -2184,7 +2240,7 @@ module.exports = {
   scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, checkOpsDailyLimit, isProtectedOpsTarget, opsChildEnv, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
   positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
-  auditLine, MODES, MODE_LABELS, DEFAULT_PORT,
+  auditLine, MODES, MODE_LABELS, DEFAULT_PORT, resolveBuildInfo,
 };
 
 if (require.main === module) main();

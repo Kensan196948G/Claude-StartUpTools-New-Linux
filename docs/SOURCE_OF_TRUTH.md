@@ -37,6 +37,10 @@
 | `lib/goal-router.sh`, `Claude/templates/claudeos/goals/*.md` | Source | 統合 Goal Router（判定ロジック唯一の実装）と Primary 5 / Specialized 6 の /goal 本文 |
 | `scripts/tools/managed-agents.js`, `scripts/tools/managed-budget.js`, `config/managed-agents-roster.json` | Source | Managed Agents adapter・Budget Guard・台帳と Agent 定義（read-only PoC）。設定は git 管理外の `config/managed-agents.json`、状態は `~/.claudeos/managed-agents/` |
 | `scripts/web/` | Source | Web スタートアップコンソール（`startup-server.js` + `public/`）。起動・停止・全適用は既存 CLI を呼ぶ薄い層 |
+| `bin/release-build.sh`, `lib/release-artifact.sh` | Source | commit 単位のリリース成果物と manifest（`$CLAUDEOS_HOME/releases/<sha>`） |
+| `bin/release-promote.sh`, `lib/release-promote.sh` | Source | 成果物の staging/production 昇格・整合性検証・自動ロールバック |
+| `scripts/e2e/staging-smoke.sh` | Source | 成果物起動スモーク（分離 `CLAUDEOS_HOME`・本番ポート不汚染の検査） |
+| `scripts/tools/check-project-registry.js`, `scripts/tools/project-registry.js` | Source | プロジェクト台帳の鮮度チェック（`--fix` で `_stale` へ退避） |
 | `libexec/startup-state.sh` | Source | 同コンソール向け read-only 状態スナップショット（JSON） |
 | `bin/web-startup.sh` | Source | 同コンソールの起動・停止・状態（PID ファイル + health check） |
 | `bin/web-startup-service.sh` | Source | 同コンソール常駐用 systemd --user unit の登録/解除（bind は常に loopback） |
@@ -45,6 +49,8 @@
 | `docs/architecture/WEB_STARTUP_PUBLIC_ACCESS.md` | Source | 公開設計（Tunnel + Access）/ 手順 / read-back 検証 / rollback |
 | `Claude/templates/claude/claudeos/core/00-goal-system.md` | Source | Goal System 文書（`instructions/00-goal-system.md` は同一コピー） |
 | `docs/architecture/*.md` | Source | v10 仕様・設計・移行記録 |
+| `docs/architecture/STAGING_PRODUCTION_PROMOTION.md` | Source | Staging→本番 昇格の設計・受け入れ条件・バッチ計画 |
+| `docs/architecture/STAGING_PRODUCTION_RUNBOOK.md` | Source | 同 昇格の実行手順と実測記録（環境固有値はプレースホルダ） |
 
 ## 配備先・生成物
 
