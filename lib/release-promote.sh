@@ -27,6 +27,14 @@
 #   CCSU_HEALTH_INTERVAL: health リトライ間隔秒 (既定 1。小数可)
 #   CLAUDEOS_HOME       : releases の親 (テストは一時ディレクトリへ向ける)
 #
+# companion unit (コンソールと一緒に追従させる付随 unit):
+#   RELEASE_PROMOTE_COMPANIONS : "unit=port,unit=port"。空文字で無効。
+#     未設定時は env ごとの既定: staging = claude-startuptools-dashboard-stg.service=3743
+#     / production = 空 (本番 dashboard は promote-production の drop-in 方式が担当)。
+#   companion の存在は `systemctl --user show -p LoadState` で確認し、
+#   not-found (または状態を判定できない) 場合はスキップして警告のみ。
+#   companion の health は {"status":"ok"} で判定し、失敗はロールバック対象。
+#
 # 注意: このファイルは「source される」ため set -euo pipefail を設定しない。
 #       厳格モードは実行エントリ (bin/release-promote.sh) で宣言する。
 # ============================================================
@@ -41,6 +49,16 @@ RP_STAGING_UNIT="claudeos-web-startup-stg.service"
 RP_STAGING_PORT=3742
 RP_PRODUCTION_UNIT="claudeos-web-startup.service"
 RP_PRODUCTION_PORT=3740
+
+# --- companion unit (コンソールの昇格に追従させる付随 unit) ---
+#   "unit=port" のカンマ区切り。RELEASE_PROMOTE_COMPANIONS で上書き可 (空で無効)。
+#   staging の dashboard は staging の状態を配信するため追従させる。
+#   production の既定は空: 本番 dashboard は promote-production の drop-in 方式が担当するため
+#   ここからは触らない (二重管理を避ける)。
+RP_STAGING_COMPANIONS_DEFAULT="claude-startuptools-dashboard-stg.service=3743"
+RP_PRODUCTION_COMPANIONS_DEFAULT=""
+# この昇格で restart した companion (ロールバック時に戻す対象)
+RP_COMPANIONS_RESTARTED=()
 
 # --- health リトライ (既定: 最大 20 秒) ---
 RP_HEALTH_TIMEOUT="${CCSU_HEALTH_TIMEOUT:-20}"
@@ -383,33 +401,138 @@ rp__staging_tree_matches() {
 
 # rp__restart_unit — systemctl --user restart <unit>
 rp__restart_unit() {
-  local bin
+  rp__restart_named_unit "$RP_UNIT"
+}
+
+# rp__restart_named_unit <unit> — systemctl --user restart <unit>
+rp__restart_named_unit() {
+  local unit="$1" bin
   bin="$(rp__systemctl_bin)"
   if ! command -v "$bin" >/dev/null 2>&1; then
     log_error "systemctl が見つかりません: $bin"
     return 1
   fi
-  "$bin" --user restart "$RP_UNIT"
+  "$bin" --user restart "$unit"
 }
 
-# rp__health_once <port> — /api/health が ok:true なら 0
-rp__health_once() {
-  local port="$1" body
+# rp__health_matches <port> <jq filter> — /api/health が filter を満たせば 0
+#   コンソールは {"ok":true}、companion (dashboard) は {"status":"ok"} を返す。
+rp__health_matches() {
+  local port="$1" filter="$2" body
   body="$("$(rp__curl_bin)" -fsS --max-time 2 "http://127.0.0.1:${port}/api/health" 2>/dev/null)" || return 1
-  printf '%s' "$body" | jq -e '.ok == true' >/dev/null 2>&1
+  printf '%s' "$body" | jq -e "$filter" >/dev/null 2>&1
 }
 
-# rp__wait_health <port> — 最大 RP_HEALTH_TIMEOUT 秒リトライ
-rp__wait_health() {
-  local port="$1" deadline
+# rp__health_once <port> — /api/health が ok:true なら 0 (コンソール)
+rp__health_once() {
+  rp__health_matches "$1" '.ok == true'
+}
+
+# rp__wait_health_until <port> <jq filter> — 最大 RP_HEALTH_TIMEOUT 秒リトライ
+rp__wait_health_until() {
+  local port="$1" filter="$2" deadline
   deadline=$(( SECONDS + RP_HEALTH_TIMEOUT ))
   while (( SECONDS < deadline )); do
-    if rp__health_once "$port"; then
+    if rp__health_matches "$port" "$filter"; then
       return 0
     fi
     sleep "$RP_HEALTH_INTERVAL"
   done
-  rp__health_once "$port"
+  rp__health_matches "$port" "$filter"
+}
+
+# rp__wait_health <port> — 最大 RP_HEALTH_TIMEOUT 秒リトライ (コンソール)
+rp__wait_health() {
+  rp__wait_health_until "$1" '.ok == true'
+}
+
+# rp__wait_companion_health <port> — companion は status=="ok" で判定する
+rp__wait_companion_health() {
+  rp__wait_health_until "$1" '.status == "ok"'
+}
+
+# ============================================================
+# companion unit
+# ============================================================
+
+# rp__companions_raw — companion 設定文字列 (未設定なら env 既定)
+#   RELEASE_PROMOTE_COMPANIONS は「設定された」こと自体を尊重する (空文字 = 無効)。
+rp__companions_raw() {
+  if [[ -n "${RELEASE_PROMOTE_COMPANIONS+x}" ]]; then
+    printf '%s' "$RELEASE_PROMOTE_COMPANIONS"
+    return 0
+  fi
+  case "$RP_ENV" in
+    staging)    printf '%s' "$RP_STAGING_COMPANIONS_DEFAULT" ;;
+    production) printf '%s' "$RP_PRODUCTION_COMPANIONS_DEFAULT" ;;
+    *)          printf '' ;;
+  esac
+}
+
+# rp__companions — "unit port" を 1 行ずつ出力する
+#   書式不正の項目は警告して飛ばす (設定ミスで昇格全体を止めない)。
+rp__companions() {
+  local raw entry unit port
+  local -a entries=()
+  raw="$(rp__companions_raw)"
+  [[ -z "${raw//[[:space:]]/}" ]] && return 0
+  IFS=',' read -r -a entries <<< "$raw"
+  for entry in "${entries[@]}"; do
+    # 前後の空白を落とす
+    entry="${entry#"${entry%%[![:space:]]*}"}"
+    entry="${entry%"${entry##*[![:space:]]}"}"
+    [[ -z "$entry" ]] && continue
+    if [[ "$entry" =~ ^([^=[:space:]]+)=([0-9]+)$ ]]; then
+      unit="${BASH_REMATCH[1]}"
+      port="${BASH_REMATCH[2]}"
+      printf '%s %s\n' "$unit" "$port"
+    else
+      log_warn "companion の書式が不正です (unit=port): $entry"
+    fi
+  done
+  return 0
+}
+
+# rp__companions_plan — --dry-run 表示用の "unit=port, ..." (無ければ "(なし)")
+rp__companions_plan() {
+  local c_unit c_port out=""
+  while read -r c_unit c_port; do
+    [[ -z "$c_unit" ]] && continue
+    out+="${out:+, }${c_unit}=${c_port}"
+  done < <(rp__companions)
+  printf '%s' "${out:-(なし)}"
+}
+
+# rp__companion_load_state <unit> — LoadState を出力 (loaded / not-found / ...)。
+#   取得できない (systemctl 不在・想定外出力) 場合は 1 を返す。
+#   `systemctl show` は存在しない unit でも exit 0 + "LoadState=not-found" を返す。
+rp__companion_load_state() {
+  local unit="$1" bin out state
+  bin="$(rp__systemctl_bin)"
+  command -v "$bin" >/dev/null 2>&1 || return 1
+  out="$("$bin" --user show -p LoadState "$unit" 2>/dev/null || true)"
+  [[ "$out" == *LoadState=* ]] || return 1
+  state="${out##*LoadState=}"
+  state="${state%%$'\n'*}"
+  state="${state//[[:space:]]/}"
+  [[ -n "$state" ]] || return 1
+  printf '%s' "$state"
+}
+
+# rp__rollback_after_failure <link> <rel> — symlink を戻し、restart 済み unit を再起動
+#   コンソール unit と、この昇格で restart した companion の両方を戻す。
+#   --no-restart では restart しない (呼び出し側も通常この関数を使わない)。
+rp__rollback_after_failure() {
+  local link="$1" rel="$2" unit
+  rp__restore_link "$link" "$rel" || log_error "symlink の切り戻しに失敗: $link"
+  if (( ! RP_NO_RESTART )); then
+    rp__restart_unit || log_error "切り戻し後の restart に失敗: $RP_UNIT"
+    if (( ${#RP_COMPANIONS_RESTARTED[@]} > 0 )); then
+      for unit in "${RP_COMPANIONS_RESTARTED[@]}"; do
+        rp__restart_named_unit "$unit" || log_error "切り戻し後の companion restart に失敗: $unit"
+      done
+    fi
+  fi
 }
 
 # ============================================================
@@ -560,6 +683,7 @@ rp__print_plan() {
   printf '  current symlink: %s -> %s\n' "$link" "${RP_CURRENT_REL:-(なし)}"
   printf '  planned symlink: %s -> %s\n' "$link" "$RP_REL_TARGET"
   printf '  restart        : %s\n' "$( (( RP_NO_RESTART )) && printf 'no (--no-restart)' || printf 'yes')"
+  printf '  companions     : %s\n' "$(rp__companions_plan)"
   printf '  previous 記録  : %s\n' "${RP_CURRENT_REL:-(なし)}"
 }
 
@@ -571,7 +695,10 @@ rp__print_plan() {
 #   0: 成功 (RP_RESULT=PROMOTED / --dry-run は DRY_RUN)
 #   1: 失敗 (RP_ERR_CODE。自動ロールバック時は RP_RESULT=ROLLED_BACK)
 rp__promote() {
-  local releases link rel_target
+  local releases link rel_target c_unit c_port c_state
+
+  # 前回呼び出しの状態を持ち越さない (companion のロールバック対象を毎回初期化)
+  RP_COMPANIONS_RESTARTED=()
 
   if [[ ! -d "$RP_RELEASE_DIR" ]]; then
     rp__fail RELEASE_NOT_FOUND "release dir が存在しません: $RP_RELEASE_DIR"
@@ -645,10 +772,7 @@ rp__promote() {
   if ! rp__wait_health "$RP_PORT"; then
     # (7) 自動ロールバック: symlink を戻して再 restart
     RP_RESULT="ROLLED_BACK"
-    rp__restore_link "$link" "$RP_CURRENT_REL" || log_error "symlink の切り戻しに失敗: $link"
-    if (( ! RP_NO_RESTART )); then
-      rp__restart_unit || log_error "切り戻し後の restart に失敗: $RP_UNIT"
-    fi
+    rp__rollback_after_failure "$link" "$RP_CURRENT_REL"
     rp__set_error HEALTH_CHECK_FAILED \
       "health (http://127.0.0.1:$RP_PORT/api/health) が ok:true になりませんでした。旧 target へ切り戻しました"
     log_error "[$RP_ERR_CODE] $RP_ERR_MSG"
@@ -656,10 +780,54 @@ rp__promote() {
     return 1
   fi
 
+  # (7b) companion unit も追従させる (staging 既定: dashboard-stg / 3743)
+  #      --no-restart では触らない (再起動も health 確認もしない)。
+  #      not-found / 状態不明はスキップして警告のみ (昇格は止めない)。
+  #      companion の restart / health 失敗はコンソールと同じくロールバック対象。
+  if (( ! RP_NO_RESTART )); then
+    while read -r c_unit c_port; do
+      [[ -z "$c_unit" ]] && continue
+      c_state="$(rp__companion_load_state "$c_unit" || true)"
+      if [[ -z "$c_state" ]]; then
+        log_warn "companion の状態を取得できません (スキップ): $c_unit"
+        continue
+      fi
+      if [[ "$c_state" == "not-found" ]]; then
+        log_warn "companion unit が存在しません (スキップ): $c_unit"
+        continue
+      fi
+
+      if ! rp__restart_named_unit "$c_unit"; then
+        RP_RESULT="ROLLED_BACK"
+        rp__rollback_after_failure "$link" "$RP_CURRENT_REL"
+        rp__set_error COMPANION_RESTART_FAILED \
+          "systemctl --user restart $c_unit が失敗しました。旧 target へ切り戻しました"
+        log_error "[$RP_ERR_CODE] $RP_ERR_MSG"
+        rp__append_promotion "ROLLED_BACK" || log_warn "promotions.jsonl への追記に失敗"
+        return 1
+      fi
+      RP_COMPANIONS_RESTARTED+=("$c_unit")
+      log_info "companion restart: $c_unit"
+
+      if ! rp__wait_companion_health "$c_port"; then
+        RP_RESULT="ROLLED_BACK"
+        rp__rollback_after_failure "$link" "$RP_CURRENT_REL"
+        rp__set_error COMPANION_HEALTH_FAILED \
+          "companion health (http://127.0.0.1:$c_port/api/health) が status=ok になりませんでした。旧 target へ切り戻しました"
+        log_error "[$RP_ERR_CODE] $RP_ERR_MSG"
+        rp__append_promotion "ROLLED_BACK" || log_warn "promotions.jsonl への追記に失敗"
+        return 1
+      fi
+    done < <(rp__companions)
+  fi
+
   # (8) 台帳へ追記
   rp__append_promotion "PROMOTED" || log_warn "promotions.jsonl への追記に失敗"
   RP_RESULT="PROMOTED"
   log_ok "promoted: env=$RP_ENV commit=$RP_COMMIT unit=$RP_UNIT port=$RP_PORT"
+  if (( ${#RP_COMPANIONS_RESTARTED[@]} > 0 )); then
+    log_info "companions restarted: ${RP_COMPANIONS_RESTARTED[*]}"
+  fi
   return 0
 }
 

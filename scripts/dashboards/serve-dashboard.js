@@ -50,6 +50,49 @@ const CRON_REG       = CLAUDEOS_PATHS.cronRegistry;
 const SESSIONS_DIR   = CLAUDEOS_PATHS.sessionsDir;
 const PROJ_ROOT      = path.resolve(__dirname, '..', '..');
 
+// ── 実行中成果物の識別子 (artifact 同一性の可観測化) ──────────────────────────
+// /api/health が返す commit / version。解決順: env GIT_COMMIT →
+// 実行ルート (PROJ_ROOT = このファイルの 2 階層上) の manifest.json の commit → ""。
+// git コマンドは実行しない (release 成果物には .git が無い)。
+//   scripts/web/startup-server.js (#182) と同じ契約・同じ解決順。
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
+
+/**
+ * readCommitFromManifest — 実行ルートの manifest.json から commit を読む。
+ *   無い・壊れている・40 桁 SHA でない場合は '' (例外は投げない)。
+ */
+function readCommitFromManifest(root) {
+  if (!root) return '';
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+    const c = String((m && m.commit) || '').trim().toLowerCase();
+    return COMMIT_SHA_RE.test(c) ? c : '';
+  } catch { return ''; }
+}
+
+/** readPackageVersion — 実行ルートの package.json の version (無い場合は '') */
+function readPackageVersion(root) {
+  if (!root) return '';
+  try {
+    const p = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    return typeof p.version === 'string' ? p.version.trim() : '';
+  } catch { return ''; }
+}
+
+/**
+ * resolveBuildInfo — 稼働中成果物の識別子 { commit, version } を解決する。
+ *   commit: env.GIT_COMMIT (40 桁 SHA のとき) → <root>/manifest.json の commit → ''。
+ *   version: <root>/package.json の version。
+ *   返り値は引数 (root, env) だけで決まる純関数 (テストはこれを直接叩く)。
+ */
+function resolveBuildInfo(opts) {
+  const { root, env } = opts || {};
+  const e = env || {};
+  const fromEnv = String(e.GIT_COMMIT == null ? '' : e.GIT_COMMIT).trim().toLowerCase();
+  const commit = COMMIT_SHA_RE.test(fromEnv) ? fromEnv : readCommitFromManifest(root);
+  return { commit, version: readPackageVersion(root) };
+}
+
 // ── Fixed Job execution (POST /api/jobs) ────────────────────────────────────
 const ALLOWED_JOBS = {
   // ── 既存ジョブ (Node/外部コマンド: 変更なし) ──────────────────────────────
@@ -1627,11 +1670,15 @@ if (typeof module !== 'undefined') {
     getAllProjects, getRegisteredProjects, buildProjectData, buildTimeline, weeksToPhase,
     // 状態パス解決（CLAUDEOS_HOME 対応の検証用）
     CLAUDEOS_HOME, CLAUDEOS_PATHS, claudeosPaths,
+    // 実行中成果物の識別子 (health の commit/version) の解決
+    resolveBuildInfo,
   };
 }
 
 // Start server only when run directly (not when required by tests)
 if (require.main === module) {
+  // 起動時に 1 回だけ解決する (health はリクエスト毎のファイル I/O をしない)
+  const buildInfo = resolveBuildInfo({ root: PROJ_ROOT, env: process.env });
   const server = http.createServer((req, res) => {
     // CORS for LAN access (dashboard is local-network only, no external exposure)
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1648,7 +1695,12 @@ if (require.main === module) {
     if (pn === '/health' || pn === '/api/health') {
       const ts = readTrustScore();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ status: 'ok', uptime: Math.floor(process.uptime()), trust: ts, at: new Date().toISOString() }));
+      // commit/version は「いま動いている成果物」の識別子 (昇格後の同一性確認用)。
+      // 既存キー (status/uptime/trust/at) は後方互換のため維持する。
+      res.end(JSON.stringify({
+        status: 'ok', uptime: Math.floor(process.uptime()), trust: ts, at: new Date().toISOString(),
+        commit: buildInfo.commit, version: buildInfo.version,
+      }));
       return;
     }
     if (pn === '/api/data')           return handleApiData(res);

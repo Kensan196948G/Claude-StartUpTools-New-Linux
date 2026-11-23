@@ -16,10 +16,17 @@
 #   web-startup-service.sh --register --profile staging              # stg unit/3742/stg env-file/stg HOME
 #   web-startup-service.sh --register --unit NAME [--root DIR] [--port N]
 #                                      [--env-file PATH] [--claudeos-home DIR]
+#                                      [--state-file PATH]
 #   明示オプションは --profile の既定値より優先される。
 #   既定 (オプション無し) の挙動は従来と完全に同一:
 #     unit=claudeos-web-startup.service / port=3740 / env-file=~/.config/claudeos-web-startup.env /
-#     unit に Environment=CLAUDEOS_HOME を入れない / root=$CCSU_ROOT。
+#     unit に Environment=CLAUDEOS_HOME を入れない / root=$CCSU_ROOT / state-file を入れない。
+#
+# --state-file PATH:
+#   unit に Environment=CCSU_STATE_FILE=PATH を 1 行入れる (指定時のみ)。
+#   成果物起動 (--root がリポジトリ外) では子プロセスの CCSU_ROOT が成果物を指すため、
+#   未指定だと bin/deploy-prep.sh 等が state.json を成果物内へ書いてしまう。
+#   --profile production かつ --root がリポジトリ外で未指定なら警告する (エラーにしない)。
 #
 # 安全:
 #   - bind は常に 127.0.0.1 (公開は Cloudflare Tunnel 側。LAN へは出さない)。
@@ -46,6 +53,7 @@ WS_ROOT=""
 WS_ENV_FILES=()
 WS_ENV_EXTRA=()
 WS_CLAUDEOS_HOME=""
+WS_STATE_FILE=""
 WS_PORT="${WEB_STARTUP_PORT:-}"
 WS_ACTION=""
 WS_DRY_RUN=0
@@ -56,6 +64,7 @@ UNIT_PATH=""
 ROOT=""
 ENV_FILES=()
 CLAUDEOS_HOME=""
+STATE_FILE=""
 
 # ws_svc__require_value <opt> <value> — 値を伴うオプションの欠落を exit 2 で落とす
 ws_svc__require_value() {
@@ -142,6 +151,11 @@ ws_svc__resolve() {
     CLAUDEOS_HOME=""
   fi
 
+  # state.json の置き場 (指定時のみ unit に Environment=CCSU_STATE_FILE を出す)
+  #   成果物起動 (--root がリポジトリ外) では子プロセスの CCSU_ROOT が成果物を指すため、
+  #   未指定だと state.json が成果物内に作られる (成果物の不変性が壊れる)。
+  STATE_FILE="$WS_STATE_FILE"
+
   # port (CLI --port > WEB_STARTUP_PORT > プロファイル既定)
   if [[ -z "$WS_PORT" ]]; then
     if (( staging )); then WS_PORT=3742; else WS_PORT=3740; fi
@@ -158,6 +172,7 @@ ws_svc__resolve() {
     ws_svc__no_control_chars "--env" "$_kv0"
   done
   ws_svc__no_control_chars "--claudeos-home" "$CLAUDEOS_HOME"
+  ws_svc__no_control_chars "--state-file" "$STATE_FILE"
 
   UNIT_PATH="${CCSU_SYSTEMD_UNIT_PATH:-$HOME/.config/systemd/user/$UNIT}"
 }
@@ -193,6 +208,11 @@ EOF
     # 状態ディレクトリの分離 (Staging が本番の ~/.claudeos を共有しない)
     printf 'Environment=CLAUDEOS_HOME=%s\n' "$(ws_svc__env_value "$CLAUDEOS_HOME")"
   fi
+  if [[ -n "$STATE_FILE" ]]; then
+    # state.json の置き場を明示する。成果物起動では CCSU_ROOT が成果物を指すため、
+    # 未指定だと bin/*.sh が成果物内へ state.json を作ってしまう。
+    printf 'Environment=CCSU_STATE_FILE=%s\n' "$(ws_svc__env_value "$STATE_FILE")"
+  fi
   cat <<EOF
 ExecStart=$node $server --port $WS_PORT --host 127.0.0.1
 Restart=on-failure
@@ -207,15 +227,41 @@ WantedBy=default.target
 EOF
 }
 
+# ws_svc__canon <path> — 比較用の正規化パス (存在しないパスも扱う)
+ws_svc__canon() {
+  local p="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$p" 2>/dev/null || printf '%s' "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# ws_svc__warn_missing_state_file — 成果物起動なのに --state-file が無い場合の警告
+#   エラーにはしない (現行の昇格経路を壊さない)。既定 (--root 無し) では何も出さない。
+ws_svc__warn_missing_state_file() {
+  [[ -n "$STATE_FILE" ]] && return 0
+  [[ "$WS_PROFILE" == "production" ]] || return 0
+  [[ -n "$WS_ROOT" ]] || return 0
+  if [[ "$(ws_svc__canon "$ROOT")" == "$(ws_svc__canon "$CCSU_ROOT")" ]]; then
+    return 0
+  fi
+  log_warn "--root がリポジトリ外（成果物起動）ですが --state-file が未指定です"
+  log_warn "  子プロセスの CCSU_ROOT は成果物を指すため、state.json が成果物内に作られます。"
+  log_warn "  --state-file <repo>/state.json の指定を推奨します（例: --state-file $CCSU_ROOT/state.json）"
+}
+
 ws_svc__register() {
   local body
   body="$(ws_svc__unit_body)"
+  ws_svc__warn_missing_state_file
   if (( WS_DRY_RUN )); then
     log_info "dry-run: Web スタートアップコンソール systemd --user 登録計画"
     log_info "  unit=$UNIT_PATH"
     log_info "  env-file=$(printf '%s,' "${ENV_FILES[@]}" | sed 's/,$//') (任意。無ければ Basic 認証なしで起動)"
     if [[ -n "$WS_ROOT" ]]; then log_info "  root=$ROOT"; fi
     if [[ -n "$CLAUDEOS_HOME" ]]; then log_info "  claudeos-home=$CLAUDEOS_HOME"; fi
+    if [[ -n "$STATE_FILE" ]]; then log_info "  state-file=$STATE_FILE"; fi
     local _kv2
     for _kv2 in "${WS_ENV_EXTRA[@]}"; do log_info "  env=$_kv2"; done
     printf '%s\n' "$body" | sed 's/^/    /'
@@ -266,6 +312,8 @@ main() {
                     shift 2 ;;
       --claudeos-home)
                     ws_svc__require_value "$1" "${2:-}"; WS_CLAUDEOS_HOME="$2"; shift 2 ;;
+      --state-file)
+                    ws_svc__require_value "$1" "${2:-}"; WS_STATE_FILE="$2"; shift 2 ;;
       --profile)
                     ws_svc__require_value "$1" "${2:-}"
                     case "$2" in

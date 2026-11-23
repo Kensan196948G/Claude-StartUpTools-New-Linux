@@ -185,10 +185,11 @@ cp ~/.config/systemd/user/claudeos-web-startup.service \
 CLAUDEOS_HOME=$HOME/.claudeos bash <worktree>/bin/release-promote.sh \
   --env production --release <sha> --no-restart
 
-# 4-3. 本番 unit を成果物起動へ差し替える（既定挙動は不変。--root と --env だけ追加）
+# 4-3. 本番 unit を成果物起動へ差し替える（既定挙動は不変。--root / --env / --state-file だけ追加）
 bash <worktree>/bin/web-startup-service.sh --register --profile production \
   --root "$HOME/.claudeos/releases/production-current" \
-  --env AI_STARTUP_CONFIG_PATH=/home/kensan/Projects/Claude-StartUpTools-New-Linux/config/config.json
+  --env AI_STARTUP_CONFIG_PATH=/home/kensan/Projects/Claude-StartUpTools-New-Linux/config/config.json \
+  --state-file /home/kensan/Projects/Claude-StartUpTools-New-Linux/state.json
 
 # 4-4. 同じ sha で昇格を確定する（restart + health 確認 + promotions.jsonl に PROMOTED を記録）
 CLAUDEOS_HOME=$HOME/.claudeos bash <worktree>/bin/release-promote.sh \
@@ -208,7 +209,14 @@ journalctl --user -u claudeos-web-startup.service --since "10 min ago" | grep -c
 
 - `release-promote --env production` は **staging-current と同一 `tree_sha256`** を要求する（未検証は `STAGING_NOT_VERIFIED` で拒否、`--force` は無い）。
 - `--no-restart` でも health 確認は行われ、失敗すれば切戻す。4-2 は「本番が今も作業ツリーで応答している」ため通る。
-- 4-3 の登録で unit が restart され、**この時点から実体が成果物起動になる**。4-4 が最終的な検証記録になる。
+- 4-3 の `systemctl enable --now` は**既に active な unit を再起動しない**（systemd の仕様）。
+  この時点で変わるのは unit ファイルだけで、稼働プロセスはまだ旧（作業ツリー）のまま。
+  **実切替は 4-4 の `release-promote` が行う restart**で、4-4 が最終的な検証記録になる。
+  4-3 と 4-4 の間は「unit 定義＝成果物・稼働＝作業ツリー」の過渡状態になるため、中断した場合は 4-4 をやり直すか §5 で戻す。
+- **成果物起動では `--state-file` を必ず付ける**。付けないと子プロセスの `CCSU_ROOT` が
+  `releases/production-current` を指し、コンソールの「デプロイ準備」「保守モード」などが
+  `state.json` を**成果物の中に作ってしまう**（成果物の不変性が壊れ、リポジトリ側の state.json も更新されない）。
+  `--state-file` 未指定で `--root` がリポジトリ外の場合は警告が出る（エラーにはならない）。
 - 失敗時の戻しは §5。unit のバックアップがあるため、成果物側の問題と unit 側の問題を切り分けられる。
 
 ### 4-6. 配備後確認の記録（実測欄）

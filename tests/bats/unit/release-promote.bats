@@ -590,3 +590,190 @@ _seed_promotions() {
   [ ! -e "$RELEASES/promotions.jsonl.1" ]
   [ "$(cat "$RELEASES/promotions.jsonl")" = "$seed" ]
 }
+
+# ============================================================
+# companion unit (staging の dashboard-stg 追従)
+# ============================================================
+
+# _stub_systemctl_companion [notfound_unit]
+#   --user show -p LoadState <unit> : LoadState=loaded / (指定 unit なら) not-found
+#   --user restart <unit>           : 呼び出しを記録して成功
+_stub_systemctl_companion() {
+  local notfound="${1:-}"
+  cat > "$CCSU_SYSTEMCTL_BIN" <<EOF
+#!/usr/bin/env bash
+echo "systemctl \$*" >> "$TEST_TEMP/systemctl.calls"
+if [[ "\$1" == "--user" && "\$2" == "show" ]]; then
+  unit="\${@: -1}"
+  if [[ -n "$notfound" && "\$unit" == "$notfound" ]]; then
+    echo "LoadState=not-found"
+  else
+    echo "LoadState=loaded"
+  fi
+  exit 0
+fi
+exit 0
+EOF
+  chmod +x "$CCSU_SYSTEMCTL_BIN"
+}
+
+# _stub_curl_ports — URL の port を見て $TEST_TEMP/health-<port>.body を返す curl スタブ
+_stub_curl_ports() {
+  cat > "$CCSU_CURL_BIN" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$TEST_TEMP/curl.calls"
+if [[ "\$*" =~ :([0-9]+)/api/health ]]; then
+  cat "$TEST_TEMP/health-\${BASH_REMATCH[1]}.body" 2>/dev/null
+fi
+exit 0
+EOF
+  chmod +x "$CCSU_CURL_BIN"
+}
+
+# _health_body_port <port> <body>
+_health_body_port() { printf '%s\n' "$2" > "$TEST_TEMP/health-$1.body"; }
+
+# _healthy_companion — コンソール (3742) と companion (3743) が健全なスタブ
+_healthy_companion() {
+  _stub_systemctl_companion
+  _stub_curl_ports
+  _health_body_port 3742 '{"ok":true}'
+  _health_body_port 3743 '{"status":"ok"}'
+}
+
+# _line_no <pattern> <file> — 最初に一致した行番号
+_line_no() { grep -n -- "$1" "$2" | head -1 | cut -d: -f1; }
+
+@test "companion: staging はコンソール → companion の順に restart し health(status=ok) を確認する" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _healthy_companion
+
+  run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+
+  # 順序: コンソール restart → companion の存在確認 → companion restart
+  local l_console l_show l_comp
+  l_console="$(_line_no 'restart claudeos-web-startup-stg.service' "$TEST_TEMP/systemctl.calls")"
+  l_show="$(_line_no 'show -p LoadState claude-startuptools-dashboard-stg.service' "$TEST_TEMP/systemctl.calls")"
+  l_comp="$(_line_no 'restart claude-startuptools-dashboard-stg.service' "$TEST_TEMP/systemctl.calls")"
+  [ -n "$l_console" ] && [ -n "$l_show" ] && [ -n "$l_comp" ]
+  [ "$l_console" -lt "$l_show" ]
+  [ "$l_show" -lt "$l_comp" ]
+
+  # health は コンソール (3742) → companion (3743) の順
+  local h_console h_comp
+  h_console="$(_line_no ':3742/api/health' "$TEST_TEMP/curl.calls")"
+  h_comp="$(_line_no ':3743/api/health' "$TEST_TEMP/curl.calls")"
+  [ -n "$h_console" ] && [ -n "$h_comp" ]
+  [ "$h_console" -lt "$h_comp" ]
+
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_A" ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+  [[ "$output" == *"dashboard-stg.service"* ]]
+}
+
+@test "companion: unit が not-found ならスキップして警告のみ (昇格は成功)" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _stub_systemctl_companion "claude-startuptools-dashboard-stg.service"
+  _stub_curl_ports
+  _health_body_port 3742 '{"ok":true}'
+
+  run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+  ! grep -qF 'restart claude-startuptools-dashboard-stg.service' "$TEST_TEMP/systemctl.calls"
+  # companion の health は確認しない
+  [ ! -f "$TEST_TEMP/curl.calls" ] || ! grep -q ':3743/' "$TEST_TEMP/curl.calls"
+  [[ "$output" == *"存在しません"* ]]
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_A" ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+}
+
+@test "companion: health が status=ok でないと ROLLED_BACK (symlink を戻し両方 restart)" {
+  _make_release "$REL_B" "$COMMIT_B" app/index.js
+  _healthy_companion
+  run bash "$SCRIPT" --env staging --release "$REL_B"
+  [ "$status" -eq 0 ]
+
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  : > "$TEST_TEMP/systemctl.calls"
+  : > "$TEST_TEMP/curl.calls"
+  # companion は ok:true を返すが status が無い → status=ok ではないので失敗と判定する
+  _health_body_port 3743 '{"ok":true}'
+
+  run bash "$SCRIPT" --env staging --release "$REL_A" --json
+  [ "$status" -eq 1 ]
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_B" ]
+  [ "$(_last_json "$output" | jq -r .result)" = "ROLLED_BACK" ]
+  [[ "$output" == *"COMPANION_HEALTH_FAILED"* ]]
+  # 昇格時 1 回 + ロールバック時 1 回 = 各 2 回
+  [ "$(grep -cF 'restart claudeos-web-startup-stg.service' "$TEST_TEMP/systemctl.calls")" -eq 2 ]
+  [ "$(grep -cF 'restart claude-startuptools-dashboard-stg.service' "$TEST_TEMP/systemctl.calls")" -eq 2 ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "ROLLED_BACK" ]
+}
+
+@test "companion: production では既定で companion を触らない (本番 dashboard は drop-in 側)" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  run bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+
+  _healthy_companion
+  _health_body_port 3740 '{"ok":true}'
+  : > "$TEST_TEMP/systemctl.calls"
+  : > "$TEST_TEMP/curl.calls"
+
+  run bash "$SCRIPT" --env production --release "$REL_A" --json
+  [ "$status" -eq 0 ]
+  grep -qF 'restart claudeos-web-startup.service' "$TEST_TEMP/systemctl.calls"
+  ! grep -qF 'dashboard-stg.service' "$TEST_TEMP/systemctl.calls"
+  grep -q ':3740/api/health' "$TEST_TEMP/curl.calls"
+  ! grep -q ':3743/' "$TEST_TEMP/curl.calls"
+}
+
+@test "companion: --no-restart では companion も restart も health 確認もしない" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _healthy_companion
+
+  run bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+  [ ! -f "$TEST_TEMP/systemctl.calls" ]
+  [ ! -f "$TEST_TEMP/curl.calls" ] || ! grep -q ':3743/' "$TEST_TEMP/curl.calls"
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_A" ]
+}
+
+@test "companion: RELEASE_PROMOTE_COMPANIONS を空にすると無効になる" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _healthy_companion
+  export RELEASE_PROMOTE_COMPANIONS=""
+
+  run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+  ! grep -qF 'dashboard-stg.service' "$TEST_TEMP/systemctl.calls"
+  [ ! -f "$TEST_TEMP/curl.calls" ] || ! grep -q ':3743/' "$TEST_TEMP/curl.calls"
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+}
+
+@test "companion: RELEASE_PROMOTE_COMPANIONS で任意の unit=port を指定できる" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _stub_systemctl_companion
+  _stub_curl_ports
+  _health_body_port 3742 '{"ok":true}'
+  _health_body_port 3999 '{"status":"ok"}'
+  export RELEASE_PROMOTE_COMPANIONS="my-dashboard-stg.service=3999"
+
+  run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+  grep -qF 'restart my-dashboard-stg.service' "$TEST_TEMP/systemctl.calls"
+  grep -q ':3999/api/health' "$TEST_TEMP/curl.calls"
+  ! grep -qF 'claude-startuptools-dashboard-stg.service' "$TEST_TEMP/systemctl.calls"
+}
+
+@test "companion: 書式不正な指定は警告してスキップ (昇格は成功)" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _healthy_companion
+  export RELEASE_PROMOTE_COMPANIONS="broken-entry"
+
+  run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"書式が不正"* ]]
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_A" ]
+}

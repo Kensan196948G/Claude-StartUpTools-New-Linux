@@ -57,3 +57,68 @@ teardown() { _bats_common_teardown; }
 Environment=EVIL=1" --dry-run
   [ "$status" -ne 0 ]
 }
+
+# ------------------------------------------------------------
+# --state-file (Environment=CCSU_STATE_FILE)
+#   成果物起動では子プロセスの CCSU_ROOT が成果物を指すため、state.json の
+#   置き場を unit で明示する。既定では何も増やさない (バイト一致)。
+# ------------------------------------------------------------
+
+@test "state-file: --state-file で Environment=CCSU_STATE_FILE が 1 行だけ入る" {
+  run bash "$SCRIPT" --register --unit test-state.service \
+    --state-file /repo/state.json --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"state-file=/repo/state.json"* ]]
+  [[ "$output" == *"Environment=CCSU_STATE_FILE=/repo/state.json"* ]]
+  local n
+  n="$(printf '%s\n' "$output" | grep -c 'CCSU_STATE_FILE=' || true)"
+  [ "$n" -eq 1 ]
+  [ ! -e "$CCSU_SYSTEMD_UNIT_PATH" ]
+}
+
+@test "state-file: 既定の unit 本文は従来と同一（差分は CCSU_STATE_FILE の 1 行のみ）" {
+  bash "$SCRIPT" --register --unit a-default.service --dry-run \
+    | sed -n 's/^    //p' > "$TEST_TEMP/default.unit"
+  bash "$SCRIPT" --register --unit a-state.service --state-file /repo/state.json --dry-run \
+    | sed -n 's/^    //p' > "$TEST_TEMP/state.unit"
+  # 既定には CCSU_STATE_FILE が現れない
+  ! grep -q 'CCSU_STATE_FILE' "$TEST_TEMP/default.unit"
+  # 追加されるのは Environment=CCSU_STATE_FILE の 1 行だけ
+  run diff -u "$TEST_TEMP/default.unit" "$TEST_TEMP/state.unit"
+  [ "$status" -ne 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c '^+Environment=CCSU_STATE_FILE=/repo/state.json$')" -eq 1 ]
+  [ "$(printf '%s\n' "$output" | grep -c '^+[^+]' || true)" -eq 1 ]
+}
+
+@test "state-file: 値に改行があると unit への行注入として exit 2 で拒否する" {
+  run bash "$SCRIPT" --register --unit test-inject-state.service \
+    --state-file "A=/x
+Environment=EVIL=1" --dry-run
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--state-file"* ]]
+  [ ! -e "$CCSU_SYSTEMD_UNIT_PATH" ]
+}
+
+@test "state-file: 成果物 root (リポジトリ外) で未指定なら警告し、指定すれば警告しない" {
+  local artifact="$TEST_TEMP/releases/production-current"
+  mkdir -p "$artifact"
+
+  run bash "$SCRIPT" --register --profile production --root "$artifact" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN"* ]]
+  [[ "$output" == *"--state-file"* ]]
+  [[ "$output" == *"成果物"* ]]
+
+  run bash "$SCRIPT" --register --profile production --root "$artifact" \
+    --state-file "$TEST_TEMP/repo-state.json" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"WARN"* ]]
+  [[ "$output" == *"Environment=CCSU_STATE_FILE=$TEST_TEMP/repo-state.json"* ]]
+}
+
+@test "state-file: --root がリポジトリ自身なら --profile production でも警告しない" {
+  run bash "$SCRIPT" --register --profile production --root "$REPO_ROOT" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"WARN"* ]]
+  [[ "$output" != *"CCSU_STATE_FILE"* ]]
+}
