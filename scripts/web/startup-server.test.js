@@ -1968,6 +1968,52 @@ test('ops-restart: 実行者 (メール) を特定できない JWT では実行�
   assert.equal(f.callLines().length, 0);
 });
 
+// BUG-09 (QA run_mwt5kqy1_4e9525ee / TC-F3-02):
+//   verifyAccessJwt は email クレームが無いと sub を email 欄へ入れて返すため、
+//   `!jwt.email` だけの判定では sub だけの Access JWT が変更系 API を実行できてしまう。
+//   実起動 (requireLaunchJwt) と同じ「メール形式」基準にそろえる。
+test('BUG-09: sub だけの Access JWT では systemd 再起動を実行しない (403 / 呼び出し 0 / 使用量を消費しない)', async () => {
+  const f = opsExecFixture('bug09-subonly');
+  await withServer(f.cfg2({}), async (port) => {
+    const subOnly = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: undefined, sub: 'svc-abc-123' }) });
+    assert.equal(subOnly.status, 403, 'sub だけの JWT は実行者を特定できない');
+    assert.equal(subOnly.json.error, 'OPS_AUTH_FAILED');
+    const nonEmail = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: 'svc-account' }) });
+    assert.equal(nonEmail.status, 403, 'メール形式でない値も拒否する');
+    assert.equal(nonEmail.json.error, 'OPS_AUTH_FAILED');
+  });
+  assert.equal(f.callLines().length, 0, 'systemd-control.sh を一度も呼ばない');
+  // 拒否は使用量の確保より前なので、当日の使用量ファイル自体が作られない
+  const usage = path.join(f.ops, 'usage-' + srv.usageDay() + '.json');
+  assert.equal(fs.existsSync(usage), false, '拒否では使用量カウンタを消費しない');
+});
+
+test('BUG-09: メール形式の JWT は従来どおり実行し、監査の実行者はメール (sub ではない)', async () => {
+  const f = opsExecFixture('bug09-ok');
+  let log = '';
+  await withServer(f.cfg2({}), async (port) => {
+    const r = await rs(port, { project: 'Alpha-App', confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: 'ops-audit@example.test', sub: 'svc-abc-123' }) });
+    assert.equal(r.status, 200, 'email と sub の両方がある JWT は通す');
+    assert.equal(r.json.ok, true);
+    assert.deepEqual(r.json.daily, { count: 1, max: 20 });
+  });
+  assert.deepEqual(f.callLines(), ['restart Alpha-App']);
+  assert.equal(fs.existsSync(path.join(f.ops, 'usage-' + srv.usageDay() + '.json')), true, '成功時は使用量を 1 回消費する');
+  log = fs.readFileSync(path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log'), 'utf8');
+  assert.ok(log.includes('ops-restart') && log.includes('ops-audit@example.test'), '監査の実行者はメール');
+  // sub だけの拒否が実行者として記録されていないこと (BUG-09 の回帰確認)
+  assert.equal(log.includes('"user":"svc-abc-123"'), false, 'sub を実行者として記録しない');
+});
+
+test('BUG-09: isEmailLike — メール形式の判定 (実起動と変更系で共通)', () => {
+  assert.equal(srv.isEmailLike('kensan@example.test'), true);
+  assert.equal(srv.isEmailLike('svc-account'), false);
+  assert.equal(srv.isEmailLike('svc-abc-123'), false);
+  assert.equal(srv.isEmailLike(''), false);
+  assert.equal(srv.isEmailLike(undefined), false);
+  assert.equal(srv.isEmailLike(null), false);
+});
+
 test('ops-restart: confirm=true が無ければ実行しない。不正な project・保護対象 (web-startup / cloudflared / tunnel) は拒否', async () => {
   const f = opsExecFixture('guards');
   await withServer(f.cfg2({}), async (port) => {

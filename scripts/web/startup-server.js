@@ -759,6 +759,16 @@ function sanitizePromptEvent(ev) {
 function b64urlToBuf(s) { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/'), 'base64'); }
 
 /**
+ * isEmailLike — 実行者として監査に残せる「メール形式」の値か。
+ *   verifyAccessJwt は email クレームが無いと sub を email 欄へ入れて返すため、
+ *   `jwt.email` の有無だけでは sub だけの JWT を弾けない (BUG-09)。
+ *   実起動 (requireLaunchJwt) と変更系 (handleOpsRestart) は同じこの基準を使う。
+ */
+function isEmailLike(value) {
+  return /@/.test(String(value || ''));
+}
+
+/**
  * verifyAccessJwt — Cloudflare Access の JWT (Cf-Access-Jwt-Assertion) を検証する。
  *   署名 (RS256 / JWKS)・iss (https://<team>)・aud・exp を確認する。オリジンが Access を経由した
  *   リクエストだけを受け付けるための検証で、ヘッダ (メールアドレス) の自己申告は信用しない。
@@ -1412,7 +1422,7 @@ function createServer(cfg) {
       const v = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
         teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
       // 実行者はメールで特定する (verifyAccessJwt は email が無いと sub を返すため、メールの形でなければ拒否する)
-      if (!v.ok || !/@/.test(String(v.email || ''))) { error = 'AUTH_JWT_REQUIRED'; detail = v.ok ? 'NO_EMAIL' : String(v.error || ''); } else user = v.email;
+      if (!v.ok || !isEmailLike(v.email)) { error = 'AUTH_JWT_REQUIRED'; detail = v.ok ? 'NO_EMAIL' : String(v.error || ''); } else user = v.email;
     }
     if (error) {
       // 認証前の拒否は、同じ理由につき 1 分に 1 件へ間引く (監査ログの洪水を避ける)
@@ -1455,7 +1465,10 @@ function createServer(cfg) {
     const jwt = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
       teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
     if (!jwt.ok) return reject(403, 'OPS_AUTH_FAILED');
-    if (!jwt.email) return reject(403, 'OPS_AUTH_FAILED');   // 実行者を監査に残せない JWT では実行しない
+    // 実行者を監査に残せない JWT では実行しない。email クレームが無い JWT は verifyAccessJwt が
+    // sub を email 欄へ入れて返すため、実起動と同じ「メール形式」で判定する (BUG-09)。
+    // 拒否時は user='' のままなので、監査には実行者空の ops-exec-rejected が残る。
+    if (!isEmailLike(jwt.email)) return reject(403, 'OPS_AUTH_FAILED');
     user = jwt.email;
     if (body.confirm !== true) return reject(400, 'CONFIRM_REQUIRED');
     if (conf.dryRunOnly) return reject(403, 'DRY_RUN_ONLY');
@@ -2355,6 +2368,7 @@ module.exports = {
   scrubEnv, usageDay, readPromptUsage, writePromptUsage, checkPromptDailyLimit, checkOpsDailyLimit, isProtectedOpsTarget, opsChildEnv, validatePromptText, validatePromptModel, findAutonomousSessionId, buildPromptArgs,
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
   positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
+  isEmailLike,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT, resolveBuildInfo,
   appendAudit, auditRotateConfig, rotateAuditLog,
 };
