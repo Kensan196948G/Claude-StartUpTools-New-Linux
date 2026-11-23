@@ -1,0 +1,42 @@
+# 提案: Codex-StartUpTools の最小 CI
+#
+# 根拠（2026-11-23 実測）:
+#   languages = Shell 88773 B / Makefile 198 B
+#   ルート     = Makefile, bin/, lib/, tests/, config/, deploy/, docs/
+#   Makefile のターゲット（実測）:
+#     syntax: bash -n bin/*.sh lib/*.sh tests/run_tests.sh
+#     lint:   shellcheck bin/*.sh lib/*.sh tests/run_tests.sh
+#     test:   ./tests/run_tests.sh
+#     verify: syntax lint test
+#   tests/run_tests.sh は bash のみ（bats 依存ではない）
+#
+# 採用コマンド（実在を確認済み）:
+#   make syntax / make lint / make test
+#   … shellcheck は ubuntu-latest に同梱されている
+#
+# 代替案: この repo は「ツール」であり製品ではないため、中央ポリシーの **適用対象外** にする
+#         選択肢もある（config/config.json の localExcludes が Codex-StartUpTools を除外している
+#         のと同じ扱い）。その場合はこの CI を追加せず、ruleset も適用しない。
+
+name: ci
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 構文検査
+        run: make syntax
+
+      - name: ShellCheck
+        run: make lint
+
+      - name: テスト
+        run: make test
