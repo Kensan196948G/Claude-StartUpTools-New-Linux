@@ -175,12 +175,12 @@
 | Kensan196948G 配下 repo | 76 |
 | `central-auto-merge` 保有 | 50（66%） |
 | ruleset なし | 21（28%）・別名 5 |
-| open PR | 209 / 41 repos |
+| open PR | **213**（2026-11-23 11:5x 時点・増加中） |
 | auto-merge armed | 0/9 サンプル（**実行器が定常稼働していない**） |
-| CLEAN + green なのに未マージ | 4 件（最長 98 日） |
+| CLEAN + green なのに未マージ | **33 件**（全 76 repo を `bin/repo-integration-status.sh` で実測。当初の「4 件」は上位 5 repo のサンプル値だった） |
 | required check 名と CI 実報告名 | 4/4 一致（ゲート自体は機能） |
 
-結論: **ゲート（fail-closed）は機能しているが、マージ自動化の実行体が回っていない**。本リポジトリの PR は今回 `gh pr merge` を Lead が明示実行して自動マージを成立させた（armed 0 の実態を回避）。
+結論: **ゲート（fail-closed）は機能しているが、マージ自動化の実行体が回っておらず、滞留は当初の想定より大きい**。本リポジトリの PR は今回 `gh pr merge` を Lead が明示実行して自動マージを成立させた（armed 0 の実態を回避）。
 
 ## 14. 第2バッチ完了状況（2026-11-23 11:50 JST 実測）
 
