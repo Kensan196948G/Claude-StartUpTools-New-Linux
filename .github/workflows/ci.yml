@@ -147,8 +147,6 @@ jobs:
     needs: linux-validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      CLAUDEOS_HOME: ${{ runner.temp }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -164,6 +162,8 @@ jobs:
           sudo apt-get install -y jq
 
       - name: Build release artifact
+        env:
+          CLAUDEOS_HOME: ${{ runner.temp }}
         run: |
           set -o pipefail
           bash bin/release-build.sh --ref HEAD --out "$RUNNER_TEMP/app" --json 2>&1 | tee /tmp/release-build.log
