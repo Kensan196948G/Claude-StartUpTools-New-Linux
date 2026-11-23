@@ -1308,6 +1308,56 @@ test('prompt: 認証 (Access JWT) — 無し/署名不正/aud 不一致/期限�
   });
 });
 
+// F4 (QA TC-F4-08 / 人間判断 2026-11-23「1」= メール必須):
+//   verifyAccessJwt は email クレームが無いと sub を email 欄へ入れて返すため、
+//   authenticatePrompt は v.ok だけを見ると sub だけの JWT で送信できてしまう。
+//   実起動・Systemd 再起動と同じ「メール形式」基準にそろえる。
+test('F4: sub だけ / メール形式でない Access JWT ではプロンプト送信を実行しない (TC-F4-08)', async () => {
+  const f = promptFixture('f4-email');
+  const usageFile = path.join(f.web, 'usage-' + srv.usageDay() + '.json');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg(), async (port) => {
+      const post = (jwt) => req(port, 'POST', '/api/session/prompt', { project: 'Alpha-App', text: 'x', confirm: true },
+        { Origin: 'http://127.0.0.1:' + port, 'Cf-Access-Jwt-Assertion': jwt });
+      // (a) email クレームが無く sub だけの JWT
+      const subOnly = await post(signJwt({ email: undefined, sub: 'svc-abc-123' }));
+      assert.equal(subOnly.status, 403);
+      assert.equal(subOnly.json.error, 'PROMPT_AUTH_FAILED');
+      assert.equal(subOnly.json.detail, 'NO_EMAIL');
+      // (b) メール形式でない値
+      const nonEmail = await post(signJwt({ email: 'svc-account' }));
+      assert.equal(nonEmail.status, 403);
+      assert.equal(nonEmail.json.error, 'PROMPT_AUTH_FAILED');
+      assert.equal(nonEmail.json.detail, 'NO_EMAIL');
+      assert.equal(argvLines(f).length, 0, '拒否では claude を起動しない');
+      assert.equal(fs.existsSync(usageFile), false, '拒否では使用量を消費しない');
+      // (c) メール形式は従来どおり通る (sub が併存していても可)
+      const ok = await post(signJwt({ email: 'prompt-audit@example.test', sub: 'svc-abc-123' }));
+      assert.equal(ok.status, 200);
+    });
+  });
+  assert.equal(argvLines(f).length, 1, '成功した 1 回だけ claude を起動する');
+  const usage = JSON.parse(fs.readFileSync(usageFile, 'utf8'));
+  assert.equal(usage.count, 1, '使用量は成功の 1 回だけ');
+  const log = fs.readFileSync(path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log'), 'utf8');
+  assert.ok(log.includes('prompt-rejected') && log.includes('PROMPT_AUTH_FAILED'), '拒否は prompt-rejected として監査に残す');
+  assert.ok(log.includes('prompt-audit@example.test'), '成功時の実行者はメールで監査する');
+  assert.equal(log.includes('"user":"svc-abc-123"'), false, 'sub を実行者として記録しない');
+});
+
+test('F4: Basic 認証の経路は不変 (authUser がメール形式でなくても通る)', async () => {
+  const f = promptFixture('f4-basic');
+  await withPromptEnv(f, 'ok', async () => {
+    await withServer(f.cfg({ accessTeamDomain: '', accessAud: '', authPass: 'pw', authUser: 'claudeos' }), async (port) => {
+      const basic = 'Basic ' + Buffer.from('claudeos:pw').toString('base64');
+      const r = await req(port, 'POST', '/api/session/prompt', { project: 'Alpha-App', text: 'x', confirm: true },
+        { Origin: 'http://127.0.0.1:' + port, Authorization: basic });
+      assert.equal(r.status, 200, 'Basic は変更しない');
+    });
+  });
+  assert.equal(argvLines(f).length, 1);
+});
+
 test('prompt: Host 許可リスト・Origin 必須・JSON のみ・Sec-Fetch-Site (DNS rebinding / CSRF 対策)', async () => {
   const f = promptFixture('origin');
   await withPromptEnv(f, 'ok', async () => {

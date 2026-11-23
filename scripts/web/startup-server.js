@@ -1365,7 +1365,11 @@ function createServer(cfg) {
     if (conf.accessTeamDomain && conf.accessAud) {
       const v = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
         teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
-      return v.ok ? { ok: true, user: v.email, mode: 'access-jwt' } : { ok: false, error: 'PROMPT_AUTH_FAILED', detail: v.error };
+      if (!v.ok) return { ok: false, error: 'PROMPT_AUTH_FAILED', detail: v.error };
+      // 実行者を監査に残せない JWT では送信しない。verifyAccessJwt は email クレームが無いと
+      // sub を email 欄へ入れて返すため、実起動・Systemd 再起動と同じ「メール形式」を要求する (F4)。
+      if (!isEmailLike(v.email)) return { ok: false, error: 'PROMPT_AUTH_FAILED', detail: 'NO_EMAIL' };
+      return { ok: true, user: v.email, mode: 'access-jwt' };
     }
     return { ok: false, error: 'PROMPT_AUTH_NOT_CONFIGURED' };
   }
