@@ -41,6 +41,8 @@
 | `bin/release-promote.sh`, `lib/release-promote.sh` | Source | 成果物の staging/production 昇格・整合性検証・自動ロールバック |
 | `scripts/e2e/staging-smoke.sh` | Source | 成果物起動スモーク（分離 `CLAUDEOS_HOME`・本番ポート不汚染の検査） |
 | `scripts/tools/check-project-registry.js`, `scripts/tools/project-registry.js` | Source | プロジェクト台帳の鮮度チェック（`--fix` で `_stale` へ退避） |
+| `bin/deploy-status.sh` | Source | 現行成果物・previous・health・昇格台帳の読み取り専用サマリ |
+| `bin/repo-integration-status.sh` | Source | 横断の ruleset 有無 / open PR / CLEAN+green の読み取り専用サマリ |
 | `libexec/startup-state.sh` | Source | 同コンソール向け read-only 状態スナップショット（JSON） |
 | `bin/web-startup.sh` | Source | 同コンソールの起動・停止・状態（PID ファイル + health check） |
 | `bin/web-startup-service.sh` | Source | 同コンソール常駐用 systemd --user unit の登録/解除（bind は常に loopback） |

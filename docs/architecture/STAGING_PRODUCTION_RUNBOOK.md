@@ -10,10 +10,13 @@
 | Staging コンソール | `claudeos-web-startup-stg.service` | 127.0.0.1:3742 | `~/.claudeos/releases/staging-current` → `<sha>/` | `~/.claudeos-stg` |
 | Production コンソール | `claudeos-web-startup.service` | 127.0.0.1:3740 | （2026-11-23 時点: 作業ツリー直実行。§4 で artifact 化） | `~/.claudeos` |
 | Production dashboard | `claude-startuptools-dashboard.service` | 127.0.0.1:3737 | 作業ツリー | `~/.claudeos` |
+| Staging dashboard | `claude-startuptools-dashboard-stg.service` | 127.0.0.1:3743 | `~/.claudeos/releases/staging-current` | `~/.claudeos-stg` |
 | Production terminal | `claude-startuptools-ttyd.service` | 127.0.0.1:3741 | — | — |
 
 - 成果物（artifact）は `~/.claudeos/releases/<40桁commit>/`。`manifest.json` に per-file `sha256` と `tree_sha256` を持つ。
 - Staging は**公開しない**（Cloudflare Tunnel の ingress に hostname を追加していない）。
+- Staging dashboard は `bin/dashboard-service.sh --register --profile staging --root ~/.claudeos/releases/staging-current` で登録する（`HOST=127.0.0.1` / `CLAUDEOS_HOME=~/.claudeos-stg` を unit が持つ）。
+- ttyd（端末ゲートウェイ）は環境非依存のため Staging には置かない（本番 3741 のみ）。
 - 実機設定 `config/config.json` は git 管理外のため、成果物には含まれない。Staging は専用 env-file の `AI_STARTUP_CONFIG_PATH` で、本番と同じ実機設定を**読み取り専用**で参照する。
 
 ## 1. 成果物を作る
@@ -62,6 +65,7 @@ CLAUDEOS_HOME=$HOME/.claudeos bash <worktree>/bin/release-promote.sh \
 | listen | `127.0.0.1:3742` のみ（loopback） |
 | 本番 3740 | health 不変・MainPID 3582989 不変 |
 | 状態分離 | `~/.claudeos-stg/logs/web-startup-audit.log` が生成。本番 `~/.claudeos/logs/web-startup-audit.log` は 17942 bytes のまま不変 |
+| Staging dashboard | `claude-startuptools-dashboard-stg.service` active / `127.0.0.1:3743` / `Environment=HOST=127.0.0.1 CLAUDEOS_HOME=~/.claudeos-stg` / ExecStart は `staging-current/scripts/dashboards/serve-dashboard.js`。本番 3737 は 200 のまま不変 |
 | 昇格台帳 | `~/.claudeos/releases/promotions.jsonl` に `ROLLED_BACK`（health 失敗時の自動切戻し実測）と `PROMOTED` の 2 行 |
 
 > 補足: 初回の `--no-restart` 実行は health 確認に失敗し、symlink を削除して `ROLLED_BACK` を記録した。**ロールバック経路が実環境で動作した実測例**である（意図した安全側の挙動）。
@@ -154,6 +158,6 @@ journalctl --user -u claudeos-web-startup.service --since "10 min ago" | grep -c
 
 - Cloudflare Access の背後（302 の先）の画面は認証情報なしでは確認できない。**人間の目視が必要**。
 - Staging 用の公開 hostname / Access application は未作成（Tunnel ingress は 1 hostname のみ）。
-- Staging dashboard（3743）と Staging ttyd（3744）は未構築。dashboard は `CLAUDEOS_HOME` 対応済み（#171）だが、unit は本番用のみ。
+- Staging dashboard（3743）は構築済み。Staging ttyd（3744）は意図的に未構築（端末ゲートウェイは環境非依存）。
 - `scripts/e2e/staging-smoke.sh` の CI ジョブは未追加（`.github/workflows/ci.yml` の変更はセッションの self-evolution policy gate が `DEPLOY=critical` として拒否するため、人間の適用が必要）。
 - `release-promote` の `--no-restart` は health 確認も行う（失敗すれば切戻す）。初回 bootstrap ではこの挙動を理解して使うこと。
