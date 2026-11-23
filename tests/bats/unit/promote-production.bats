@@ -645,3 +645,46 @@ UNIT
   [ "$(tail -1 "$ledger" | jq -r '.dashboard.enabled')" = "false" ]
   [ "$(tail -1 "$ledger" | jq -r '.dashboard.dropin_removed')" = "false" ]
 }
+
+# --- H3: unit に CCSU_STATE_FILE を渡す (成果物内へ state.json を書かせない) ---
+
+@test "promote-production: (3) に --state-file を渡す (既定は config の 2 階層上の state.json)" {
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 0 ]
+  expected="$(dirname "$(dirname "$CCSU_PROMOTE_CONFIG_PATH")")/state.json"
+  grep -qF -- "--state-file $expected" "$ORDER"
+}
+
+@test "promote-production: CCSU_PROMOTE_STATE_FILE で state の場所を上書きできる" {
+  mkdir -p "$TEST_TEMP/repo"
+  export CCSU_PROMOTE_STATE_FILE="$TEST_TEMP/repo/state.json"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 0 ]
+  grep -qF -- "--state-file $TEST_TEMP/repo/state.json" "$ORDER"
+}
+
+@test "promote-production: state の置き場所が無ければ (0b) で中止し何も変えない" {
+  export CCSU_PROMOTE_STATE_FILE="$TEST_TEMP/no-such-dir/state.json"
+  before="$(sha256sum "$CCSU_SYSTEMD_UNIT_PATH" | cut -d' ' -f1)"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  last="$(printf '%s\n' "${lines[@]}" | grep -E '^\{' | tail -n 1)"
+  [ "$(printf '%s' "$last" | jq -r .result)" = "ABORTED" ]
+  [[ "$(printf '%s' "$last" | jq -r .reason)" == *"CCSU_STATE_FILE"* ]]
+  [ "$(sha256sum "$CCSU_SYSTEMD_UNIT_PATH" | cut -d' ' -f1)" = "$before" ]
+  ! grep -q "web-startup-service" "$ORDER" 2>/dev/null
+}
+
+@test "promote-production: 相対パスの state は (0b) で中止する" {
+  export CCSU_PROMOTE_STATE_FILE="state.json"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  ! grep -q "web-startup-service" "$ORDER" 2>/dev/null
+}
+
+@test "promote-production: dry-run 計画に state file と --state-file を表示する" {
+  run bash "$SCRIPT" --release "$SHA" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"state file"* ]]
+  [[ "$output" == *"--state-file"* ]]
+}
