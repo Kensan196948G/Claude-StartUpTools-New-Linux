@@ -350,3 +350,38 @@ bot_pr() { # $1=number $2=title $3=state $4=conclusion
   last_json "$output" | jq -e '.skipped | map(.reason) | index("update_branch_failed") != null'
   last_json "$output" | jq -e '.updated | length == 0'
 }
+
+@test "cross-repo-automerge: repo 一覧の取得は一過性失敗を再試行する（3 回目で成功）" {
+  : > "$FIX/repos_attempts"
+  # 1 回目・2 回目は失敗、3 回目は成功する gh スタブに差し替える
+  cat > "$STUB_GH" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG"
+n=$(cat "$FIX/repos_attempts"); n=$((n+1)); printf '%s' "$n" > "$FIX/repos_attempts"
+case "$1" in
+  repo) [ "$n" -ge 3 ] && cat "$FIX/repos.json" || exit 1 ;;
+  api)  rel="${2#repos/}"; rest="${rel#*/}"; repo="${rest%%/*}"
+        if [ -f "$FIX/rulesets/$repo.json" ]; then cat "$FIX/rulesets/$repo.json"; else exit 1; fi ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$STUB_GH"
+  export CCSU_GH_BIN="$STUB_GH"
+  repos_json '{"name":"R"}'
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  [ "$(cat "$FIX/repos_attempts")" -ge 3 ]
+  last_json "$output" | jq -e '.ok == true'
+}
+
+@test "cross-repo-automerge: repo 一覧が 3 回とも失敗したら exit 1" {
+  cat > "$STUB_GH" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG"
+exit 1
+STUB
+  chmod +x "$STUB_GH"
+  export CCSU_GH_BIN="$STUB_GH"
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 1 ]
+}

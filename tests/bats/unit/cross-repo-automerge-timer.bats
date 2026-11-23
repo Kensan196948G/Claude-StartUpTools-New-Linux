@@ -125,3 +125,37 @@ teardown() { _bats_common_teardown; }
   [[ "$output" == *"登録済み"* ]]
   [[ "$output" == *"OnCalendar"* ]]
 }
+
+# ── proxy 環境変数の焼き込み（systemd --user は対話シェルの env を継承しない）──
+
+@test "timer: 登録時に見えている proxy 設定を unit に焼き込む" {
+  export https_proxy="http://127.0.0.1:9" no_proxy="127.0.0.1,localhost"
+  run bash "$SCRIPT" --register
+  [ "$status" -eq 0 ]
+  grep -q '^Environment=https_proxy=http://127.0.0.1:9$' "$SVC"
+  grep -q '^Environment=no_proxy=127.0.0.1,localhost$' "$SVC"
+  # 焼き込んだ行の直後に NoNewPrivileges が独立行で来る（改行が壊れていない）
+  grep -q '^NoNewPrivileges=yes$' "$SVC"
+  ! grep -qE 'Environment=.*NoNewPrivileges' "$SVC"
+}
+
+@test "timer: CCSU_TIMER_INHERIT_PROXY=0 なら proxy 行を入れない" {
+  export https_proxy="http://127.0.0.1:9" CCSU_TIMER_INHERIT_PROXY=0
+  run bash "$SCRIPT" --register
+  [ "$status" -eq 0 ]
+  ! grep -q '^Environment=.*proxy' "$SVC"
+  grep -q '^ExecStart=.*cross-repo-automerge.sh --apply --json$' "$SVC"
+}
+
+@test "timer: proxy が未設定なら Environment 行を足さない（既定の unit 本文を変えない）" {
+  for v in https_proxy HTTPS_PROXY http_proxy HTTP_PROXY no_proxy NO_PROXY all_proxy ALL_PROXY; do unset "$v"; done
+  run bash "$SCRIPT" --register
+  [ "$status" -eq 0 ]
+  ! grep -q '^Environment=' "$SVC"
+}
+
+@test "timer: proxy 値に改行があれば拒否する（unit への行注入防止）" {
+  export https_proxy=$'http://a\nExecStart=/bin/evil'
+  run bash "$SCRIPT" --register
+  [ "$status" -ne 0 ]
+}
