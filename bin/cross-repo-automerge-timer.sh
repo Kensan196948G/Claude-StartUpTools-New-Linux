@@ -153,6 +153,9 @@ WorkingDirectory=$CCSU_ROOT
 # 失敗・保留・競合はスキップ / 同一 repo 1 回 1 件)。
 ExecStart=$bash_bin $CCSU_ROOT/bin/cross-repo-automerge.sh --apply --json
 ${PROXY_ENV_LINES}
+# 無効な GITHUB_TOKEN が systemd 環境に残っていると gh が 401 になるため明示的に外す
+# (gh は gh auth login 済みの hosts.yml を使う)。
+UnsetEnvironment=GITHUB_TOKEN GH_TOKEN
 NoNewPrivileges=yes
 PrivateTmp=yes
 EOF

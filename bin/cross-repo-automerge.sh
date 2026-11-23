@@ -153,6 +153,13 @@ JQ
 : > "$TMPD/skipped.jsonl"
 : > "$TMPD/human.jsonl"
 
+# 環境の GITHUB_TOKEN / GH_TOKEN が無効だと gh が 401 になる（この環境の systemd で実際に発生）。
+# 既定では gh 自身の認証（gh auth login 済みの hosts.yml）を使う。明示的に使う場合のみ
+# CCSU_AUTOMERGE_KEEP_ENV_TOKEN=1 を指定する。
+if [[ "${CCSU_AUTOMERGE_KEEP_ENV_TOKEN:-0}" != "1" ]]; then
+  unset GITHUB_TOKEN GH_TOKEN
+fi
+
 log_info "巡回を開始します（mode=$MODE_NAME / owner=$OWNER / max-merges=$MAX_MERGES）"
 
 # 一過性の失敗（proxy/ネットワーク瞬断・二次レート制限）で巡回全体を落とさないため 3 回まで試す
