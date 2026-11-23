@@ -371,10 +371,10 @@ EOF
 #   serving_from は WorkingDirectory から判定する (release / worktree / unknown)
 # ------------------------------------------------------------
 
-# _stub_systemctl_rich <dash_state> <dash_restarts> <dash_wd> <dash_dropins> [main_state] [main_restarts]
+# _stub_systemctl_rich <dash_state> <dash_restarts> <dash_wd> <dash_dropins> [main_state] [main_restarts] [main_wd]
 #   dashboard の unit と本体 unit で別の応答を返すスタブ
 _stub_systemctl_rich() {
-  local ds="${1-active}" dr="${2-0}" dwd="${3-}" ddrop="${4-}" ms="${5-active}" mr="${6-0}"
+  local ds="${1-active}" dr="${2-0}" dwd="${3-}" ddrop="${4-}" ms="${5-active}" mr="${6-0}" mwd="${7-}"
   cat > "$CCSU_SYSTEMCTL_BIN" <<EOF
 #!/usr/bin/env bash
 echo "systemctl \$*" >> "$TEST_TEMP/systemctl.calls"
@@ -388,6 +388,7 @@ case "\$*" in
   *)
     echo "ActiveState=${ms}"
     echo "NRestarts=${mr}"
+    echo "WorkingDirectory=${mwd}"
     ;;
 esac
 exit 0
@@ -536,4 +537,54 @@ EOF
 
   run bash "$SCRIPT" --env production
   [ "$status" -eq 0 ]
+}
+
+# ------------------------------------------------------------
+# コンソール本体 unit の serving_from（本番コンソールが成果物起動へ切り替わったか）
+# ------------------------------------------------------------
+
+@test "console: 本体 unit の WorkingDirectory が releases 配下なら serving_from=release" {
+  _make_release "$REL_A" "$COMMIT_A" "$TREE_A"
+  _link_current "$COMMIT_A"
+  _stub_systemctl_rich active 0 "/repo" "" active 0 "$CLAUDEOS_HOME/releases/production-current"
+  _stub_curl_by_url 200 200 '{"status":"ok"}'
+  run bash "$SCRIPT" --env production --json
+  [ "$status" -eq 0 ]
+  json="$(printf '%s\n' "$output" | tail -n 1)"
+  [ "$(printf '%s' "$json" | jq -r '.production.unit.serving_from')" = "release" ]
+  [ "$(printf '%s' "$json" | jq -r '.production.unit.working_directory')" = "$CLAUDEOS_HOME/releases/production-current" ]
+  [ "$(printf '%s' "$json" | jq -r '.production.dashboard.serving_from')" = "worktree" ]
+}
+
+@test "console: 本体 unit が作業ツリーなら serving_from=worktree" {
+  _make_release "$REL_A" "$COMMIT_A" "$TREE_A"
+  _link_current "$COMMIT_A"
+  _stub_systemctl_rich active 0 "/repo" "" active 0 "/home/u/Projects/repo"
+  _stub_curl_by_url 200 200 '{"status":"ok"}'
+  run bash "$SCRIPT" --env production --json
+  [ "$status" -eq 0 ]
+  json="$(printf '%s\n' "$output" | tail -n 1)"
+  [ "$(printf '%s' "$json" | jq -r '.production.unit.serving_from')" = "worktree" ]
+}
+
+@test "console: WorkingDirectory が取れなければ serving_from=unknown（release と誤表示しない）" {
+  _make_release "$REL_A" "$COMMIT_A" "$TREE_A"
+  _link_current "$COMMIT_A"
+  _stub_systemctl_rich active 0 "/repo" "" active 0 ""
+  _stub_curl_by_url 200 200 '{"status":"ok"}'
+  run bash "$SCRIPT" --env production --json
+  [ "$status" -eq 0 ]
+  json="$(printf '%s\n' "$output" | tail -n 1)"
+  [ "$(printf '%s' "$json" | jq -r '.production.unit.serving_from')" = "unknown" ]
+  [ "$(printf '%s' "$json" | jq -r '.production.unit.working_directory')" = "null" ]
+}
+
+@test "console: 人間向け出力の unit 行の直後に成果物起動を表示する" {
+  _make_release "$REL_A" "$COMMIT_A" "$TREE_A"
+  _link_current "$COMMIT_A"
+  _stub_systemctl_rich active 0 "/repo" "" active 0 "$CLAUDEOS_HOME/releases/production-current"
+  _stub_curl_by_url 200 200 '{"status":"ok"}'
+  run bash "$SCRIPT" --env production
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -A1 "unit      :" | grep -q "成果物起動 : .*release"
 }
