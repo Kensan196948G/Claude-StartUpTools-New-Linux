@@ -155,8 +155,25 @@ JQ
 
 log_info "巡回を開始します（mode=$MODE_NAME / owner=$OWNER / max-merges=$MAX_MERGES）"
 
-repo_list="$("$GH_BIN" repo list "$OWNER" --limit "$LIMIT" --json name 2>/dev/null)" || {
-  log_error "repo 一覧の取得に失敗しました (owner=$OWNER)"; exit 1; }
+# 一過性の失敗（proxy/ネットワーク瞬断・二次レート制限）で巡回全体を落とさないため 3 回まで試す
+repo_list=""
+repo_try=0
+while (( repo_try < 3 )); do
+  repo_try=$((repo_try + 1))
+  if repo_list="$("$GH_BIN" repo list "$OWNER" --limit "$LIMIT" --json name 2>/dev/null)"; then
+    case "$repo_list" in
+      "[]"|"") ;;
+      *) break ;;
+    esac
+  fi
+  if (( repo_try < 3 )); then
+    log_warn "repo 一覧の取得に失敗しました (試行 $repo_try/3)。$((repo_try * 5)) 秒後に再試行します"
+    sleep $((repo_try * 5))
+  fi
+done
+if ! printf '%s' "$repo_list" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  log_error "repo 一覧の取得に失敗しました (owner=$OWNER, 3 回試行)"; exit 1
+fi
 
 # is_excluded <repo> — 除外リスト（カンマ区切り）に含まれるか
 #   for で回す。パイプ + set -e だと最初の不一致で subshell が落ちるため使わない。

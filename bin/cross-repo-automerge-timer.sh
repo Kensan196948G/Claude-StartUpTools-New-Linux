@@ -115,6 +115,28 @@ timer__resolve_unit_dir() {
   timer__no_control_chars "unit ディレクトリ" "$UNIT_DIR"
 }
 
+# この環境の外向き通信は proxy 経由。systemd --user の unit は対話シェルの
+# 環境変数を継承しないため、登録時に見えている proxy 設定を unit へ焼き込む
+# (無い場合は何も足さない)。値は unit に平文で入るので、URL に認証情報を含む場合は
+# 警告する。CCSU_TIMER_INHERIT_PROXY=0 で無効化できる。
+# 検証つき収集。呼び出し側 (register) のシェルで実行すること
+#   — $(...) のサブシェル内で exit すると呼び出し元が止まらないため。
+timer__collect_proxy_env() {
+  PROXY_ENV_LINES=""
+  if [[ "${CCSU_TIMER_INHERIT_PROXY:-1}" == "0" ]]; then return 0; fi
+  local name value
+  for name in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy ALL_PROXY all_proxy; do
+    value="$(printf '%s' "${!name:-}")"
+    [[ -n "$value" ]] || continue
+    timer__no_control_chars "$name" "$value"
+    case "$value" in
+      *"@"*) log_warn "  $name に認証情報らしき文字 (@) が含まれます。unit に平文で入ります" ;;
+    esac
+    PROXY_ENV_LINES+="Environment=$name=$value"$'\n'
+  done
+  return 0
+}
+
 timer__service_body() {
   local bash_bin
   bash_bin="$(command -v bash || echo /usr/bin/bash)"
@@ -130,6 +152,7 @@ WorkingDirectory=$CCSU_ROOT
 # 対象・安全条件はツール側が担保する (ruleset 保有 repo のみ / bot のマイナー・パッチのみ /
 # 失敗・保留・競合はスキップ / 同一 repo 1 回 1 件)。
 ExecStart=$bash_bin $CCSU_ROOT/bin/cross-repo-automerge.sh --apply --json
+${PROXY_ENV_LINES}
 NoNewPrivileges=yes
 PrivateTmp=yes
 EOF
@@ -176,6 +199,7 @@ timer__write_unit() {
 
 timer__register() {
   local svc_body timer_body
+  timer__collect_proxy_env
   svc_body="$(timer__service_body)"
   timer_body="$(timer__timer_body)"
   timer__assert_no_prod_tokens "$svc_body"
