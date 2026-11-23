@@ -6,7 +6,7 @@
 #       CLAUDEOS_HOME で health / 主要 API が動く」ことを毎回証明する。
 #
 # 使い方:
-#   bash scripts/e2e/staging-smoke.sh [--port N] [--json] [--keep]
+#   bash scripts/e2e/staging-smoke.sh [--port N] [--json] [--keep] [--release DIR]
 #
 #   --port N   待ち受けポート (既定: 空きポートを自動選択)
 #              本番ポート 3740 / 3737 / 3741 は明示的に拒否する。
@@ -36,6 +36,7 @@ done
 unset _arg
 
 PORT=""
+RELEASE_DIR=""
 CHECKS=0
 FAILURES=()
 TMP=""
@@ -55,6 +56,10 @@ staging-smoke.sh [--port N] [--json] [--keep]
   --port N   待ち受けポート (既定: 空きポート)
   --json     最終行に結果 JSON を 1 行だけ出力する
   --keep     一時ディレクトリを残す
+  --release DIR
+             ビルドせず、既存のリリース成果物 DIR を検証して起動する
+             (.git の無い release ディレクトリから定期実行する場合に使う。
+              未指定かつ git 管理外のときは REPO_ROOT 自身を成果物として扱う)
   -h, --help このヘルプ
 
   exit: 0 成功/SKIP, 1 検査失敗, 2 引数エラー
@@ -153,6 +158,15 @@ while (( $# > 0 )); do
       KEEP=1
       shift
       ;;
+    --release)
+      (( $# >= 2 )) || arg_error "--release には値が必要です"
+      RELEASE_DIR="$2"
+      shift 2
+      ;;
+    --release=*)
+      RELEASE_DIR="${1#--release=}"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -176,11 +190,22 @@ if [[ -n "$PORT" ]]; then
   esac
 fi
 
+# git 管理外 (release 成果物から実行) で manifest があれば、その成果物自身を検証対象にする
+if [[ -z "$RELEASE_DIR" ]] && ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1 \
+   && [[ -f "$REPO_ROOT/manifest.json" ]]; then
+  RELEASE_DIR="$REPO_ROOT"
+fi
+if [[ -n "$RELEASE_DIR" ]]; then
+  [[ -d "$RELEASE_DIR" ]] || arg_error "--release のディレクトリがありません: $RELEASE_DIR"
+  RELEASE_DIR="$(cd "$RELEASE_DIR" && pwd -P)"
+  [[ -f "$RELEASE_DIR/manifest.json" ]] || arg_error "--release に manifest.json がありません: $RELEASE_DIR"
+fi
+
 # ---------------------------------------------------------------------------
 # SKIP: リリースビルドが無い checkout (task-4 未マージ) では CI を赤にしない
 # ---------------------------------------------------------------------------
 
-if [[ ! -f "$RELEASE_BUILD" ]]; then
+if [[ -z "$RELEASE_DIR" && ! -f "$RELEASE_BUILD" ]]; then
   log "SKIP: bin/release-build.sh が無いため成果物スモークを実行しません ($RELEASE_BUILD)"
   if (( JSON )); then
     printf '{"ok":true,"skipped":true,"reason":"release-build not available"}\n'
@@ -237,6 +262,30 @@ PROD_BEFORE="$(prod_health)"
 # 1. リリース成果物のビルド
 # ---------------------------------------------------------------------------
 
+if [[ -n "$RELEASE_DIR" ]]; then
+  log ""
+  log "== 1. 既存のリリース成果物を検証 ($RELEASE_DIR) =="
+  # 成果物は読み取り専用で扱う: 起動は symlink 経由の一時パスから行い、成果物自身へは書き込まない
+  ln -s "$RELEASE_DIR" "$RELEASE/app"
+  BUILD_JSON="$(jq -c '{ok:true, commit:.commit, short_commit:.short_commit, tree_sha256:.tree_sha256}' \
+    "$RELEASE_DIR/manifest.json" 2>/dev/null || true)"
+  if [[ "$(printf '%s' "$BUILD_JSON" | jq -r '.ok // false' 2>/dev/null)" != "true" ]]; then
+    check_fail "manifest.json を読めない" "$RELEASE_DIR/manifest.json"
+    finalize
+  fi
+  VERIFY="$RELEASE_DIR/scripts/release/verify-artifact.sh"
+  if [[ -f "$VERIFY" ]]; then
+    V_OUT="$(env CLAUDEOS_HOME="$CLAUDEOS_HOME" bash "$VERIFY" "$RELEASE_DIR" --json 2>/dev/null | tail -n 1)"
+    if [[ "$(printf '%s' "$V_OUT" | jq -r '.ok // false' 2>/dev/null)" == "true" ]]; then
+      check_pass "成果物の整合 (verify-artifact: files=$(printf '%s' "$V_OUT" | jq -r '.files'))"
+    else
+      check_fail "成果物の整合が取れない (verify-artifact)" "$(printf '%s' "$V_OUT" | head -c 300)"
+      finalize
+    fi
+  fi
+  BUILD_COMMIT="$(printf '%s' "$BUILD_JSON" | jq -r '.short_commit // .commit // "?"')"
+  check_pass "既存成果物を使用 (commit=$BUILD_COMMIT)"
+else
 log ""
 log "== 1. リリース成果物をビルド (bin/release-build.sh --ref HEAD) =="
 
@@ -253,6 +302,7 @@ fi
 
 BUILD_COMMIT="$(printf '%s' "$BUILD_JSON" | jq -r '.short_commit // .commit // "?"')"
 check_pass "release-build 成功 (commit=$BUILD_COMMIT)"
+fi
 
 SERVER_JS="$RELEASE/app/scripts/web/startup-server.js"
 if [[ -f "$SERVER_JS" ]]; then
