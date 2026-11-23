@@ -252,3 +252,53 @@
 - 中央 `GITHUB_POLICY.md` は **v3**、本リポジトリのコピーは **v2（stale mirror）**。差分は 3 箇所のみで v3 は上位互換。§10 の除外は特定リポジトリ限定で本リポジトリは対象外 → **現運用は v3 でも許容**。
 - 本リポジトリが参照する `bin/policy-pr.sh` / `bin/github-controller.sh` / `docs/architecture/全リポジトリAutoMerge統一方針.md` は**中央リポジトリに存在**し、v3 でもリポジトリ名で修飾されていない。
 - 推奨: 案 A（v3 へ追随し、参照をリポジトリ名で修飾）。決定は人間。
+
+## 20. 第5バッチ: 本番 2 面（コンソール + dashboard）昇格と独立レビュー対応（2026-11-23 15:30）
+
+| # | 項目 | PR |
+|---|---|---|
+| 1 | dashboard `/api/health` に `commit` / `version` | #207 |
+| 2 | promote-production に本番 dashboard(3737) 切替 (3d)（既存 unit は不改変・systemd drop-in 方式） | #212 |
+| 3 | pre-promote-check に検査 8（本番 dashboard）・退避 unit の sha256 照合 / post-deploy-smoke に dashboard と `--expect-commit` | #213 |
+| 4 | release-promote: staging 昇格時に companion（dashboard-stg）も restart・health 確認 | #210 |
+| 5 | deploy-status: dashboard とコンソール本体の `serving_from`（release / worktree） | #209 / #215 |
+| 6 | 横断 段階①: CI なし repo の最小 CI 案・needs_manual 3 件の再分類 | #208 |
+| 7 | web-startup-service `--state-file`（CCSU_STATE_FILE） | #211 |
+| 8 | promote-production が (3) で `--state-file` を渡す（H3 解消） | #214 |
+| 9 | 本番昇格経路の独立レビュー（実装者以外） | task-36 |
+| 10 | 文書 | 本 PR |
+
+### 20-1. 独立レビューの指摘と対応
+
+| ID | 指摘 | 対応 |
+|---|---|---|
+| H1 | 初回昇格の自動復旧で `production-current` が新成果物を指したまま残る | previous 不在時は symlink を削除し台帳に `NO_PREVIOUS_REMOVED`（#212） |
+| H2 | 中断（INT/TERM/HUP）時に復旧が走らない | (1)〜(5) 間は trap で自動復旧（#212） |
+| H3 | 成果物起動後に state.json が成果物内へ書かれる | unit に `CCSU_STATE_FILE=<repo>/state.json`（#211 + #214） |
+| M1 | `enable --now` は稼働中 unit を再起動しない（Runbook 記述と乖離） | Runbook 訂正: 稼働切替は (4)（#211 / #214） |
+| M2 | 二重実行の排他なし | `flock`（exit 2）（#212） |
+| M3 | 退避 unit は存在確認のみ | 最新 `.bak-*` と現行 unit の sha256 照合（#213） |
+| M4 | 配備後スモークが期待 commit を検証しない | `--expect-commit`（#213） |
+| M5 | dashboard の HOST が unit 側 Environment に依存 | drop-in に `Environment=HOST=127.0.0.1` を明示（#212） |
+| M6 | Runbook に drop-in の扱いが無い | Runbook §4-A に (3d) を追加（#214） |
+| L1/L3 | 台帳に dashboard 復旧結果が無い / node パスの焼き込み | 台帳に記録・現行 unit の node を抽出（#212） |
+| L2 | dry-run はゲートを実行しない | 仕様（dry-run は計画表示）。実行時は (0) で必ずゲート |
+| L4 | 実機設定を repo から読む（非自己完結） | 既知の制約（`CCSU_PROMOTE_CONFIG_PATH` を明示、(0b) で存在確認） |
+
+本番 unit と生成 unit の差分は 4 点のみ（Documentation / WorkingDirectory / ExecStart / `AI_STARTUP_CONFIG_PATH` 追加）に `CCSU_STATE_FILE` が加わる。
+**secret 入りの `EnvironmentFile=-~/.config/claudeos-web-startup.env` は同一行として維持**、port / bind 不変のため Cloudflare Tunnel への影響はない。
+
+### 20-2. 本番昇格の直前状態（実測 2026-11-23 15:30、release `d2e36beb`）
+
+| 確認 | 結果 |
+|---|---|
+| 成果物 | 1087 files / tree `4892fa1b…` / verify-artifact OK（missing 0・mismatched 0） |
+| Staging | コンソール 3742・dashboard 3743 とも commit `d2e36beb`（companion 自動 restart） |
+| post-deploy-smoke staging `--expect-commit` | 6 checks / 0 failed / 0 warnings |
+| 日次スモーク（成果物から実行） | success |
+| pre-promote-check | **8/8 PASS**（退避 unit sha256 一致・本番 dashboard 健全を含む） |
+| promote-production dry-run | (0)〜(5) と (3d) を表示、`--state-file <repo>/state.json` 付き、書き込みなし |
+| `--yes` 無し | exit 3（確認待ち） |
+| 本番 | 3740 / 3737 とも 200、unit sha256 `7883f90c…` 不変、`production-current` 未作成、dashboard drop-in 未作成 |
+| deploy-status | Staging = release / release、本番 = worktree / worktree |
+
