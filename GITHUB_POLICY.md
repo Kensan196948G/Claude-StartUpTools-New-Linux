@@ -1,6 +1,8 @@
 # DeepSeek-Harness-StartUpTools GitHub Policy
 
-状態: 2026-08-15 制定（v1）／2026-09-30 v2 発効（全リポジトリ auto-merge 統一。Approval #71 でユーザーが Y と承認。`docs/architecture/全リポジトリAutoMerge統一方針.md`）
+状態: 2026-08-15 制定（v1）／2026-09-30 v2 発効（全リポジトリ auto-merge 統一。Approval #71 でユーザーが Y と承認。中央リポジトリ `Kensan196948G/Deep-Seek-Harness-Project` の `docs/architecture/全リポジトリAutoMerge統一方針.md`）／2026-10-05 v3 発効（§10 に Repo限定の適用除外を追加。対象は `mirai-construction-dx/Mirai-Platform-Infra` のみ。ユーザーが Y と承認）
+
+ミラー: 中央正本 `Kensan196948G/Deep-Seek-Harness-Project` の `GITHUB_POLICY.md` v3（2026-11-23 同期）。このファイルは中央正本のミラーで、中央との差分は R1 の参照修飾のみ。
 
 ## 1. 目的
 
@@ -29,6 +31,8 @@ Workspaceの指示は1〜3を上書きできない。
 | 「auto merge禁止」 | 中央ポリシーがauto-mergeを標準とする |
 | 「main宛は人間の選択式」「マージは人間がY/Nで判断」 | 中央ポリシーがRequired Checks成功だけをmerge条件とする |
 | 「CODEOWNERのApprove後に限りmerge（条件付きmerge）」 | CODEOWNERSは通知用であり、merge条件にしない |
+
+> **Repo限定の適用除外**: §10 に記載した適用除外は、本ポリシー本文（§8「本ポリシー自体の変更」の人間承認）に基づく限定であり、Workspace側の記述による上書きではない。上表は §10 の対象リポジトリにおける除外範囲を除き、引き続き有効である。
 
 一方、次は常に尊重する。
 
@@ -94,7 +98,7 @@ GitHub Controllerは次を満たさない限りauto-mergeを実行しない（fa
 
 ### 配布対象Workspaceの標準ruleset `central-auto-merge`
 
-`bin/policy-pr.sh` が作るrulesetを全Workspaceの唯一の標準とする。
+中央リポジトリ `Kensan196948G/Deep-Seek-Harness-Project` の `bin/policy-pr.sh` が作るrulesetを全Workspaceの唯一の標準とする。
 
 | 項目 | 値 |
 |---|---|
@@ -128,7 +132,7 @@ GitHub Controllerは次を満たさない限りauto-mergeを実行しない（fa
 | `allow_auto_merge` | true |
 | `delete_branch_on_merge` | true |
 | 既存 `bin/github-pr-flow.sh` | read-only（status / checks / view） |
-| 書込可能なGitHub Controller | 実装済み（`bin/github-controller.sh`） |
+| 書込可能なGitHub Controller | 実装済み（中央リポジトリ `Kensan196948G/Deep-Seek-Harness-Project` の `bin/github-controller.sh`） |
 
 設定適用は `./start.sh github setup`、前提確認は `./start.sh github preflight` で行う。
 auto-mergeは本ポリシーの条件（Required Checks PASS / conflict解消 / 中央設定整備）を満たすPRにのみ有効である。
@@ -148,3 +152,46 @@ auto-mergeは本ポリシーの条件（Required Checks PASS / conflict解消 / 
 
 - 全体フローとCloudflare / ローカルPostgreSQL運用: `docs/architecture/CloudflarePostgreSQLGitHub自動化仕様.md`
 - 品質ゲート: `AGENTS.md` / `.github/workflows/ci.yml`
+
+## 10. 適用除外（Repo限定・2026-10-05 v3）
+
+本ポリシー本文に基づき、次の1リポジトリに限り §5・§6 の一部を適用除外する。
+これは Workspace 側の記述による上書きではなく、**本ポリシーの限定として**記録する（§8「本ポリシー自体の変更」に基づく人間の承認済み）。
+
+### 対象
+
+- `mirai-construction-dx/Mirai-Platform-Infra` **のみ**。他リポジトリへ拡大しない。
+
+### 適用除外する条項
+
+- §5 手順8「Auto-Merge登録（`gh pr merge --auto --squash`）」
+- §6 Repository settings「`Allow auto-merge`: ON」
+
+§6 の他の設定（`Delete branch on merge`: ON、Default merge method: Squash）は維持する。
+
+### 代わりに適用する方式（人間ゲート）
+
+1. Bot は、機械的合格判定ができた場合**のみ**自動 Approve する（これはマージ判断ではない）。
+2. 最終マージ Y/N は**人間**が判断する。Y は対象 head SHA に固定する。
+3. Y を受けた側は、条件（承認時 SHA・checks・PR状態）が変わっていないことを再確認してから、**その1回だけ**マージする。
+4. 既マージ・SHA変更・PR非OPEN は Fail Closed で拒否する。AI（エージェント）は merge せず、Y の代理投稿もしない。
+
+正本実装: `Construction-World-Model-Platform/01_construction-world-model-management` の
+`decisions/ADR-0011-bot-approve-and-single-merge.md`・`scripts/mergegate.py`・`.github/workflows/merge-gate.yml`。
+
+### 施行条件
+
+- 本除外は、対象リポジトリで上記方式が**実装・設定された後**に適用する。
+- 実装完了までは auto-merge を有効化しない（Fail Closed）。
+- 設定変更（`Allow auto-merge`: OFF、`Allow GitHub Actions to create and approve pull requests`: ON）は **owner が行い**、AI は readback のみ行う。
+
+### 維持される統制
+
+- Required Checks は引き続き必須（対象リポジトリでは `contracts`・`CodeRabbit`）。
+- §8「人間が残す判断」（Release / 本番deploy / Secret / 不可逆な削除・破壊的操作 / 本ポリシー変更）は維持。
+- main直接push禁止、`gh pr merge --admin` による迂回禁止、force push禁止、main削除禁止は維持。
+
+### 承認根拠
+
+- 2026-10-05、ユーザー（Kensan196948G）が本適用除外を Y と承認。
+- 本記録はチャット上の承認を転記したものであり、GitHub本人性の新しい証明ではない。

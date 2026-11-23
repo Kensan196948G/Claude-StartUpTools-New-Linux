@@ -1,7 +1,7 @@
 # GitHub開発運用仕様
 
 状態: v1（2026-09-07 制定、ClaudeOS v10）
-正本: 中央 `GITHUB_POLICY.md`（Deep-Seek-Harness-Project 配布。本リポジトリのコピーは同一内容）> GitHub Rulesets > GitHub Actions / CI > 本ファイル > `CLAUDE.md` §15〜§17
+正本: 中央 `GITHUB_POLICY.md`（`Kensan196948G/Deep-Seek-Harness-Project` 配布。本リポジトリのコピーは R1 の参照修飾を除き同一）> GitHub Rulesets > GitHub Actions / CI > 本ファイル > `CLAUDE.md` §15〜§17
 旧仕様: `CloudflareNeonGitHub自動化仕様.md` §4〜§9 の GitHub 部分を分離したもの。
 
 ## 1. 標準フロー
