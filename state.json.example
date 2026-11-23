@@ -271,10 +271,7 @@
     "runbook_generated": false,
     "runbook_path": null,
     "pre_deploy_checklist_done": false,
-    "executed_at": null,
-    "executed_by": null,
     "environment": null,
-    "post_deploy_verified": false,
     "notes": ""
   },
   "supervisor": {

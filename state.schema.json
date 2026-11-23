@@ -1183,38 +1183,26 @@
     },
     "deploy": {
       "type": "object",
-      "description": "Deployment tracking. CTO sets ready=true when system is deploy-ready. Actual deploy is executed manually by the user.",
+      "description": "Deployment tracking. CTO sets ready=true when system is deploy-ready. Actual deploy is executed manually by the user. 各フィールドは書き込み主体を持つものだけを残す (2026-11: 書き込みコードが無かった executed_at / executed_by / post_deploy_verified を削除)。",
       "properties": {
         "ready": {
           "type": "boolean",
-          "description": "CTO sets true when deployment is approved"
+          "description": "bin/deploy-prep.sh が true にする (デプロイ準備完了)"
         },
         "runbook_generated": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "scripts/release/generate-deploy-runbook.js と bin/deploy-prep.sh が実生成結果に基づいて設定する"
         },
         "runbook_path": {
           "type": [
             "string",
             "null"
           ],
-          "description": "Path to generated deploy runbook (e.g. reports/deploy-runbook-YYYYMMDD.md)"
+          "description": "実際に生成した runbook の相対パス (例 reports/deploy-runbook.md)。生成できなければ null"
         },
         "pre_deploy_checklist_done": {
-          "type": "boolean"
-        },
-        "executed_at": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time",
-          "description": "Timestamp of manual deploy execution by user"
-        },
-        "executed_by": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "boolean",
+          "description": "bin/deploy-prep.sh --checklist-done で人間がチェックリスト完了を表明したとき true"
         },
         "environment": {
           "type": [
@@ -1226,9 +1214,6 @@
             "production",
             null
           ]
-        },
-        "post_deploy_verified": {
-          "type": "boolean"
         },
         "notes": {
           "type": "string"
