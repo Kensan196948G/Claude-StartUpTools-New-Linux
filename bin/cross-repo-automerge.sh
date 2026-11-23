@@ -23,7 +23,8 @@
 #   4. draft は対象外
 #
 # 動作:
-#   - mergeStateStatus=BEHIND  → gh pr update-branch（同一 repo 1 回 1 件まで）
+#   - mergeStateStatus=BEHIND  → REST PUT /repos/{owner}/{repo}/pulls/{n}/update-branch（同一 repo 1 回 1 件まで）
+#     注: `gh pr update-branch` は gh 2.45 系に存在しないため REST を使う
 #   - CLEAN かつ 失敗 0・保留 0 → gh pr merge --squash（同一 repo 1 回 1 件まで）
 #   - 失敗チェックあり / DIRTY(競合) / 保留あり / その他BLOCKED → スキップして理由を記録
 #
@@ -219,7 +220,7 @@ while IFS= read -r repo; do
       if [[ "$repo_updated" -ge 1 ]]; then add_skip "behind_already_updated"; continue; fi
       repo_updated=$((repo_updated + 1))
       if (( APPLY )); then
-        if "$GH_BIN" pr update-branch "$num" -R "$OWNER/$repo" >/dev/null 2>&1; then
+        if "$GH_BIN" api --method PUT "repos/$OWNER/$repo/pulls/$num/update-branch" >/dev/null 2>&1; then
           jq -cn --arg repo "$repo" --argjson pr "$num" '{repo:$repo, pr:$pr}' >> "$TMPD/updated.jsonl"
         else
           add_skip "update_branch_failed"

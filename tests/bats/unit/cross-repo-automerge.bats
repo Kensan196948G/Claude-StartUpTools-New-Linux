@@ -38,6 +38,12 @@ fix="$FIX"
 case "$1" in
   repo) cat "$fix/repos.json" ;;
   api)
+    # PUT .../pulls/<n>/update-branch は更新系。失敗注入が無ければ成功
+    case "$*" in
+      *update-branch*)
+        [ -f "$fix/fail_api_update" ] && { echo "gh: cannot update" >&2; exit 1; }
+        echo '{"message":"Updating pull request branch."}'; exit 0 ;;
+    esac
     rel="${2#repos/}"; rest="${rel#*/}"; repo="${rest%%/*}"
     if [ -f "$fix/rulesets/$repo.json" ]; then cat "$fix/rulesets/$repo.json"; else exit 1; fi ;;
   pr)
@@ -201,7 +207,8 @@ bot_pr() { # $1=number $2=title $3=state $4=conclusion
   LAST="$(last_json "$output")"
   echo "$LAST" | jq -e '.updated | length == 1'
   echo "$LAST" | jq -e '.updated[0].pr == 11'
-  ! grep -q 'pr update-branch' "$STUB_LOG"
+  # dry-run では更新系 API を呼ばない（gh 2.45 に `pr update-branch` は無いため REST を使う）
+  ! grep -q 'update-branch' "$STUB_LOG"
 }
 
 @test "cross-repo-automerge: 失敗チェックがある PR はスキップする" {
@@ -319,4 +326,27 @@ bot_pr() { # $1=number $2=title $3=state $4=conclusion
   [ -f "$LOG" ]
   [ "$(wc -l < "$LOG" | tr -d ' ')" -eq 1 ]
   jq -e '.mode == "dry-run" and .ok == true' "$LOG"
+}
+
+@test "cross-repo-automerge: --apply の BEHIND 更新は REST API を使う（gh 2.45 に pr update-branch は無い）" {
+  repos_json '{"name":"R"}'
+  has_ruleset R
+  prs_json R "[$(bot_pr 31 'chore(deps): bump lodash from 4.17.0 to 4.17.21' BEHIND SUCCESS)]"
+  run bash "$SCRIPT" --apply --json
+  [ "$status" -eq 0 ]
+  # REST の PUT が呼ばれている
+  grep -q 'api --method PUT repos/Kensan196948G/R/pulls/31/update-branch' "$STUB_LOG"
+  # 存在しないサブコマンドは呼ばれていない
+  ! grep -q 'pr update-branch' "$STUB_LOG"
+}
+
+@test "cross-repo-automerge: --apply で更新 API が失敗したら update_branch_failed でスキップする" {
+  repos_json '{"name":"R"}'
+  has_ruleset R
+  prs_json R "[$(bot_pr 32 'chore(deps): bump lodash from 4.17.0 to 4.17.21' BEHIND SUCCESS)]"
+  : > "$FIX/fail_api_update"
+  run bash "$SCRIPT" --apply --json
+  [ "$status" -eq 0 ]
+  last_json "$output" | jq -e '.skipped | map(.reason) | index("update_branch_failed") != null'
+  last_json "$output" | jq -e '.updated | length == 0'
 }
