@@ -164,9 +164,12 @@ ds__unit_json() {
                             error:"systemctl が見つかりません"}'
     return 0
   fi
-  out="$("$bin" --user show "$unit" -p ActiveState -p NRestarts 2>/dev/null)" || rc=$?
+  out="$("$bin" --user show "$unit" -p ActiveState -p NRestarts -p WorkingDirectory 2>/dev/null)" || rc=$?
   state="$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p' | head -n 1)"
   restarts="$(printf '%s\n' "$out" | sed -n 's/^NRestarts=//p' | head -n 1)"
+  local wd serving
+  wd="$(printf '%s\n' "$out" | sed -n 's/^WorkingDirectory=//p' | head -n 1)"
+  serving="$(ds__dashboard_serving_from "$wd")"
   if (( rc != 0 )) && [[ -z "$state" ]]; then
     err="systemctl show が失敗しました (exit $rc)"
   elif [[ -z "$state" ]]; then
@@ -174,8 +177,11 @@ ds__unit_json() {
   fi
 
   jq -cn --arg u "$unit" --arg s "$state" --arg r "$restarts" --arg err "$err" \
+    --arg wd "$wd" --arg serving "$serving" \
     '{unit:$u, ok:(($err == "")),
       active_state:$s, n_restarts:$r,
+      working_directory:(if $wd == "" then null else $wd end),
+      serving_from:$serving,
       error:(if $err == "" then null else $err end)}'
 }
 
@@ -533,6 +539,14 @@ ds__render_env() {
   else
     printf '  unit      : %s取得不可%s %s (%s)\n' "$C_YELLOW" "$C_RESET" "${u_err:-不明}" "$unit"
   fi
+  u_serving="$(ds__get "$j" '.unit.serving_from' 'unknown')"
+  u_color="$C_WHITE"
+  if [[ "$u_serving" == "release" ]]; then
+    u_color="$C_GREEN"
+  elif [[ "$u_serving" == "worktree" ]]; then
+    u_color="$C_YELLOW"
+  fi
+  printf '              成果物起動 : %s%s%s\n' "$u_color" "${u_serving:-unknown}" "$C_RESET"
 
   # 5. dashboard（本体とは別 unit / 別 port）
   d_unit="$(ds__get "$j" '.dashboard.unit' '')"
