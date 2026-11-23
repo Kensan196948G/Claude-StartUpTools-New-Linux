@@ -3,6 +3,11 @@
  * Node.js built-in modules only (no npm install required)
  * Usage: node scripts/dashboards/serve-dashboard.js [--port 3737]
  *
+ * Env:
+ *   CLAUDEOS_HOME  ClaudeOS の状態ルート（既定 ~/.claudeos）。
+ *                  staging では別ディレクトリを指して本番状態から分離する。
+ *   HOST           bind アドレス（既定 0.0.0.0）。loopback 限定なら 127.0.0.1。
+ *
  * Display conditions:
  *   Show if: (Linux folder listed) OR (GitHub repo registered)
  *   Cron-registered projects additionally show full Session Info
@@ -20,9 +25,30 @@ const { promisify } = require('util');
 const execAsync     = promisify(exec);
 
 const PORT         = parseInt(process.argv.find(a => a.match(/^\d+$/)) || '3737', 10);
-const CRON_REG     = path.join(os.homedir(), '.claudeos', 'cron-registry.json');
-const SESSIONS_DIR = path.join(os.homedir(), '.claudeos', 'sessions');
-const PROJ_ROOT    = path.resolve(__dirname, '..', '..');
+
+// ClaudeOS の状態ルート。CLAUDEOS_HOME を設定すると、cron-registry / sessions /
+// job-history / supervisor state / dashboard.log といった読み書き対象がすべて
+// その配下に移り、staging インスタンスが本番の状態を共有・上書きしなくなる。
+// 未設定時は従来どおり ~/.claudeos（後方互換）。
+const CLAUDEOS_HOME = process.env.CLAUDEOS_HOME || path.join(os.homedir(), '.claudeos');
+
+// CLAUDEOS_HOME 配下の状態パス（単一情報源）。
+// 既定引数により、未設定時は従来と同一のパスへ解決される。
+function claudeosPaths(home = CLAUDEOS_HOME) {
+  return {
+    home:            home,
+    cronRegistry:    path.join(home, 'cron-registry.json'),
+    sessionsDir:     path.join(home, 'sessions'),
+    jobHistory:      path.join(home, 'job-history.json'),
+    supervisorState: path.join(home, 'supervisor', 'state.json'),
+    dashboardLog:    path.join(home, 'dashboard.log'),
+  };
+}
+
+const CLAUDEOS_PATHS = claudeosPaths();
+const CRON_REG       = CLAUDEOS_PATHS.cronRegistry;
+const SESSIONS_DIR   = CLAUDEOS_PATHS.sessionsDir;
+const PROJ_ROOT      = path.resolve(__dirname, '..', '..');
 
 // ── Fixed Job execution (POST /api/jobs) ────────────────────────────────────
 const ALLOWED_JOBS = {
@@ -80,7 +106,7 @@ function validateSseToken(token) {
 }
 
 const jobRunning = {};  // { [jobId]: true } while job is active
-const JOB_HISTORY_FILE = path.join(os.homedir(), '.claudeos', 'job-history.json');
+const JOB_HISTORY_FILE = CLAUDEOS_PATHS.jobHistory;
 const JOB_HISTORY_MAX  = 50;
 
 function loadJobHistory() {
@@ -1241,7 +1267,7 @@ function handleJobStatus(res) {
 }
 
 // ── Supervisor Status ─────────────────────────────────────────────────────
-const SUPERVISOR_STATE_FILE = path.join(os.homedir(), '.claudeos', 'supervisor', 'state.json');
+const SUPERVISOR_STATE_FILE = CLAUDEOS_PATHS.supervisorState;
 
 function handleSupervisorStatus(res) {
   try {
@@ -1563,7 +1589,7 @@ function watchFiles() {
   });
 
   // ── dashboard.log テール監視 ────────────────────────────────────────────
-  const logFile = path.join(os.homedir(), '.claudeos', 'dashboard.log');
+  const logFile = CLAUDEOS_PATHS.dashboardLog;
   let logOffset = 0;
   try { logOffset = fs.statSync(logFile).size; } catch {}
   fs.watchFile(logFile, { interval: 1000 }, () => {
@@ -1583,7 +1609,7 @@ function watchFiles() {
   });
 
   // ── supervisor state.json 監視 ──────────────────────────────────────────
-  const supervisorStateFile = path.join(os.homedir(), '.claudeos', 'supervisor', 'state.json');
+  const supervisorStateFile = CLAUDEOS_PATHS.supervisorState;
   let lastSupervisorContent = '';
   fs.watchFile(supervisorStateFile, { interval: 2000 }, () => {
     try {
@@ -1597,7 +1623,11 @@ function watchFiles() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { getAllProjects, getRegisteredProjects, buildProjectData, buildTimeline, weeksToPhase };
+  module.exports = {
+    getAllProjects, getRegisteredProjects, buildProjectData, buildTimeline, weeksToPhase,
+    // 状態パス解決（CLAUDEOS_HOME 対応の検証用）
+    CLAUDEOS_HOME, CLAUDEOS_PATHS, claudeosPaths,
+  };
 }
 
 // Start server only when run directly (not when required by tests)
