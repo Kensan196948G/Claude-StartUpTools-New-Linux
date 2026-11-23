@@ -47,6 +47,14 @@
     "stable_achieved": false,
     "consecutive_success": 0
   },
+  "deploy": {
+    "ready": false,
+    "runbook_generated": false,
+    "runbook_path": null,
+    "pre_deploy_checklist_done": false,
+    "environment": null,
+    "notes": ""
+  },
   "token": {
     "used": 0,
     "remaining": 100
