@@ -1,5 +1,11 @@
 # CI 強化パッチ（人間の Y 後に適用）
 
+> **状態: 適用済み（2026-11-23, PR #217, 人間承認 2=Y）。** 正本は `.github/workflows/ci.yml`。
+> 適用時に `release-artifact` job の `CLAUDEOS_HOME: ${{ runner.temp }}` を job-level env から step-level env へ移した
+> （job-level env では runner context が使えず、GitHub が workflow を無効判定したため。挙動は同一）。
+> 下の `ci-hardening.patch` は適用前の提案の記録であり、**再適用しないこと**。
+
+
 対象: `Kensan196948G/Claude-StartUpTools-New-Linux` の `.github/workflows/ci.yml`
 基準 commit: `07056ee`（origin/main, 2026-11-23 時点）
 状態: **未適用**（この文書と `ci-hardening.patch` は適用前の提案）
