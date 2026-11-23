@@ -109,3 +109,57 @@ STUB
   [ "$(printf '%s' "$json" | jq -r .ok)" = "false" ]
   [[ "$(printf '%s' "$json" | jq -r '.failures[0]')" == *"startup-server.js"* ]]
 }
+
+# --- --release モード (既存の成果物を検証して起動する) ---
+
+@test "staging-smoke: --release に存在しないディレクトリは exit 2" {
+  run bash "$FAKE_REPO/scripts/e2e/staging-smoke.sh" --release "$TEST_TEMP/nope" --json
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"BAD_ARGS"* ]]
+}
+
+@test "staging-smoke: --release に manifest.json が無ければ exit 2" {
+  mkdir -p "$TEST_TEMP/rel"
+  run bash "$FAKE_REPO/scripts/e2e/staging-smoke.sh" --release "$TEST_TEMP/rel" --json
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"manifest.json"* ]]
+}
+
+@test "staging-smoke: --release は release-build が無くても SKIP しない (成果物を検証する)" {
+  REL="$TEST_TEMP/rel"
+  mkdir -p "$REL/scripts/release"
+  printf '{"schema_version":1,"commit":"%s","short_commit":"abcdef0","tree_sha256":"%s","files":[]}\n' \
+    "$(printf 'a%.0s' {1..40})" "$(printf 'b%.0s' {1..64})" > "$REL/manifest.json"
+  # verify-artifact を失敗させ、検証で止まる (サーバを起動しない) ことを確かめる
+  printf '#!/usr/bin/env bash\necho "{\\"ok\\":false}"\nexit 1\n' > "$REL/scripts/release/verify-artifact.sh"
+  run bash "$FAKE_REPO/scripts/e2e/staging-smoke.sh" --release "$REL" --json
+  [ "$status" -eq 1 ]
+  json="$(_json_line)"
+  [ "$(printf '%s' "$json" | jq -r '.ok')" = "false" ]
+  [[ "$json" == *"verify-artifact"* ]]
+  [[ "$output" != *"SKIP"* ]]
+  [ ! -d "$HOME/.claudeos" ]
+}
+
+@test "staging-smoke: --release は成果物ディレクトリに書き込まない" {
+  REL="$TEST_TEMP/rel"
+  mkdir -p "$REL/scripts/release"
+  printf '{"schema_version":1,"commit":"%s","short_commit":"abcdef0","tree_sha256":"%s","files":[]}\n' \
+    "$(printf 'a%.0s' {1..40})" "$(printf 'b%.0s' {1..64})" > "$REL/manifest.json"
+  printf '#!/usr/bin/env bash\necho "{\\"ok\\":false}"\nexit 1\n' > "$REL/scripts/release/verify-artifact.sh"
+  before="$(find "$REL" -printf '%p %s %T@\n' | sort | sha256sum)"
+  run bash "$FAKE_REPO/scripts/e2e/staging-smoke.sh" --release "$REL" --json
+  after="$(find "$REL" -printf '%p %s %T@\n' | sort | sha256sum)"
+  [ "$before" = "$after" ]
+}
+
+@test "staging-smoke: git 管理外で manifest があれば自身を成果物として扱う (auto-detect)" {
+  printf '{"schema_version":1,"commit":"%s","short_commit":"abcdef0","tree_sha256":"%s","files":[]}\n' \
+    "$(printf 'a%.0s' {1..40})" "$(printf 'b%.0s' {1..64})" > "$FAKE_REPO/manifest.json"
+  mkdir -p "$FAKE_REPO/scripts/release"
+  printf '#!/usr/bin/env bash\necho "{\\"ok\\":false}"\nexit 1\n' > "$FAKE_REPO/scripts/release/verify-artifact.sh"
+  run bash "$FAKE_REPO/scripts/e2e/staging-smoke.sh" --json
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"既存のリリース成果物を検証"* ]]
+  [[ "$output" != *"SKIP"* ]]
+}
