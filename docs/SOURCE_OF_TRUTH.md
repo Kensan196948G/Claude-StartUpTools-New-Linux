@@ -47,6 +47,9 @@
 | `bin/audit-log.sh` | Source | 監査ログ（世代連結・action/since 絞り込み）の閲覧 |
 | `bin/staging-smoke-timer.sh` | Source | Staging の日次スモークを回す systemd --user timer の登録 |
 | `scripts/release/verify-artifact.sh` | Source | リリース成果物の独立検証（sha256/tree/欠落/余剰） |
+| `bin/promote-production.sh` | Source | 本番昇格オーケストレータ（ゲート→退避→差し替え→確定→スモーク、失敗時自動復旧） |
+| `bin/cross-repo-remediate.sh` | Source | 横断是正の実行計画（plan のみ。適用は人間の Y 後に段階実施） |
+| `docs/proposals/` | Source | 人間の承認後に適用する検証済み提案（CI 強化パッチ等） |
 | `libexec/startup-state.sh` | Source | 同コンソール向け read-only 状態スナップショット（JSON） |
 | `bin/web-startup.sh` | Source | 同コンソールの起動・停止・状態（PID ファイル + health check） |
 | `bin/web-startup-service.sh` | Source | 同コンソール常駐用 systemd --user unit の登録/解除（bind は常に loopback） |
