@@ -45,3 +45,17 @@ make_stub_bin() {
   printf '#!/usr/bin/env bash\n%s\n' "$*" > "$STUB_BIN/$name"
   chmod +x "$STUB_BIN/$name"
 }
+
+# wait_until <timeout_sec> <cmd...> — 非同期に生成される成果物を最大 timeout 秒待つ
+#   成功で 0、timeout で 1 を返す。待つのは「同期」だけであり、アサーション自体は
+#   呼び出し側に残す (skip/retry で失敗を隠す用途では使わない)。
+#   例: wait_until 5 test -f "$TEST_TEMP/terminal.log"
+wait_until() {
+  local timeout="$1"; shift
+  local i
+  for i in $(seq 1 $((timeout * 20))); do
+    if "$@" >/dev/null 2>&1; then return 0; fi
+    sleep 0.05
+  done
+  return 1
+}
