@@ -66,6 +66,7 @@ CLAUDEOS_HOME=$HOME/.claudeos bash <worktree>/bin/release-promote.sh \
 | 本番 3740 | health 不変・MainPID 3582989 不変 |
 | 状態分離 | `~/.claudeos-stg/logs/web-startup-audit.log` が生成。本番 `~/.claudeos/logs/web-startup-audit.log` は 17942 bytes のまま不変 |
 | Staging dashboard | `claude-startuptools-dashboard-stg.service` active / `127.0.0.1:3743` / `Environment=HOST=127.0.0.1 CLAUDEOS_HOME=~/.claudeos-stg` / ExecStart は `staging-current/scripts/dashboards/serve-dashboard.js`。本番 3737 は 200 のまま不変 |
+| 状態分離の実測（dashboard） | `/api/mc-data` が 本番 `agentTeams=6` / `eventLog=15`、Staging `agentTeams=0` / `eventLog=0`（Staging は `~/.claudeos-stg` が空のため） |
 | 昇格台帳 | `~/.claudeos/releases/promotions.jsonl` に `ROLLED_BACK`（health 失敗時の自動切戻し実測）と `PROMOTED` の 2 行 |
 
 > 補足: 初回の `--no-restart` 実行は health 確認に失敗し、symlink を削除して `ROLLED_BACK` を記録した。**ロールバック経路が実環境で動作した実測例**である（意図した安全側の挙動）。
