@@ -168,7 +168,7 @@ function copyDirIfMissing(srcDir, destDir, plan, dryRun, filter) {
     const s = path.join(srcDir, e.name);
     const d = path.join(destDir, e.name);
     if (e.isDirectory()) {
-      copyDirIfMissing(s, d, plan, dryRun, m.filter);
+      copyDirIfMissing(s, d, plan, dryRun, filter);
     } else if (e.isFile()) {
       if (fs.existsSync(d)) { plan.skip++; continue; }
       plan.create++;
@@ -178,6 +178,29 @@ function copyDirIfMissing(srcDir, destDir, plan, dryRun, filter) {
       }
     }
   }
+}
+
+// planDirMapping — MAPPINGS の 1 件 (type: "dir") の計画を立てる。
+//   per-mapping の filter (例: .claude/agents の first_class 限定) を必ず配線する。
+//   filter が undefined の mapping は「全件コピー」。
+function planDirMapping(mapping, targetPath, dryRun) {
+  const src  = path.join(REPO_ROOT, mapping.src);
+  const dest = path.join(targetPath, mapping.dest);
+  const plan = { create: 0, skip: 0, srcMissing: [] };
+  copyDirIfMissing(src, dest, plan, dryRun, mapping.filter);
+  return plan;
+}
+
+// planFileMapping — MAPPINGS の 1 件 (type: "file") の計画を立てる。
+function planFileMapping(mapping, targetPath, dryRun) {
+  const plan = { create: 0, skip: 0, srcMissing: [] };
+  copyFileIfMissing(
+    path.join(REPO_ROOT, mapping.src),
+    path.join(targetPath, mapping.dest),
+    plan,
+    dryRun,
+  );
+  return plan;
 }
 
 function copyFileIfMissing(src, dest, plan, dryRun, transform) {
@@ -262,11 +285,9 @@ function processProject(targetPath, dryRun, quiet) {
   const totals   = { create: 0, skip: 0, merge: 0, srcMissing: [] };
 
   for (const m of MAPPINGS) {
-    const src  = path.join(REPO_ROOT, m.src);
-    const dest = path.join(targetPath, m.dest);
-    const plan = { create: 0, skip: 0, srcMissing: [] };
-    if (m.type === "dir") copyDirIfMissing(src, dest, plan, dryRun);
-    else                  copyFileIfMissing(src, dest, plan, dryRun);
+    const plan = m.type === "dir"
+      ? planDirMapping(m, targetPath, dryRun)
+      : planFileMapping(m, targetPath, dryRun);
     totals.create += plan.create;
     totals.skip   += plan.skip;
     totals.srcMissing.push(...plan.srcMissing);
@@ -384,4 +405,17 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { mergeSettings };
+module.exports = {
+  // 既存
+  mergeSettings,
+  // テスト用 (第3バッチ #2: copyDirIfMissing の m is not defined 回帰テスト)
+  MAPPINGS,
+  REPO_ROOT,
+  resolveTargetPath,
+  copyDirIfMissing,
+  copyFileIfMissing,
+  planDirMapping,
+  planFileMapping,
+  processProject,
+  firstClassAgentFilter,
+};
