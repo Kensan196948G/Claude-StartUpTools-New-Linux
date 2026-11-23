@@ -2,27 +2,122 @@
   "_comment": "/home/kensan/Projects 配下に存在するローカル Git プロジェクト候補の参考一覧。実際の起動候補は config.projects を動的走査する。",
   "basePath": "/home/kensan/Projects",
   "projects": [
-    "ArcSphere3D",
-    "Civil-Construction-IMS",
-    "Civil-Draw",
-    "Civil-ITSM-Support",
-    "CivilPDF-DX",
-    "ClaudeCode-StartUpTools-New",
-    "Codex-StartUpTools",
+    "Claude-StartUpTools-New-Linux",
     "Codex-StartUpTools-New-Linux",
-    "Construction-DX-OS",
-    "Construction-DX-OnePlatform",
-    "Construction-Enterprise-OS",
-    "Construction-LegalOps-DX",
-    "Enterprise-AI-HelpDesk-System",
-    "IT-BCP-ITSCM-System",
-    "ITSM-Management",
-    "Open-BIM-Information-Platform",
-    "PC-Ops-Orchestrator",
-    "Remote-Service-Platform",
-    "ServiceHub-Construction-Platform",
-    "Synapse-OS",
-    "Weather-Marine-Construction-Decision-Support-System",
-    "Windows-Deploy-Management-System"
-  ]
+    "DX-Project-Portfolio-Atlas",
+    "Deep-Seek-Harness-Project",
+    "HermesAgentOS-StartUpTools-Linux",
+    "OpenCode-Harness",
+    "_shared",
+    "dsh-superagent-prototype",
+    "open-design"
+  ],
+  "_stale": [
+    {
+      "name": "ArcSphere3D",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Civil-Construction-IMS",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Civil-Draw",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Civil-ITSM-Support",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "CivilPDF-DX",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "ClaudeCode-StartUpTools-New",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Codex-StartUpTools",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Construction-DX-OnePlatform",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Construction-DX-OS",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Construction-Enterprise-OS",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Construction-LegalOps-DX",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Enterprise-AI-HelpDesk-System",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "IT-BCP-ITSCM-System",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "ITSM-Management",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Open-BIM-Information-Platform",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "PC-Ops-Orchestrator",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Remote-Service-Platform",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "ServiceHub-Construction-Platform",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Synapse-OS",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Weather-Marine-Construction-Decision-Support-System",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    },
+    {
+      "name": "Windows-Deploy-Management-System",
+      "reason": "NOT_FOUND_UNDER_BASE",
+      "checked_at": "2026-11-23T01:00:53.182Z"
+    }
+  ],
+  "_verified_at": "2026-11-23T01:00:53.182Z"
 }

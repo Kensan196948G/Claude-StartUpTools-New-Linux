@@ -44,16 +44,31 @@ function writeJsonAtomic(file, data) {
   fs.renameSync(tmp, file);
 }
 
+/**
+ * resolveDataDir — ローカルバンクのデータディレクトリを解決する。
+ *
+ * CLAUDEOS_DATA_DIR が設定されていれば、呼び出し側が渡した dataDir より優先する。
+ * これはテスト隔離用の上書きで、未設定時の既定 (呼び出し側が渡した
+ * `.claude/claudeos/data`) は従来どおり。session-end.js は
+ * `path.join(__dirname, "..", "..", "data")` を渡すため、テストがフックを
+ * 実行すると tracked な reasoning-bank.json を書き換えてしまう問題への対策。
+ */
+function resolveDataDir(dataDir) {
+  const override = process.env.CLAUDEOS_DATA_DIR;
+  return override ? override : dataDir;
+}
+
 function loadBank(dataDir) {
-  const file = path.join(dataDir, BANK_FILE);
+  const file = path.join(resolveDataDir(dataDir), BANK_FILE);
   const existing = readJson(file);
   if (existing && Array.isArray(existing.entries)) return existing;
   return { schema_version: "2.0", description: "ClaudeOS ReasoningBank", entries: [], negative_patterns: [] };
 }
 
 function saveBank(dataDir, bank) {
-  fs.mkdirSync(dataDir, { recursive: true });
-  writeJsonAtomic(path.join(dataDir, BANK_FILE), bank);
+  const dir = resolveDataDir(dataDir);
+  fs.mkdirSync(dir, { recursive: true });
+  writeJsonAtomic(path.join(dir, BANK_FILE), bank);
 }
 
 // ------------------------------------------------------------------ グローバルバンク I/O（Cross-project）
@@ -357,6 +372,7 @@ function retrieveRelevantPatternsGlobal(localBank, projectName, phase, currentTa
 // ------------------------------------------------------------------ 公開 API
 
 module.exports = {
+  resolveDataDir,
   loadBank,
   saveBank,
   loadGlobalBank,
