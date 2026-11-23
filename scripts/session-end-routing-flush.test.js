@@ -19,9 +19,27 @@ function makeTmp() {
 
 function pendingPath(tmp) { return path.join(tmp, '.claude', 'claudeos', 'data', 'routing-pending.jsonl'); }
 function statePath(tmp) { return path.join(tmp, 'state.json'); }
+function dataDirPath(tmp) { return path.join(tmp, '.claude', 'claudeos', 'data'); }
 
 function runHook(tmp) {
-  execFileSync(process.execPath, [HOOK], { cwd: tmp, input: '', encoding: 'utf8', env: { ...process.env, CLAUDEOS_HEAVY_SYNC: '0' } });
+  // session-end.js はローカルバンクの dataDir を __dirname 基準
+  // (.claude/claudeos/data = tracked) で解決する。テストがフックを実行すると
+  // 追跡ファイルを書き換えてしまうため、CLAUDEOS_DATA_DIR で一時ディレクトリへ
+  // 隔離する。HOME も一時化し、グローバルバンク (~/.claude/data) を実環境へ
+  // 書かせない。
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  execFileSync(process.execPath, [HOOK], {
+    cwd: tmp,
+    input: '',
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CLAUDEOS_HEAVY_SYNC: '0',
+      CLAUDEOS_DATA_DIR: dataDirPath(tmp),
+      HOME: home,
+    },
+  });
 }
 
 test('session-end: routing-pending.jsonl の完全な行を routing_log へ集約し、取り込み済み分は消す', () => {
@@ -82,4 +100,62 @@ test('session-end: routing-pending.jsonl が存在しなくても失敗しない
 test('.claude/claudeos と Claude/templates/claudeos の session-end.js は同一内容', () => {
   const templatePath = path.join(__dirname, '..', 'Claude', 'templates', 'claudeos', 'scripts', 'hooks', 'session-end.js');
   assert.strictEqual(fs.readFileSync(HOOK, 'utf8'), fs.readFileSync(templatePath, 'utf8'));
+});
+
+test('reasoning-bank: CLAUDEOS_DATA_DIR は既定 dataDir より優先され、未設定時は従来どおり', () => {
+  const rb = require('../.claude/claudeos/scripts/hooks/reasoning-bank.js');
+  const tmp = makeTmp();
+  const fallback = path.join(tmp, 'fallback');
+  const isolated = path.join(tmp, 'isolated');
+  const bank = { schema_version: '2.0', entries: [{ id: 'entry-1' }], negative_patterns: [] };
+  const prev = process.env.CLAUDEOS_DATA_DIR;
+  try {
+    process.env.CLAUDEOS_DATA_DIR = isolated;
+    rb.saveBank(fallback, bank);
+    assert.ok(fs.existsSync(path.join(isolated, 'reasoning-bank.json')), 'CLAUDEOS_DATA_DIR 側へ書く');
+    assert.ok(!fs.existsSync(path.join(fallback, 'reasoning-bank.json')), '渡された dataDir へは書かない');
+    assert.deepStrictEqual(rb.loadBank(fallback), bank, '読込も同じ隔離先から行う');
+
+    delete process.env.CLAUDEOS_DATA_DIR;
+    rb.saveBank(fallback, bank);
+    assert.ok(fs.existsSync(path.join(fallback, 'reasoning-bank.json')), '未設定時は従来どおり渡された dataDir へ書く');
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDEOS_DATA_DIR;
+    else process.env.CLAUDEOS_DATA_DIR = prev;
+  }
+});
+
+test('session-end: 実行しても tracked な .claude/claudeos/data を書き換えない (回帰)', (t) => {
+  const repo = path.join(__dirname, '..');
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    t.skip('git checkout ではないため skip');
+    return;
+  }
+  const bankPath = path.join(repo, '.claude', 'claudeos', 'data', 'reasoning-bank.json');
+  const statusArgs = ['-C', repo, 'status', '--porcelain', '--untracked-files=no'];
+  let statusBefore;
+  try {
+    statusBefore = execFileSync('git', statusArgs, { encoding: 'utf8' });
+  } catch {
+    t.skip('git を実行できないため skip');
+    return;
+  }
+  const bankBefore = fs.existsSync(bankPath) ? fs.readFileSync(bankPath) : null;
+
+  const tmp = makeTmp();
+  fs.writeFileSync(statePath(tmp), JSON.stringify({
+    execution: { routing_log: [], last_session_summary: 'テストセッションの要約' },
+    stable: { stable_achieved: true },
+    dreaming: {},
+    learning: {},
+  }));
+  runHook(tmp);
+
+  const statusAfter = execFileSync('git', statusArgs, { encoding: 'utf8' });
+  const bankAfter = fs.existsSync(bankPath) ? fs.readFileSync(bankPath) : null;
+  assert.deepStrictEqual(bankAfter, bankBefore, 'tracked reasoning-bank.json がフック実行で書き換わった');
+  assert.strictEqual(statusAfter, statusBefore, 'フック実行で tracked ファイルの git status が変化した');
+  if (statusBefore === '') {
+    assert.strictEqual(statusAfter, '', 'テスト実行後も git status --porcelain は空であること');
+  }
 });
