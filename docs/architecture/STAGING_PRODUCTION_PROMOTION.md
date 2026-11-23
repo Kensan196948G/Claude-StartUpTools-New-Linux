@@ -175,9 +175,52 @@
 | Kensan196948G 配下 repo | 76 |
 | `central-auto-merge` 保有 | 50（66%） |
 | ruleset なし | 21（28%）・別名 5 |
-| open PR | 209 / 41 repos |
+| open PR | **213**（2026-11-23 11:5x 時点・増加中） |
 | auto-merge armed | 0/9 サンプル（**実行器が定常稼働していない**） |
-| CLEAN + green なのに未マージ | 4 件（最長 98 日） |
+| CLEAN + green なのに未マージ | **33 件**（全 76 repo を `bin/repo-integration-status.sh` で実測。当初の「4 件」は上位 5 repo のサンプル値だった） |
 | required check 名と CI 実報告名 | 4/4 一致（ゲート自体は機能） |
 
-結論: **ゲート（fail-closed）は機能しているが、マージ自動化の実行体が回っていない**。本リポジトリの PR は今回 `gh pr merge` を Lead が明示実行して自動マージを成立させた（armed 0 の実態を回避）。
+結論: **ゲート（fail-closed）は機能しているが、マージ自動化の実行体が回っておらず、滞留は当初の想定より大きい**。本リポジトリの PR は今回 `gh pr merge` を Lead が明示実行して自動マージを成立させた（armed 0 の実態を回避）。
+
+## 14. 第2バッチ完了状況（2026-11-23 11:50 JST 実測）
+
+| # | 項目 | 状態 / 根拠 |
+|---|---|---|
+| 1 | `/api/health` に `commit` / `version` | **完了** #182。Staging が `commit=45032a8e…` / `version=4.0.0-linux` を返すことを実測 |
+| 2 | 配備後スモーク | **完了** #184（20 tests・読み取り専用を呼び出しログで検証） |
+| 3 | CI へ release-check / staging-smoke 組込 | **未適用（人間ゲート）** |
+| 4-5 | deploy フラグ整合 + runbook 実行可能化 | **完了** #183（書き手の無い 3 フィールドを schema から削除） |
+| 6 | Release / tag | **未実施（人間ゲート）** |
+| 7 | audit-scan の rulesets 対応 | **完了** #181（`protected=true` / `source=ruleset` / required 2 件） |
+| 8 | 中央ポリシーの版統一 | **未実施（人間ゲート）** |
+| 9 | auto-merge 実行器の定常化 | **未実施（人間ゲート・横断）** |
+| 10 | テスト副作用の除去 | **完了** #180（原因を実測特定、`CLAUDEOS_DATA_DIR` で隔離） |
+
+## 15. 第3バッチ（2026-11-23 11:50 時点）
+
+| # | 項目 | 状態 | 備考 |
+|---|---|---|---|
+| 1 | flaky 修正（start-claude 端末タブ） | 実装中 | 本日 2 回 CI を落とした既存 flake |
+| 2 | `test:dry-run` の既存バグ修正 | 完了 | 再帰の `m.filter` 取り違え + `mapping.filter` 未配線（44 体配布→9 体へ）で **1/33 → 33/33 PASS** |
+| 3 | UI に build（commit/version）表示 | 完了 | `build: 45032a8 / v4.0.0-linux` を実ブラウザで確認、ポーリングなし |
+| 4 | deploy-status CLI | 実装中 | 現行成果物・previous・health・台帳を 1 コマンドで |
+| 5 | 監査ログのローテーション | **完了** #186 | 5 MiB × 3 世代（本体含め最大 20 MiB）、fail-open |
+| 6 | repo-integration-status CLI | 実装中 | 横断の ruleset / open PR / CLEAN+green を 1 コマンドで |
+| 7 | Staging dashboard（3743） | **完了** #185 + 実起動 | `claude-startuptools-dashboard-stg.service` が 127.0.0.1:3743 で稼働、`CLAUDEOS_HOME=~/.claudeos-stg` |
+| 8 | Staging ttyd（3744） | **不採用** | ttyd は端末ゲートウェイで環境非依存。Staging に複製する意味がない（本番 3741 のみ） |
+| 9 | 文書・索引の更新 | 本 PR | 本書 + Runbook + SOURCE_OF_TRUTH |
+| 10 | 本番昇格の事前検証 | **完了（実測）** | unit バックアップ sha256 `7883f90c…`、promote/rollback の dry-run、計画 unit の dry-run を実測 |
+
+## 16. 本番昇格の事前検証結果（Y/N 待ちの状態）
+
+`release-promote --env production --release 45032a8e… --dry-run` の実測:
+
+| 項目 | 値 |
+|---|---|
+| release dir | `~/.claudeos/releases/45032a8ef1ad7570a860e3f09cbad7dd52a9dafc` |
+| tree_sha256 | `e08b77cb400e085856f7fe544a4a91b9dc0fdb421ce04a44df59f8e65aa4ce3c` |
+| staging 検証 | **一致**（staging-current が同一 tree_sha256）→ `STAGING_NOT_VERIFIED` を通過 |
+| 現在の production-current | なし（初回） |
+| ロールバック | 初回のため `previous` なし。**unit バックアップ `claudeos-web-startup.service.bak-<ts>` が必須** |
+| 現在の本番 unit sha256 | `7883f90cfc3a882751a2616c3beb0ed1b44dbb161085d4f9180211ce01f82f00`（戻し先の同一性確認用） |
+| 計画 unit の dry-run | `WorkingDirectory=~/.claudeos/releases/production-current` / `Environment=AI_STARTUP_CONFIG_PATH=…` / `ExecStart=node …/production-current/scripts/web/startup-server.js --port 3740 --host 127.0.0.1` |
