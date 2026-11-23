@@ -41,6 +41,11 @@ const REPO_ROOT    = path.resolve(__dirname, '..', '..');
 const PUBLIC_DIR   = path.join(__dirname, 'public');
 const CLAUDEOS_HOME = process.env.CLAUDEOS_HOME || path.join(os.homedir(), '.claudeos');
 const AUDIT_LOG    = path.join(CLAUDEOS_HOME, 'logs', 'web-startup-audit.log');
+// 監査ログのローテーション既定値 (env で上書き可)。
+//   5 MiB × 3 世代 = 最大 20 MiB で頭打ちにする (監査の意味は 1 リクエスト 1 行のまま)。
+const AUDIT_MAX_BYTES_DEFAULT = 5 * 1024 * 1024;
+const AUDIT_KEEP_DEFAULT = 3;
+const AUDIT_KEEP_MAX = 100;   // 設定ミス (1e9 等) で世代シフトのループが暴走しないための上限
 const BODY_LIMIT   = 64 * 1024;
 const INTENT_LIMIT = 2000;
 
@@ -285,6 +290,98 @@ function checkOrigin(origin, hostHeader) {
 /** auditLine — 監査ログ 1 行 (JSON Lines) */
 function auditLine(entry) {
   return JSON.stringify(Object.assign({ ts: new Date().toISOString() }, entry));
+}
+
+// ---------------------------------------------------------------------------
+// 監査ログのローテーション (サイズ上限 + 世代管理)
+//   追記のたびにサイズを見て、閾値以上なら <log> → <log>.1 → <log>.2 … と
+//   世代をシフトする。内容は書き換えず rename/unlink だけなので、監査行はそのまま残る。
+//   失敗してもリクエストは落とさない (fail-open)。失敗は stderr に 1 行だけ出す。
+// ---------------------------------------------------------------------------
+
+/** warnAudit — 監査ログの失敗を stderr に 1 行だけ出す (処理は止めない) */
+function warnAudit(message) {
+  try {
+    process.stderr.write('⚠️  [WARN] audit: ' + String(message) + '\n');
+  } catch { /* stderr すら書けない状況では何もしない (fail-open) */ }
+}
+
+/**
+ * auditRotateConfig — ローテーション設定を env から解決する。
+ *   STARTUP_WEB_AUDIT_MAX_BYTES : 回転閾値 (バイト)。既定 5 MiB。不正値は既定。
+ *   STARTUP_WEB_AUDIT_KEEP      : 保持する世代数 (.1〜.keep)。既定 3。0 で履歴を残さない。
+ *   設定ミスで監査が止まらないよう、不正値は既定へフォールバックする。
+ */
+function auditRotateConfig(env) {
+  const e = env || {};
+  const keepRaw = Number(e.STARTUP_WEB_AUDIT_KEEP);
+  return {
+    maxBytes: Math.floor(positiveNumber(e.STARTUP_WEB_AUDIT_MAX_BYTES, AUDIT_MAX_BYTES_DEFAULT)),
+    keep: Number.isFinite(keepRaw) && keepRaw >= 0
+      ? Math.min(AUDIT_KEEP_MAX, Math.floor(keepRaw))
+      : AUDIT_KEEP_DEFAULT,
+  };
+}
+
+/**
+ * rotateAuditLog — 追記前のローテーション。閾値以上なら世代シフトする。
+ *   keep === 0 のときは履歴を残さないので truncate する。
+ *   返り値 { rotated, reason } — 失敗しても throw しない (fail-open)。
+ *     reason: 'absent' | 'below-threshold' | 'rotated' | 'truncated'
+ *           | 'stat-failed' | 'rename-failed' | 'truncate-failed'
+ */
+function rotateAuditLog(file, opts) {
+  const o = opts || {};
+  const maxBytes = Number.isFinite(o.maxBytes) ? o.maxBytes : AUDIT_MAX_BYTES_DEFAULT;
+  // 世代数の上限を設ける (設定ミスで 1e9 世代のループにしない)
+  const keep = Number.isInteger(o.keep) && o.keep >= 0
+    ? Math.min(AUDIT_KEEP_MAX, o.keep)
+    : AUDIT_KEEP_DEFAULT;
+
+  let size;
+  try {
+    size = fs.statSync(file).size;
+  } catch (e) {
+    return { rotated: false, reason: e && e.code === 'ENOENT' ? 'absent' : 'stat-failed' };
+  }
+  if (size < maxBytes) return { rotated: false, reason: 'below-threshold' };
+
+  if (keep === 0) {
+    try {
+      fs.truncateSync(file, 0);
+      return { rotated: true, reason: 'truncated' };
+    } catch { return { rotated: false, reason: 'truncate-failed' }; }
+  }
+
+  try {
+    // 古い世代から順に 1 つ後ろへ送る: .keep は捨て、.keep-1 → .keep、…、.1 → .2、無印 → .1。
+    //   無い世代 (ENOENT) は「その世代はまだ無い」だけなので無視する。
+    for (let i = keep; i >= 1; i--) {
+      const from = i === 1 ? file : file + '.' + (i - 1);
+      const to = file + '.' + i;
+      if (i === keep) {
+        try { fs.unlinkSync(to); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+      }
+      try { fs.renameSync(from, to); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    }
+  } catch {
+    return { rotated: false, reason: 'rename-failed' };
+  }
+
+  // 設定変更で keep が減ったときの余剰世代 (.keep+1 以降) を掃除する。
+  //   回転時にしか走らない (readdir 1 回) ので通常経路のコストは増えない。
+  try {
+    const dir = path.dirname(file);
+    const base = path.basename(file);
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith(base + '.')) continue;
+      const n = Number(name.slice(base.length + 1));
+      if (!Number.isInteger(n) || n <= keep) continue;
+      try { fs.unlinkSync(path.join(dir, name)); } catch { /* 消せないものは放置 (fail-open) */ }
+    }
+  } catch { /* readdir 失敗は無視 (回転自体は完了している) */ }
+
+  return { rotated: true, reason: 'rotated' };
 }
 
 // ---------------------------------------------------------------------------
@@ -808,10 +905,28 @@ function resolveBuildInfo(opts) {
 }
 
 function appendAudit(entry) {
+  const line = auditLine(entry) + '\n';
   try {
     fs.mkdirSync(path.dirname(AUDIT_LOG), { recursive: true });
-    fs.appendFileSync(AUDIT_LOG, auditLine(entry) + '\n');
-  } catch { /* 監査ログ失敗で操作は止めない (記録は best-effort) */ }
+  } catch { /* ディレクトリ作成の失敗は下の追記失敗で 1 行にまとめて報告する */ }
+
+  // 追記の前にサイズを見てローテーションする (fail-open: 失敗してもリクエストは落とさない)
+  let rot;
+  try {
+    rot = rotateAuditLog(AUDIT_LOG, auditRotateConfig(process.env));
+  } catch (e) {
+    rot = { rotated: false, reason: 'unexpected' };
+  }
+  if (!rot.rotated && rot.reason !== 'absent' && rot.reason !== 'below-threshold') {
+    warnAudit('ローテーションに失敗しました (' + rot.reason + '): ' + AUDIT_LOG + ' — 追記を続行します');
+  }
+
+  try {
+    fs.appendFileSync(AUDIT_LOG, line);
+  } catch (e) {
+    // 従来は握りつぶしていたが、「記録できない」ことは stderr に 1 行だけ残す (処理は止めない)
+    warnAudit('追記できません: ' + AUDIT_LOG + ' (' + String(e && e.message) + ')');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2241,6 +2356,7 @@ module.exports = {
   resolveProjectDir, readWebLineage, writeWebLineage, removeWebLineage, PROMPT_MAX_CHARS,
   positiveNumber, sanitizePromptEvent, verifyAccessJwt, webLineageFile, isProjectRunning, resolveStaticPath, tailLines, checkBasicAuth, checkOrigin,
   auditLine, MODES, MODE_LABELS, DEFAULT_PORT, resolveBuildInfo,
+  appendAudit, auditRotateConfig, rotateAuditLog,
 };
 
 if (require.main === module) main();

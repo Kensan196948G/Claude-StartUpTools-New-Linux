@@ -30,6 +30,47 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ---------------------------------------------------------------------------
+// build 情報 (ヘッダー表示) — /api/health を 1 回だけ取得する (ポーリングしない)
+//   稼働中の成果物を画面から確認できるようにする。生値は textContent でのみ入れる。
+//   commit が空 = 成果物から起動していない (作業ツリー直実行など)。
+// ---------------------------------------------------------------------------
+
+const BUILD = { text: 'build: 取得中…', promise: null };
+
+function formatBuildInfo(h) {
+  if (!h || typeof h !== 'object') return 'build: 取得失敗';
+  const commit = typeof h.commit === 'string' ? h.commit.trim() : '';
+  const version = typeof h.version === 'string' ? h.version.trim() : '';
+  if (!commit) return 'build: unknown（成果物から起動していない可能性）';
+  const short = commit.slice(0, 7);
+  return version ? `build: ${short} / v${version}` : `build: ${short}`;
+}
+
+function renderBuildBadge() {
+  const host = $('badges');
+  if (!host) return;
+  let el = $('build-badge');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'build-badge';
+    el.className = 'badge';
+    el.title = '稼働中の成果物 (GET /api/health)';
+    host.appendChild(el);
+  }
+  el.textContent = BUILD.text;   // XSS 回避: 生値を innerHTML に入れない
+}
+
+function fetchBuildInfoOnce() {
+  if (BUILD.promise) return BUILD.promise;
+  BUILD.promise = fetch('/api/health', { cache: 'no-store', headers: { accept: 'application/json' } })
+    .then(r => (r && r.ok ? r.json() : Promise.reject(new Error('health ' + (r && r.status)))))
+    .then(j => { BUILD.text = formatBuildInfo(j); })
+    .catch(() => { BUILD.text = 'build: 取得失敗'; })
+    .then(() => { renderBuildBadge(); });
+  return BUILD.promise;
+}
+
 async function api(method, url, body) {
   const opt = { method, headers: {} };
   if (body !== undefined) {
@@ -61,6 +102,7 @@ function renderBadges() {
     badges.push('<span class="badge ok">デスクトップ端末 あり</span>');
   }
   $('badges').innerHTML = badges.join('');
+  renderBuildBadge();
   $('meta').textContent =
     `host=${st.host} / generated=${st.generated_at} / config=${st.config_path}`;
 }
@@ -359,6 +401,7 @@ function init() {
   $('btn-all-apply').addEventListener('click', doAllApply);
   $('modal-close').addEventListener('click', () => $('modal').classList.add('hidden'));
   ['goal', 'duration', 'intent'].forEach(id => $(id).addEventListener('input', onFormChange));
+  fetchBuildInfoOnce();
   reload();
   setInterval(reload, 15000);
 }
