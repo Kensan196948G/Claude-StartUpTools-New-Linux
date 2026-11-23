@@ -19,6 +19,12 @@
 #   5) systemctl --user restart <unit>  6) /api/health が ok:true になるまで最大 20 秒リトライ
 #   7) 失敗時は symlink を旧 target へ戻して再 restart  8) promotions.jsonl へ 1 行追記
 #
+# 台帳のローテーション (追記前):
+#   閾値以上なら promotions.jsonl を .1〜.N へ rename してから追記する (行の内容は変えない)。
+#     RELEASE_PROMOTIONS_MAX_BYTES  回転閾値 (既定 1 MiB = 1048576)
+#     RELEASE_PROMOTIONS_KEEP       保持世代数 (既定 3。0 で履歴なし・上限 100)
+#   回転に失敗しても昇格は止めない (fail-open。stderr に 1 行だけ出して追記は続行)。
+#
 # 安全弁:
 #   - 整合性不一致 (INTEGRITY_MISMATCH) では切り替えない。
 #   - production 昇格は staging-current と同一 tree_sha256 を要求 (STAGING_NOT_VERIFIED)。
