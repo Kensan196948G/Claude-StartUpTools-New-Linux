@@ -135,3 +135,49 @@
 - **Production 昇格（#7）の実行前**: Y/N。対象 sha・tree_sha256・変更点・ロールバック手順を提示する。
 - Release 作成・secret 変更・Tunnel/DNS/Access 変更・不可逆削除: 従来どおり人間ゲート（GITHUB_POLICY §10）。
 - コードのマージは Required Checks PASS 後に自動（本設計の範囲内）。
+
+## 11. 実装状況（2026-11-23 10:40 JST 実測）
+
+| # | 項目 | 状態 | 根拠（PR / 実測） |
+|---|---|---|---|
+| 1 | `bin/release-build.sh`（artifact + manifest） | **完了** | PR #175。1046 files・`tree_sha256` 独立再計算一致・argv 上限バグ修正済み（2000+ files 回帰テスト） |
+| 2 | `bin/web-startup-service.sh` 引数化 + staging プロファイル | **完了** | PR #176。既定 unit 出力は変更前とバイト一致（回帰）・staging は本番 unit を拒否 |
+| 3 | dashboard の `CLAUDEOS_HOME` 対応 | **完了** | PR #171。未設定時は従来パス（回帰）・設定時は 6 箇所すべて配下 |
+| 4 | `bin/release-promote.sh`（昇格 + 自動ロールバック） | **完了** | PR #177。整合性不一致で切替なし・staging 未検証の production 拒否・health 失敗で ROLLED_BACK（実測） |
+| 5 | `scripts/e2e/staging-smoke.sh` + CI ジョブ | **スクリプト完了 / CI ジョブ未適用** | PR #173（11 checks PASS 実測）。`.github/workflows/ci.yml` は policy gate（DEPLOY=critical）により人間の適用待ち |
+| 6 | Staging 環境の実起動 | **完了** | 3742 稼働・`~/.claudeos-stg` 分離・本番 3740 不変・promotions.jsonl に PROMOTED/ROLLED_BACK |
+| 7 | 本番の artifact 化 | **人間の Y/N 待ち** | 手順は `STAGING_PRODUCTION_RUNBOOK.md` §4 |
+| 8 | 他リポジトリ連携の是正 | **一部完了** | 台帳是正は PR #174。中央 ruleset/CI の横断是正は第 2 バッチ（下記 §12） |
+| 9 | registry/CMDB 整合 | **完了** | PR #174。linux 9/9・github 7 件（13 件を `_stale` へ退避）・チェッカ CLI と 10 tests |
+| 10 | 文書・索引 | **完了** | 本書 + `STAGING_PRODUCTION_RUNBOOK.md` + `SOURCE_OF_TRUTH.md` 更新 |
+
+## 12. 第 2 バッチ（次 10 項目・監査報告に基づく）
+
+監査（release-auditor / integration-auditor）で確定した欠落を、次の 10 項目として扱う。
+
+| # | 項目 | 根拠 | 種別 |
+|---|---|---|---|
+| 1 | `/api/health` に `commit` / `version` を返す（artifact 同一性の可観測化） | 実測: health に commit が無く、配備後にどのコードが動いているか確認できない | 実装 |
+| 2 | 配備後スモーク `scripts/release/post-deploy-smoke.sh` | 配備後検証の経路が CI にも手順にも無い | 実装 |
+| 3 | CI に `release-check` と `staging-smoke` を追加 | `.github/workflows` は人間ゲート。追加で「マージ前に成果物起動を検証」できる | Approval |
+| 4 | `deploy-prep.sh` と runbook 生成のフラグ整合（D1/D2）+ placeholder 除去 | `runbook_generated=true` を書くだけで生成しない、生成側はフラグを書かない | 実装 |
+| 5 | `state.deploy` の未書き込みフィールドを実装 or schema から削除 | `executed_at` / `executed_by` / `post_deploy_verified` は書き込みコード 0 件 | 実装 |
+| 6 | リリース識別子の復活（tag が 174 commits 遅れ） | 最終 tag `v4.0.0-linux` は 2026-06-07 | 運用 |
+| 7 | `run-audit-scan.js` を rulesets API へ切替 | legacy `/branches/main/protection` は ruleset 運用 repo で 404 → 常に「未保護」誤判定 | 実装 |
+| 8 | 中央ポリシーの版統一と所在の明確化 | v1/v2/v3 混在・`bin/policy-pr.sh` 等は中央リポジトリ所在で本リポジトリには無い | 文書 + 人間判断 |
+| 9 | auto-merge 実行器の定常運用（`github-controller.sh` の timer 化） | armed 0/9・CLEAN+green 4 件が 34〜98 日滞留・BEHIND 48 件 | 人間判断（横断） |
+| 10 | テスト副作用の除去（`npm run test:node` が `.claude/claudeos/data/reasoning-bank.json` を書き換える） | 共有ツリーに意図しない差分が出る | 実装 |
+
+## 13. 横断連携の実測結論（integration-auditor, 2026-11-23）
+
+| 指標 | 実測 |
+|---|---|
+| Kensan196948G 配下 repo | 76 |
+| `central-auto-merge` 保有 | 50（66%） |
+| ruleset なし | 21（28%）・別名 5 |
+| open PR | 209 / 41 repos |
+| auto-merge armed | 0/9 サンプル（**実行器が定常稼働していない**） |
+| CLEAN + green なのに未マージ | 4 件（最長 98 日） |
+| required check 名と CI 実報告名 | 4/4 一致（ゲート自体は機能） |
+
+結論: **ゲート（fail-closed）は機能しているが、マージ自動化の実行体が回っていない**。本リポジトリの PR は今回 `gh pr merge` を Lead が明示実行して自動マージを成立させた（armed 0 の実態を回避）。
