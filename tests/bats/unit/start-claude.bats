@@ -160,6 +160,11 @@ JSON
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"Claude プロンプトを新規端末タブで起動しました"* ]]
+  # terminal__open_tab は端末を `&` で非同期起動するため、スタブのログ生成を待つ。
+  # 待機は同期のみで、以下のアサーション (存在 + 内容) は維持する。
+  wait_until 5 test -f "$TEST_TEMP/terminal.log"
+  wait_until 5 grep -q -- "--tab" "$TEST_TEMP/terminal.log"
+  wait_until 5 grep -q -- "Claude: MyProj" "$TEST_TEMP/terminal.log"
   [ -f "$TEST_TEMP/terminal.log" ]
   grep -q -- "--tab" "$TEST_TEMP/terminal.log"
   grep -q -- "Claude: MyProj" "$TEST_TEMP/terminal.log"
@@ -178,6 +183,10 @@ exit 0
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"Claude プロンプトを新規端末タブで起動しました"* ]]
+  # wt.exe も `&` で非同期起動される (上と同じレース)。
+  wait_until 5 test -f "$TEST_TEMP/wt.log"
+  wait_until 5 grep -q -- "new-tab" "$TEST_TEMP/wt.log"
+  wait_until 5 grep -q -- "Claude: MyProj" "$TEST_TEMP/wt.log"
   [ -f "$TEST_TEMP/wt.log" ]
   grep -q -- "new-tab" "$TEST_TEMP/wt.log"
   grep -q -- "Claude: MyProj" "$TEST_TEMP/wt.log"
@@ -203,10 +212,13 @@ exit 0
 @test "start-claude: foreground は tmux 内でも既定で端末タブを使う" {
   export TMUX="/tmp/fake,0,0"
   export DISPLAY=":99"
+  rm -f "$TEST_TEMP/terminal.log"
   run bash "$SCRIPT" --project MyProj --foreground --duration 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"Claude プロンプトを新規端末タブで起動しました"* ]]
   [ ! -f "$CLAUDEOS_HOME/supervisor/MyProj.json" ]
+  # 端末タブは非同期起動のため、ログ生成を待ってから存在を検証する。
+  wait_until 5 test -f "$TEST_TEMP/terminal.log"
   [ -f "$TEST_TEMP/terminal.log" ]
   [ ! -f "$TMUX_STATE/new-window.log" ]
 }
