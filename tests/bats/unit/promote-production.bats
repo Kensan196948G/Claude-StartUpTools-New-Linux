@@ -28,6 +28,9 @@ setup() {
   export ORDER="$TEST_TEMP/order.log"
   : > "$ORDER"
   export CCSU_PROMOTE_TS="20260101-000000"
+  # 実機設定 (git 管理外) の代わりにテスト用の一時 config を与える ((0b) config-check 用)
+  export CCSU_PROMOTE_CONFIG_PATH="$TEST_TEMP/config.json"
+  printf '{"projects":"/tmp"}\n' > "$CCSU_PROMOTE_CONFIG_PATH"
   export CCSU_PROMOTE_HEALTH_TIMEOUT=1
   export CCSU_PROMOTE_HEALTH_INTERVAL=0.05
 
@@ -207,15 +210,15 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   grep -q "release-promote --env production --release $SHA --no-restart --json" "$ORDER"
   grep -q "release-promote --env production --release $SHA --json" "$ORDER"
   grep -q "web-startup-service --register --profile production --root $CLAUDEOS_HOME/releases/production-current" "$ORDER"
-  grep -q "AI_STARTUP_CONFIG_PATH=.*config/config.json" "$ORDER"
+  grep -qF "AI_STARTUP_CONFIG_PATH=$CCSU_PROMOTE_CONFIG_PATH" "$ORDER"
   grep -q "post-deploy-smoke --env production --json" "$ORDER"
 
   # unit は差し替わり、バックアップは元の内容を保持
   [ "$(cat "$CCSU_SYSTEMD_UNIT_PATH")" = "NEW UNIT (artifact)" ]
   [ "$(cat "$BACKUP")" = "ORIGINAL UNIT" ]
 
-  # steps は 6 件すべて ok
-  [ "$(printf '%s' "$last" | jq -r '.steps | length')" -eq 6 ]
+  # steps は 7 件すべて ok (config-check を含む)
+  [ "$(printf '%s' "$last" | jq -r '.steps | length')" -eq 7 ]
   [ "$(printf '%s' "$last" | jq -r '[.steps[] | select(.ok == false)] | length')" -eq 0 ]
 }
 
@@ -351,4 +354,24 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"--dry-run"* ]]
   [[ "$output" == *"exit: 0 成功"* ]]
+}
+
+@test "promote-production: 実機設定が無ければ (0b) で中止し何も変えない" {
+  rm -f "$CCSU_PROMOTE_CONFIG_PATH"
+  before="$(sha256sum "$CCSU_SYSTEMD_UNIT_PATH" | cut -d' ' -f1)"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  last="$(printf '%s\n' "${lines[@]}" | grep -E '^\{' | tail -n 1)"
+  [ "$(printf '%s' "$last" | jq -r .result)" = "ABORTED" ]
+  [[ "$(printf '%s' "$last" | jq -r .reason)" == *"AI_STARTUP_CONFIG_PATH"* ]]
+  [ "$(sha256sum "$CCSU_SYSTEMD_UNIT_PATH" | cut -d' ' -f1)" = "$before" ]
+  ! ls "$CCSU_SYSTEMD_UNIT_PATH".bak-* >/dev/null 2>&1
+  ! grep -q "web-startup-service" "$ORDER" 2>/dev/null
+}
+
+@test "promote-production: dry-run は config 不在を警告表示する" {
+  rm -f "$CCSU_PROMOTE_CONFIG_PATH"
+  run bash "$SCRIPT" --release "$SHA" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"存在しません"* ]]
 }
