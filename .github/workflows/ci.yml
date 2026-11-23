@@ -33,8 +33,16 @@ jobs:
       - name: Run bats and Node tests
         run: npm test
 
+      - name: Run dry-run validation
+        # npm test の対象外にある既存 dry-run マトリクス (33 項目) の回帰
+        run: npm run test:dry-run
+
       - name: Run shell lint
         run: npm run lint
+
+      - name: Run shell lint (release / e2e scripts)
+        # npm run lint の glob 外にある昇格 / スモーク用スクリプトも検証する
+        run: shellcheck -S error scripts/release/*.sh scripts/e2e/*.sh
 
       - name: Adversarial probe (policy surface)
         # Agent ポリシーの攻撃耐性を期待判定と突き合わせる (自作ハーネス)
@@ -98,3 +106,79 @@ jobs:
       - name: Show server log on failure
         if: failure()
         run: cat /tmp/console.log || true
+
+  staging-smoke:
+    # リリース成果物から起動し、毎回まっさらな CLAUDEOS_HOME へ分離した状態で
+    # health / 静的 UI / 保護 API / 監査ログを検証する (本番 3740 は触らない)。
+    needs: linux-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install smoke test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq tmux
+
+      - name: Run staging smoke
+        # --json の最終行が結果。pipefail でスクリプトの exit code を保持する。
+        run: |
+          set -o pipefail
+          bash scripts/e2e/staging-smoke.sh --json 2>&1 | tee /tmp/staging-smoke.log
+
+      - name: Upload staging smoke log on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: staging-smoke
+          path: /tmp/staging-smoke.log
+          if-no-files-found: ignore
+
+  release-artifact:
+    # リリース成果物をビルドし、独立実装 (verify-artifact) で manifest の
+    # sha256 / size / tree_sha256 を再検証して成果物の同一性を回帰させる。
+    needs: linux-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLAUDEOS_HOME: ${{ runner.temp }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Build release artifact
+        run: |
+          set -o pipefail
+          bash bin/release-build.sh --ref HEAD --out "$RUNNER_TEMP/app" --json 2>&1 | tee /tmp/release-build.log
+
+      - name: Verify release artifact
+        run: |
+          set -o pipefail
+          bash scripts/release/verify-artifact.sh "$RUNNER_TEMP/app" --json 2>&1 | tee /tmp/verify-artifact.log
+
+      - name: Upload artifact logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-artifact
+          path: |
+            /tmp/release-build.log
+            /tmp/verify-artifact.log
+          if-no-files-found: ignore
