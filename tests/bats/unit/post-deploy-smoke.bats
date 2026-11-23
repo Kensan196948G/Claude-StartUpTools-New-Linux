@@ -23,9 +23,12 @@ setup() {
   export SMOKE_STUB_CURL_CALLS="$TEST_TEMP/curl.calls"
   export SMOKE_STUB_SYSTEMCTL_CALLS="$TEST_TEMP/systemctl.calls"
 
-  # 既定: 全 URL 200 / unit active / NRestarts 0 / health に commit あり
+  # 既定: 全 URL 200 / unit active / NRestarts 0 / health と dashboard に同じ commit
   export SMOKE_CODE_DEFAULT=200
+  export SMOKE_COMMIT_DEFAULT='0123456789abcdef0123456789abcdef01234567'
   export SMOKE_BODY_HEALTH='{"ok":true,"service":"claudeos-web-startup","commit":"0123456789abcdef0123456789abcdef01234567"}'
+  export SMOKE_BODY_DASHBOARD='{"status":"ok","commit":"0123456789abcdef0123456789abcdef01234567"}'
+  export SMOKE_BODY_DASHBOARD_STG='{"status":"ok","commit":"0123456789abcdef0123456789abcdef01234567"}'
   export SMOKE_STUB_ACTIVE=active
   export SMOKE_STUB_RESTARTS=0
 
@@ -89,7 +92,11 @@ case "$code" in
   200) ;;
   *) exit 22 ;;
 esac
-[ "$key" = "HEALTH" ] && printf '%s' "${SMOKE_BODY_HEALTH:-}"
+case "$key" in
+  HEALTH)        printf '%s' "${SMOKE_BODY_HEALTH:-}" ;;
+  DASHBOARD)     printf '%s' "${SMOKE_BODY_DASHBOARD:-}" ;;
+  DASHBOARD_STG) printf '%s' "${SMOKE_BODY_DASHBOARD_STG:-}" ;;
+esac
 exit 0
 STUB
   chmod +x "$CCSU_CURL_BIN"
@@ -331,4 +338,105 @@ _assert_json() {
   [ "$status" -eq 1 ]
   _assert_json "$output" '.failed' '2'
   ! grep -qE '(^| )(restart|start|stop)' "$SMOKE_STUB_SYSTEMCTL_CALLS"
+}
+
+# ------------------------------------------------------------
+# dashboard の commit 一致（コンソールと同一成果物か）
+# ------------------------------------------------------------
+
+@test "dashboard: health の commit がコンソールと一致すれば PASS" {
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"commit=0123456789abcdef0123456789abcdef01234567"* ]]
+  [[ "$output" == *"console と一致"* ]]
+  _assert_json "$output" '.warnings' '0'
+}
+
+@test "dashboard: commit がコンソールと不一致なら FAIL" {
+  export SMOKE_BODY_DASHBOARD='{"status":"ok","commit":"fedcba9876543210fedcba9876543210fedcba98"}'
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"commit 不一致"* ]]
+  [[ "$output" == *"console=0123456789abcdef0123456789abcdef01234567"* ]]
+  _assert_json "$output" '.failed' '1'
+}
+
+@test "dashboard: commit が無ければ WARN で exit 0 (FAIL にしない)" {
+  export SMOKE_BODY_DASHBOARD='{"status":"ok"}'
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"commit が無い"* ]]
+  _assert_json "$output" '.ok' 'true'
+  _assert_json "$output" '.warnings' '1'
+}
+
+@test "dashboard: コンソール側 commit が空なら一致比較をスキップし health の WARN のみ" {
+  export SMOKE_BODY_HEALTH='{"ok":true,"service":"claudeos-web-startup"}'
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"一致比較はスキップ"* ]]
+  _assert_json "$output" '.warnings' '1'
+}
+
+@test "dashboard: staging (3743) でも commit 不一致は FAIL" {
+  export SMOKE_CODE_DASHBOARD_STG=200
+  export SMOKE_BODY_DASHBOARD_STG='{"status":"ok","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+  run bash "$SCRIPT" --env staging --json
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"commit 不一致"* ]]
+  _assert_json "$output" '.failed' '1'
+}
+
+@test "dashboard: staging (3743) で commit 一致なら PASS" {
+  export SMOKE_CODE_DASHBOARD_STG=200
+  run bash "$SCRIPT" --env staging --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"console と一致"* ]]
+  _assert_json "$output" '.warnings' '0'
+}
+
+# ------------------------------------------------------------
+# --expect-commit（配備した commit との照合）
+# ------------------------------------------------------------
+
+@test "expect-commit: console / dashboard とも一致すれば PASS" {
+  run bash "$SCRIPT" --json --expect-commit 0123456789abcdef0123456789abcdef01234567
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(expect と一致)"* ]]
+  _assert_json "$output" '.warnings' '0'
+}
+
+@test "expect-commit: --expect-commit=<sha> 形式も受理する" {
+  run bash "$SCRIPT" --json --expect-commit=0123456789abcdef0123456789abcdef01234567
+  [ "$status" -eq 0 ]
+  _assert_json "$output" '.ok' 'true'
+}
+
+@test "expect-commit: console の commit が一致しなければ FAIL" {
+  run bash "$SCRIPT" --json --expect-commit 9999999999999999999999999999999999999999
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"expect=9999999999999999999999999999999999999999"* ]]
+  _assert_json "$output" '.failed' '2'   # console と dashboard の両方が不一致
+}
+
+@test "expect-commit: dashboard の commit だけ不一致でも FAIL" {
+  export SMOKE_BODY_DASHBOARD='{"status":"ok","commit":"fedcba9876543210fedcba9876543210fedcba98"}'
+  run bash "$SCRIPT" --json --expect-commit 0123456789abcdef0123456789abcdef01234567
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dashboard"*"commit 不一致"* ]]
+  _assert_json "$output" '.failed' '1'
+}
+
+@test "expect-commit: dashboard に commit が無ければ WARN（FAIL にしない）" {
+  export SMOKE_BODY_DASHBOARD='{"status":"ok"}'
+  run bash "$SCRIPT" --json --expect-commit 0123456789abcdef0123456789abcdef01234567
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"commit が無い"* ]]
+  _assert_json "$output" '.warnings' '1'
+}
+
+@test "expect-commit: 40 桁 hex でなければ exit 2" {
+  run bash "$SCRIPT" --expect-commit deadbeef
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--expect-commit"* ]]
 }
