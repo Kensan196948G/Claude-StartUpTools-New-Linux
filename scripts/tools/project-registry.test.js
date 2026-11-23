@@ -102,10 +102,15 @@ test("buildFixedGithubRegistry: 消えたものだけ _stale へ移し、実在�
   assert.deepEqual(fixed._stale.map((s) => s.name), ["Dead"]);
 });
 
-test("実リポジトリの linux-projects.json は filesystem と一致している（回帰）", () => {
+test("実リポジトリの linux-projects.json は filesystem と一致している（回帰）", (t) => {
   const root = path.resolve(__dirname, "..", "..");
   const file = path.join(root, "config", "linux-projects.json");
   const data = JSON.parse(fs.readFileSync(file, "utf8"));
+  // CI ランナーには開発機の basePath が無い。その場合は「乖離」ではなく「検証不能」なので skip。
+  if (!fs.existsSync(data.basePath)) {
+    t.skip(`basePath が存在しない環境のため skip: ${data.basePath}`);
+    return;
+  }
   const actual = reg.scanLocalProjects(data.basePath);
   const res = reg.checkLinuxRegistry(data, actual);
   assert.equal(res.ok, true, `drift: missing=${res.missing} unlisted=${res.unlisted}`);
