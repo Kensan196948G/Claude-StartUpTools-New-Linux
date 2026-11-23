@@ -385,3 +385,49 @@ STUB
   run bash "$SCRIPT" --json
   [ "$status" -eq 1 ]
 }
+
+@test "cross-repo-automerge: 無効な GITHUB_TOKEN を既定で無視する（gh 401 回避）" {
+  repos_json '{"name":"R"}'
+  has_ruleset R
+  prs_json R "[]"
+  # 呼ばれたときに環境の GITHUB_TOKEN を見て記録するスタブ
+  cat > "$STUB_GH" <<STUB
+#!/usr/bin/env bash
+printf 'GITHUB_TOKEN=%s\n' "\${GITHUB_TOKEN-<unset>}" >> "$STUB_LOG"
+case "\$1" in
+  repo) cat "$FIX/repos.json" ;;
+  api)  rel="\${2#repos/}"; rest="\${rel#*/}"; repo="\${rest%%/*}"
+        if [ -f "\$FIX/rulesets/\$repo.json" ]; then cat "\$FIX/rulesets/\$repo.json"; else exit 1; fi ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$STUB_GH"
+  export CCSU_GH_BIN="$STUB_GH"
+  export GITHUB_TOKEN="invalid-token-should-be-ignored"
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  # gh から見ると未設定になっている
+  grep -q '^GITHUB_TOKEN=<unset>$' "$STUB_LOG"
+}
+
+@test "cross-repo-automerge: CCSU_AUTOMERGE_KEEP_ENV_TOKEN=1 なら環境の token をそのまま渡す" {
+  repos_json '{"name":"R"}'
+  has_ruleset R
+  prs_json R "[]"
+  cat > "$STUB_GH" <<STUB
+#!/usr/bin/env bash
+printf 'GITHUB_TOKEN=%s\n' "\${GITHUB_TOKEN-<unset>}" >> "$STUB_LOG"
+case "\$1" in
+  repo) cat "$FIX/repos.json" ;;
+  api)  rel="\${2#repos/}"; rest="\${rel#*/}"; repo="\${rest%%/*}"
+        if [ -f "\$FIX/rulesets/\$repo.json" ]; then cat "\$FIX/rulesets/\$repo.json"; else exit 1; fi ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$STUB_GH"
+  export CCSU_GH_BIN="$STUB_GH"
+  export GITHUB_TOKEN="my-explicit-token" CCSU_AUTOMERGE_KEEP_ENV_TOKEN=1
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  grep -q '^GITHUB_TOKEN=my-explicit-token$' "$STUB_LOG"
+}

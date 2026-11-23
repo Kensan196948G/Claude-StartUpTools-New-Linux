@@ -159,3 +159,9 @@ teardown() { _bats_common_teardown; }
   run bash "$SCRIPT" --register
   [ "$status" -ne 0 ]
 }
+
+@test "timer: 無効な GITHUB_TOKEN を unit で外す（UnsetEnvironment）" {
+  run bash "$SCRIPT" --register
+  [ "$status" -eq 0 ]
+  grep -q '^UnsetEnvironment=GITHUB_TOKEN GH_TOKEN$' "$SVC"
+}
