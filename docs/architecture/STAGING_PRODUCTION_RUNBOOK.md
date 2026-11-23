@@ -162,13 +162,19 @@ CCSU_PROMOTE_CONFIG_PATH=/home/kensan/Projects/Claude-StartUpTools-New-Linux/con
 | (0b) | 実機設定 `CCSU_PROMOTE_CONFIG_PATH` の存在・JSON 妥当性 | 中止（何も変えない） |
 | (1) | 本番 unit を `.bak-<ts>` へ退避（sha256 記録） | 中止 |
 | (2) | `production-current` を準備（`--no-restart`） | 中止（unit 未変更） |
-| (3) | unit を成果物起動へ差し替え（restart） | **自動復旧** |
-| (4) | 昇格確定（health + 台帳 PROMOTED） | **自動復旧** |
+| (3) | unit 定義を成果物起動へ差し替え（`--state-file <repo>/state.json` 付き。`enable --now` は稼働中 unit を再起動しないため、この時点の稼働はまだ作業ツリー） | **自動復旧** |
+| (3d) | 本番 dashboard を drop-in（`…/claude-startuptools-dashboard.service.d/50-release.conf`）で成果物起動へ切替 → restart → 3737 health | **自動復旧**（drop-in 削除） |
+| (4) | 昇格確定（**ここで restart され実体が成果物になる**。health + 台帳 PROMOTED） | **自動復旧** |
 | (5) | `post-deploy-smoke --env production` | **自動復旧** |
 
 exit: 0 成功 / 1 失敗（復旧済み）/ 2 引数 / 3 確認待ち（`--yes` 無し）/ 4 復旧も失敗（要人手 → §5）。
 **注意**: worktree や成果物から実行する場合、git 管理外の実機設定は既定パスに無いため、必ず
 `CCSU_PROMOTE_CONFIG_PATH` を指定する（未指定なら (0b) で安全に中止する）。
+`CCSU_STATE_FILE` は既定で `CCSU_PROMOTE_CONFIG_PATH` の 2 階層上の `state.json`（= 実機 repo の state）を unit に渡す。
+これにより成果物起動後もコンソールの「デプロイ準備」「保守モード」は repo 側 `state.json` を読み書きし、成果物は不変のまま保たれる
+（別の場所を使う場合は `CCSU_PROMOTE_STATE_FILE` で上書き。置き場所が無ければ (0b) で中止）。
+安全弁: 二重実行は lock で拒否（exit 2）、(1)〜(5) 中の INT/TERM/HUP は自動復旧、初回昇格で失敗した場合は
+`production-current` を削除して「昇格前」の状態に戻す。
 
 ### 4-B. 手動手順（4-A が使えない場合）
 

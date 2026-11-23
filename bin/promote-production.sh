@@ -52,6 +52,8 @@
 #   CCSU_CURL_BIN          curl 実体
 #   CLAUDEOS_HOME          ClaudeOS ホーム（既定 ~/.claudeos）
 #   CCSU_PROMOTE_CONFIG_PATH   4-3 の AI_STARTUP_CONFIG_PATH（既定 <repo>/config/config.json）
+#   CCSU_PROMOTE_STATE_FILE    4-3 の CCSU_STATE_FILE（既定: CONFIG_PATH の 2 階層上 = 実機 repo の state.json）
+#                              成果物起動後に「デプロイ準備」等が成果物内へ state.json を書かないようにする
 #   CCSU_PROMOTE_TS        バックアップのタイムスタンプ（テスト固定用）
 #   CCSU_PROMOTE_HEALTH_TIMEOUT / CCSU_PROMOTE_HEALTH_INTERVAL  復旧後 health の待ち
 #   CCSU_PROMOTE_DASHBOARD_UNIT    本番 dashboard の unit 名（既定 claude-startuptools-dashboard.service）
@@ -89,6 +91,8 @@ PP_BACKUP=""
 PP_BACKUP_SHA=""
 PP_TS=""
 PP_CONFIG_PATH="${CCSU_PROMOTE_CONFIG_PATH:-$PP_REPO_ROOT/config/config.json}"
+# 既定の state は実機設定と同じ checkout の state.json（<repo>/config/config.json → <repo>/state.json）
+PP_STATE_FILE="${CCSU_PROMOTE_STATE_FILE:-$(dirname "$(dirname "$PP_CONFIG_PATH")")/state.json}"
 PP_HEALTH_TIMEOUT="${CCSU_PROMOTE_HEALTH_TIMEOUT:-10}"
 PP_HEALTH_INTERVAL="${CCSU_PROMOTE_HEALTH_INTERVAL:-1}"
 
@@ -535,6 +539,7 @@ pp__print_plan() {
     printf '  dashboard    : 無効 (--no-dashboard)\n'
   fi
   printf '  systemctl    : %s\n' "$(pp__systemctl)"
+  printf '  state file   : %s\n' "$PP_STATE_FILE"
   if [[ -f "$PP_CONFIG_PATH" ]]; then
     printf '  config       : %s\n' "$PP_CONFIG_PATH"
   else
@@ -544,8 +549,8 @@ pp__print_plan() {
   printf '    (0) %s --release %s --json\n' "$(pp__bin pre-promote-check.sh)" "$rel"
   printf '    (1) cp -p %s %s.bak-%s (+ sha256 記録)\n' "$PP_UNIT_PATH" "$PP_UNIT_PATH" "${PP_TS:-<ts>}"
   printf '    (2) %s --env production --release %s --no-restart --json\n' "$(pp__bin release-promote.sh)" "$rel"
-  printf '    (3) %s --register --profile production --root %s/releases/production-current --env AI_STARTUP_CONFIG_PATH=%s\n' \
-    "$(pp__bin web-startup-service.sh)" "$PP_HOME" "$PP_CONFIG_PATH"
+  printf '    (3) %s --register --profile production --root %s/releases/production-current --env AI_STARTUP_CONFIG_PATH=%s --state-file %s\n' \
+    "$(pp__bin web-startup-service.sh)" "$PP_HOME" "$PP_CONFIG_PATH" "$PP_STATE_FILE"
   if (( PP_DASHBOARD )); then
     printf '    (3d) drop-in: %s → WorkingDirectory/ExecStart を production-current へ → daemon-reload → restart %s → 3737 health (status=ok)\n' \
       "$(pp__dropin_path)" "$PP_DASHBOARD_UNIT"
@@ -736,8 +741,22 @@ main() {
     if (( PP_JSON )); then pp__json_line "false" "ABORTED" "$PP_REASON"; fi
     return 1
   fi
+  # state file: 絶対パスで、置き場所 (ディレクトリ) が存在すること。ファイル自体は未作成でもよい
+  case "$PP_STATE_FILE" in
+    /*) ;;
+    *) PP_STATE_FILE="" ;;
+  esac
+  if [[ -z "$PP_STATE_FILE" || ! -d "$(dirname "$PP_STATE_FILE")" ]]; then
+    pp__record_step "config-check" "false"
+    PP_FAILED_STEP="config-check"
+    PP_RESULT="ABORTED"
+    PP_REASON="CCSU_STATE_FILE の置き場所が無い/絶対パスでない: ${PP_STATE_FILE:-<empty>}（CCSU_PROMOTE_STATE_FILE で指定してください。何も変更していません）"
+    pp__log "中止: $PP_REASON"
+    if (( PP_JSON )); then pp__json_line "false" "ABORTED" "$PP_REASON"; fi
+    return 1
+  fi
   pp__record_step "config-check" "true"
-  pp__log "  (0b) config: $PP_CONFIG_PATH"
+  pp__log "  (0b) config: $PP_CONFIG_PATH / state: $PP_STATE_FILE"
 
   # (1) unit バックアップ
   if [[ ! -f "$PP_UNIT_PATH" ]]; then
@@ -780,7 +799,8 @@ main() {
   if ! pp__run_step "unit-swap" \
     bash "$(pp__bin web-startup-service.sh)" --register --profile production \
       --root "$PP_HOME/releases/production-current" \
-      --env "AI_STARTUP_CONFIG_PATH=$PP_CONFIG_PATH"; then
+      --env "AI_STARTUP_CONFIG_PATH=$PP_CONFIG_PATH" \
+      --state-file "$PP_STATE_FILE"; then
     failed_phase="unit-swap"
   fi
 
