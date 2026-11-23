@@ -36,6 +36,16 @@ CLAUDEOS_HOME=$HOME/.claudeos bash <worktree>/bin/release-build.sh --ref origin/
  "file_count":1046}
 ```
 
+### 1-2. 成果物を独立検証する
+
+```bash
+bash scripts/release/verify-artifact.sh <40hex|release-dir> [--json] [--strict]
+```
+
+manifest を読み直し、全ファイルの sha256・size・`tree_sha256` を独立に再計算する（昇格側とは別実装）。
+欠落は FAIL、manifest に無い余剰は既定 WARN（`--strict` で FAIL）。実測（2026-11-23）: `b0e4c4c9`
+1064 files / tree `40e2c1fd…` を含む 4 世代すべて OK、1064 files で 1.1 秒。
+
 ## 2. Staging を起動する（初回）
 
 初回は symlink が無いため、unit 登録 → 昇格の順に実行する（登録直後は unit が auto-restart になるが、直後の昇格で復帰する）。
@@ -92,6 +102,45 @@ bash <worktree>/scripts/e2e/staging-smoke.sh --json          # 成果物起動�
   [PASS] 監査ログが分離 CLAUDEOS_HOME 配下に作られる
   [PASS] 本番 3740 の health は起動前後で不変
 ```
+
+### 3-2. 運用ツール
+
+| ツール | 用途 | 例 |
+|---|---|---|
+| `bin/deploy-status.sh` | 現行成果物・previous・health・unit・直近の昇格をまとめて表示 | `bin/deploy-status.sh --json` |
+| `bin/audit-log.sh` | 監査ログ（`.1`〜`.3` を時系列連結）の閲覧。`--action` / `--since` で絞る | `bin/audit-log.sh --tail 50 --action ops-restart` |
+| `bin/repo-integration-status.sh` | 横断の ruleset / open PR / CLEAN+green / 台帳の健全性 | `bin/repo-integration-status.sh --classify --json` |
+| `scripts/release/verify-artifact.sh` | 成果物の独立検証 | 上記 §1-2 |
+
+### 3-3. Staging の定期検証
+
+```bash
+bin/staging-smoke-timer.sh --register        # claudeos-staging-smoke.{service,timer}（日次 05:30）
+bin/staging-smoke-timer.sh --status
+```
+
+Staging 専用（本番 unit・本番ポートは unit に書かない）。`scripts/e2e/staging-smoke.sh` を空きポート・
+一時 `CLAUDEOS_HOME` で実行するため、本番にも Staging の状態にも触れない。
+
+## 3.5 昇格前ゲート（Production の前に必ず実行）
+
+```bash
+bin/pre-promote-check.sh --release <40hex> [--json]
+```
+
+7 項目を PASS/FAIL/WARN で判定する（**読み取り専用**）:
+
+| # | 検査 | 扱い |
+|---|---|---|
+| 1 | artifact の整合（manifest / sha256 / size / tree） | FAIL |
+| 2 | `staging-current` と同一 `tree_sha256` | FAIL |
+| 3 | 本番 unit の `.bak-*` が存在 | FAIL（作成コマンドを表示） |
+| 4 | 本番 health 200 + ok:true | FAIL |
+| 5 | staging health 200 + ok:true | WARN |
+| 6 | releases の空き ≥ 1 GiB | WARN |
+| 7 | production-current の現状（初回は previous 不在の戻し手順を表示） | 情報 |
+
+実測（2026-11-23 12:44）: `b0e4c4c9` に対して **7/7 PASS**（unit バックアップ `.bak-20261123-123727` を含む）。
 
 ## 4. Production を artifact 化する（人間の Y/N 後）
 

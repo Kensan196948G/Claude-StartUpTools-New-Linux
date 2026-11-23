@@ -43,6 +43,10 @@
 | `scripts/tools/check-project-registry.js`, `scripts/tools/project-registry.js` | Source | プロジェクト台帳の鮮度チェック（`--fix` で `_stale` へ退避） |
 | `bin/deploy-status.sh` | Source | 現行成果物・previous・health・昇格台帳の読み取り専用サマリ |
 | `bin/repo-integration-status.sh` | Source | 横断の ruleset 有無 / open PR / CLEAN+green の読み取り専用サマリ |
+| `bin/pre-promote-check.sh` | Source | 本番昇格前の 7 項目ゲート（読み取り専用） |
+| `bin/audit-log.sh` | Source | 監査ログ（世代連結・action/since 絞り込み）の閲覧 |
+| `bin/staging-smoke-timer.sh` | Source | Staging の日次スモークを回す systemd --user timer の登録 |
+| `scripts/release/verify-artifact.sh` | Source | リリース成果物の独立検証（sha256/tree/欠落/余剰） |
 | `libexec/startup-state.sh` | Source | 同コンソール向け read-only 状態スナップショット（JSON） |
 | `bin/web-startup.sh` | Source | 同コンソールの起動・停止・状態（PID ファイル + health check） |
 | `bin/web-startup-service.sh` | Source | 同コンソール常駐用 systemd --user unit の登録/解除（bind は常に loopback） |
