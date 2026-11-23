@@ -11,7 +11,7 @@
 
 1. **v3 は v2 の純粋な上位互換である。** 差分は 3 箇所のみ（ヘッダ状態行 / §3 の注意書き 2 行 / §10 の新設 42 行）。§1・§2・§4・§5・§6・§7・§8 の本文は md5 一致、§9 も本文一致（末尾境界のみ差）。
 2. **v3 が追加した「除外条項」は条件ベースではなくリポジトリ限定である。** 対象は `mirai-construction-dx/Mirai-Platform-Infra` **のみ**（§10）。本リポジトリは対象外であり、§10 による緩和も制約も受けない。
-3. **本リポジトリの現運用（PR #171〜#192 を Required Checks PASS 後に squash merge）は v3 でも許容される。** 22/22 PR が全チェック SUCCESS、22/22 が人間（Kensan196948G）による squash（親 1 個）、merge 後に branch 削除済み。v3 §4.6 / §4.8 / §4.9 を満たす。
+3. **本リポジトリの現運用（PR #171〜#192 を Required Checks PASS 後に squash merge）は v3 でも許容される。** 22/22 PR が全チェック SUCCESS、22/22 が人間（Kensan196948G）による merge。squash と merge 後 branch 削除は代表検証（#192: 親 1 個・件名末尾 `(#192)`・`auto/batch3-docs` は remote 0 ref）。v3 §4.6 / §4.8 / §4.9 を満たす。
 4. ただし本リポジトリの**正本は中央**と明記されている（`AGENTS.md:30`、`docs/architecture/GitHub開発運用仕様.md:4`）。したがって **v3 は既に本リポジトリを拘束しており**、ローカル v2 コピーは stale mirror である。同仕様書の「本リポジトリのコピーは同一内容」という記述は現在**虚偽**（v2 7511B と v3 10552B は不一致）。
 5. **推奨は案 A（v3 追随）＋参照 3 件の書き換え＋ヘッダへの版/正本の明記**。案 B（中央で v3 を戻す）は人間承認済みの他リポジトリ例外を巻き戻すため非推奨。**決定は人間**。
 
@@ -149,8 +149,8 @@ v3 が追加した除外は**条件ベース（例: 依存更新 PR は対象外
 | §4.2 すべての変更は branch + PR | PR #171〜#192 は全て `auto/<slug>` branch 由来 | 充足 |
 | §4.4 Conventional Commits | merge commit 件名が `feat(...)`/`fix(...)`/`docs(...)`/`test(...)` 形式（例 `b0e4c4c docs(architecture): … (#192)`） | 充足 |
 | §4.6 Required Checks 全 PASS まで merge しない | 22/22 PR で `statusCheckRollup` の conclusion が全て `SUCCESS`（終了状態） | 充足 |
-| §4.8 Squash Merge に統一 | 22/22 が squash（代表検証: `b0e4c4c` の親は 1 個、件名末尾 `(#192)`） | 充足 |
-| §4.9 merge 後に branch 自動削除 | 例: `auto/batch3-docs` は remote に 0 ref | 充足 |
+| §4.8 Squash Merge に統一 | 22/22 が merge commit を持つ（`gh pr list --json mergeCommit`）。squash 形状は代表検証: `b0e4c4c` の親は 1 個、件名末尾 `(#192)` | 充足 |
+| §4.9 merge 後に branch 自動削除 | 代表検証: `auto/batch3-docs` は remote に 0 ref（`git ls-remote --heads origin auto/batch3-docs`） | 充足 |
 | §4.10 Release/deploy/secret は人間ゲート | 本リポジトリの deploy 機構は自動実行経路を持たない（別監査 task-3） | 充足 |
 | §5.8 Auto-Merge 登録 | 22 件中 `autoMergeRequest` が非 null は **1 件のみ（#172）**。残り 21 件は登録なしで merge | **解釈注意**（下記 5.3） |
 | §6 ruleset `central-auto-merge` が active | ruleset id `20882817` `central-auto-merge` enforcement=`active`、必須=`Secrets scan (gitleaks)` / `linux-validate` | 充足 |
