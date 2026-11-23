@@ -21,7 +21,7 @@ setup() {
   SCRIPT="$REPO_ROOT/bin/repo-integration-status.sh"
   FIX="$TEST_TEMP/fix"
   STUB_LOG="$TEST_TEMP/gh-calls.log"
-  mkdir -p "$FIX/rulesets" "$FIX/pulls" "$FIX/prs"
+  mkdir -p "$FIX/rulesets" "$FIX/pulls" "$FIX/prs" "$FIX/ci"
   : > "$STUB_LOG"
   export FIX STUB_LOG
 
@@ -51,6 +51,17 @@ case "$1" in
         id="${tail##*/}"
         [ -f "$fix/rulesets/$repo.detailfail" ] && exit 1
         cat "$fix/rulesets/$repo-$id.json" ;;
+      contents/.github/workflows)
+        # CI 有無の判定用。404 とその他の失敗を区別できるよう stderr を出す。
+        if [ -f "$fix/ci/$repo.404" ]; then
+          echo "gh: Not Found (HTTP 404)" >&2
+          exit 1
+        fi
+        if [ -f "$fix/ci/$repo.fail" ]; then
+          echo "gh: API rate limit exceeded (HTTP 403)" >&2
+          exit 1
+        fi
+        cat "$fix/ci/$repo.json" ;;
       *)
         case "$path" in
           *"/pulls?state=open"*)
@@ -87,6 +98,11 @@ ruleset_fail() { : > "$FIX/rulesets/$1.fail"; }
 ruleset_detail() { printf '%s\n' "$3" > "$FIX/rulesets/$1-$2.json"; }
 pulls_fail() { : > "$FIX/pulls/$1.fail"; }
 prs_json() { printf '%s\n' "$2" > "$FIX/prs/$1.json"; }
+ci_json() { printf '%s\n' "$2" > "$FIX/ci/$1.json"; }
+ci_404() { : > "$FIX/ci/$1.404"; }
+ci_fail() { : > "$FIX/ci/$1.fail"; }
+# iso_days_ago <日数> — 経過日数バケットの検証用（実行時 now との差で決まる）
+iso_days_ago() { date -u -d "@$(( $(date -u +%s) - $1 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ; }
 
 # pulls_count <repo> <n>
 pulls_count() {
@@ -293,4 +309,104 @@ last_json() { printf '%s\n' "$1" | tail -1; }
   run bash "$SCRIPT" --json
   [ "$status" -eq 0 ]
   last_json "$output" | jq -e '.registry.ok == false'
+}
+
+# ── --classify: PR の種別・経過日数 ────────────────────────
+@test "repo-integration-status: --classify が 6 種別を判定する" {
+  repos_json '{"name":"RepoA"}'
+  ruleset_ok RepoA '[{"id":1,"name":"central-auto-merge","target":"branch","enforcement":"active"}]'
+  ruleset_detail RepoA 1 '{"rules":[]}'
+  pulls_count RepoA 6
+  D="$(iso_days_ago 10)"
+  prs_json RepoA "[{\"number\":1,\"title\":\"chore(deps): bump lodash from 4 to 5\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":2,\"title\":\"docs: update readme\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":3,\"title\":\"feat(web): add panel\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":4,\"title\":\"fix(api): wrong status\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":5,\"title\":\"chore: tidy scripts\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":6,\"title\":\"Update dependency versions\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]}]"
+  run bash "$SCRIPT" --classify --json
+  [ "$status" -eq 0 ]
+  LAST="$(last_json "$output")"
+  echo "$LAST" | jq -e '.pr_types == {"deps":1,"docs":1,"feat":1,"fix":1,"chore":1,"unknown":1}'
+  echo "$LAST" | jq -e '.clean_green == 6'
+}
+
+@test "repo-integration-status: --classify の経過日数バケットが境界どおり" {
+  repos_json '{"name":"RepoA"}'
+  ruleset_ok RepoA '[]'
+  pulls_count RepoA 4
+  prs_json RepoA "[{\"number\":1,\"title\":\"a: 5d\",\"createdAt\":\"$(iso_days_ago 5)\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":2,\"title\":\"b: 7d\",\"createdAt\":\"$(iso_days_ago 7)\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":3,\"title\":\"c: 40d\",\"createdAt\":\"$(iso_days_ago 40)\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":4,\"title\":\"d: 120d\",\"createdAt\":\"$(iso_days_ago 120)\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]}]"
+  run bash "$SCRIPT" --classify --json
+  [ "$status" -eq 0 ]
+  LAST="$(last_json "$output")"
+  echo "$LAST" | jq -e '.age_buckets == {"<7":1,"7-30":1,"30-90":1,">90":1}'
+}
+
+@test "repo-integration-status: --classify は draft と失敗チェックを CLEAN+green から除く" {
+  repos_json '{"name":"RepoA"}'
+  ruleset_ok RepoA '[]'
+  pulls_count RepoA 3
+  D="$(iso_days_ago 3)"
+  prs_json RepoA "[{\"number\":1,\"title\":\"feat: ok\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":2,\"title\":\"feat: draft\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":true,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\"}]},
+    {\"number\":3,\"title\":\"feat: red\",\"createdAt\":\"$D\",\"mergeStateStatus\":\"CLEAN\",\"isDraft\":false,\"statusCheckRollup\":[{\"conclusion\":\"FAILURE\"}]}]"
+  run bash "$SCRIPT" --classify --json
+  [ "$status" -eq 0 ]
+  LAST="$(last_json "$output")"
+  echo "$LAST" | jq -e '.clean_green == 1 and (.prs | length) == 1 and .prs[0].number == 1'
+}
+
+@test "repo-integration-status: --classify 無しでは分類キーを出さない（後方互換）" {
+  repos_json '{"name":"RepoA"}'
+  ruleset_ok RepoA '[]'
+  pulls_count RepoA 0
+  run bash "$SCRIPT" --json
+  [ "$status" -eq 0 ]
+  LAST="$(last_json "$output")"
+  echo "$LAST" | jq -e 'has("pr_types") == false and has("ci_presence") == false and has("prs") == false'
+}
+
+# ── --classify: ruleset なし repo の CI 有無 ───────────────
+@test "repo-integration-status: ruleset なし repo を CI あり/なし/unknown に分ける" {
+  repos_json '{"name":"HasCI"},{"name":"NoCI"},{"name":"NoFlow"}'
+  for r in HasCI NoCI NoFlow; do
+    ruleset_ok "$r" '[]'
+    pulls_count "$r" 0
+  done
+  ci_json HasCI '[{"name":"ci.yml","size":100}]'
+  ci_404 NoCI
+  ci_fail NoFlow
+  run bash "$SCRIPT" --classify --json
+  [ "$status" -eq 0 ]
+  LAST="$(last_json "$output")"
+  echo "$LAST" | jq -e '.ci_presence.with_ci == 1 and .ci_presence.no_ci == 1 and .ci_presence.unknown == 1'
+  echo "$LAST" | jq -e '.ci_presence.no_ci_repos == ["NoCI"] and .ci_presence.unknown_repos == ["NoFlow"]'
+}
+
+@test "repo-integration-status: 空の workflows ディレクトリは CI なしと判定する" {
+  repos_json '{"name":"EmptyFlow"}'
+  ruleset_ok EmptyFlow '[]'
+  pulls_count EmptyFlow 0
+  ci_json EmptyFlow '[]'
+  run bash "$SCRIPT" --classify --json
+  [ "$status" -eq 0 ]
+  last_json "$output" | jq -e '.ci_presence.no_ci == 1'
+}
+
+@test "repo-integration-status: ruleset ありの repo は CI 有無を測らない（無駄な API を叩かない）" {
+  repos_json '{"name":"Central"},{"name":"NoRS"}'
+  ruleset_ok Central '[{"id":9,"name":"central-auto-merge","target":"branch","enforcement":"active"}]'
+  ruleset_detail Central 9 '{"rules":[]}'
+  pulls_count Central 0
+  ruleset_ok NoRS '[]'
+  pulls_count NoRS 0
+  ci_json NoRS '[{"name":"ci.yml","size":1}]'
+  run bash "$SCRIPT" --classify --json
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'contents/.github/workflows' "$STUB_LOG")" -eq 1 ]
+  grep -q 'contents/.github/workflows' "$STUB_LOG"
+  last_json "$output" | jq -e '.ci_presence.with_ci == 1'
 }
