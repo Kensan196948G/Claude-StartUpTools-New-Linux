@@ -27,6 +27,7 @@
 | `STARTUP_WEB_PROMPT_PERMISSION` | 任意 | 子 `claude` の権限モード（`auto` / `acceptEdits` / `plan` / `default`）。**既定は `acceptEdits`**。`auto` は明示したときだけ |
 | `STARTUP_WEB_PROMPT_BUDGET_USD` | 任意 | 1 回あたりの予算上限（既定 2）。不正値は既定へ戻す（無効化されない） |
 | `STARTUP_WEB_PROMPT_TIMEOUT_MS` | 任意 | 1 回あたりの時間上限（既定 600000）。不正値は既定へ戻す |
+| `STARTUP_WEB_LAUNCH_REQUIRE_JWT` | 任意 | `1` で、**実起動**（`POST /api/startup/launch` と `apply-all` の `confirm: true`）に Cloudflare Access の JWT（メール付き）を必須にする。既定は無効（ローカル直アクセスの運用を壊さない）。Basic では代替できず、`CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` が未設定なら実起動を拒否する（`AUTH_NOT_CONFIGURED`）。計画の表示（confirm 無し）と `dryRunOnly` は JWT 無しで使える。監査に実行者のメールを残す。**適用範囲は launch と apply-all の実起動のみ**（`POST /api/session/prompt` は独自の認証 = Basic または Access JWT で、このフラグの対象外） |
 | `STARTUP_WEB_PROMPT_DAILY_MAX` | 任意 | 1 日あたりの送信回数の上限（既定 50）。翌日 0 時（サーバーのローカル時刻）にリセット |
 | `STARTUP_WEB_PROMPT_DAILY_BUDGET_USD` | 任意 | 1 日あたりの累計予算の上限（既定 10 USD）。起動時に 1 回ぶんの予算を確保し、終了時に実コストで精算 |
 | `STARTUP_WEB_PROMPT_ENV_PASS` | 任意 | 子 `claude` へ**追加で渡す**環境変数名（カンマ区切り）。allowlist と秘密判定の両方を越えるため、必要な名前だけを明示する |

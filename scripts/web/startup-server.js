@@ -793,6 +793,8 @@ function createServer(cfg) {
     promptTimeoutMs: Math.max(1000, positiveNumber(process.env.STARTUP_WEB_PROMPT_TIMEOUT_MS, 600000)),
     opsPlanTimeoutMs: positiveNumber(process.env.STARTUP_WEB_OPS_PLAN_TIMEOUT_MS, 15000),   // dry-run は短時間で終わる
     opsPlanMaxConcurrent: 3,
+    // 実起動 (launch / apply-all の confirm=true) に Cloudflare Access の JWT を要求する。既定は無効 (ローカル直アクセスの運用を壊さない)
+    launchRequireJwt: process.env.STARTUP_WEB_LAUNCH_REQUIRE_JWT === '1',
     // 変更系の実行 (段階 2: Systemd restart のみ。docs/architecture/WEB_MUTATING_OPS_DESIGN.md)。既定は無効 (高リスク機能)
     opsRestartEnabled: process.env.STARTUP_WEB_OPS_RESTART_ENABLE === '1',
     opsDailyMax: Math.floor(positiveNumber(process.env.STARTUP_WEB_OPS_DAILY_MAX, 20)),            // 1 日の実行回数の上限 (プロンプト送信とは別カウント)
@@ -927,7 +929,7 @@ function createServer(cfg) {
   }
 
   /** handleLaunch — confirm=true で初めて実起動する (Human Gate) */
-  async function handleLaunch(res, body, remote) {
+  async function handleLaunch(res, body, remote, user) {
     const ctx = await resolveContext();
     if (!ctx.ok) return json(res, 500, { ok: false, error: ctx.error, detail: ctx.stderr || '' });
     const v = validateLaunchRequest(body, ctx);
@@ -994,7 +996,7 @@ function createServer(cfg) {
         }
       }
       appendAudit({ action: 'launch', project: v.value.project, mode: v.value.mode,
-                    goal: v.value.goal, pid: r.pid, remote });
+                    goal: v.value.goal, pid: r.pid, remote, user: user || undefined });
       return json(res, 200, {
         ok: true, started: true, pid: r.pid, args,
         modeLabel: MODE_LABELS[v.value.mode],
@@ -1043,7 +1045,7 @@ function createServer(cfg) {
   }
 
   /** handleApplyAll — Supervisor 全適用。計画 (dry-run) → confirm で --yes */
-  async function handleApplyAll(res, body, remote) {
+  async function handleApplyAll(res, body, remote, user) {
     if (busy) return json(res, 409, { ok: false, error: 'OPERATION_IN_PROGRESS' });
     const dryArgs = buildApplyAllArgs({ dryRun: true, duration: body.duration });
     busy = true;
@@ -1073,7 +1075,7 @@ function createServer(cfg) {
       }
       const args = buildApplyAllArgs({ dryRun: false, duration: body.duration });
       const r = startDetached(BIN_AUTONOMY, args, { cwd: conf.root });
-      appendAudit({ action: 'apply-all', pid: r.pid, remote, dryExit: dry.exitCode });
+      appendAudit({ action: 'apply-all', pid: r.pid, remote, dryExit: dry.exitCode, user: user || undefined });
       return json(res, 200, { ok: true, started: true, pid: r.pid, args, plan: dry.stdout });
     } finally {
       busy = false;
@@ -1226,6 +1228,39 @@ function createServer(cfg) {
     const sfs = req.headers['sec-fetch-site'];
     if (sfs && sfs !== 'same-origin' && sfs !== 'none') return { ok: false, status: 403, error: 'CROSS_SITE_REJECTED' };
     return { ok: true };
+  }
+
+  /**
+   * requireLaunchJwt — 実起動の追加認証。STARTUP_WEB_LAUNCH_REQUIRE_JWT=1 のとき、Access の JWT (メール付き) が無ければ拒否する。
+   *   Cloudflare のエッジ認証を迂回された場合 (オリジンへの直接アクセス) でも、実起動できないようにする多層防御。
+   *   Basic では代替できない (fail-closed)。拒否のときは応答まで済ませて { ok:false } を返す。
+   */
+  async function requireLaunchJwt(req, res, action, body, remote) {
+    if (!conf.launchRequireJwt) return { ok: true, user: '' };
+    let error = '';
+    let detail = '';   // 監査にだけ残す内部の理由 (応答には出さない。JWKS 取得障害と不正アクセスを区別するため)
+    let user = '';
+    if (!conf.accessTeamDomain || !conf.accessAud) {
+      error = 'AUTH_NOT_CONFIGURED';
+    } else {
+      const v = await verifyAccessJwt(req.headers['cf-access-jwt-assertion'], {
+        teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
+      // 実行者はメールで特定する (verifyAccessJwt は email が無いと sub を返すため、メールの形でなければ拒否する)
+      if (!v.ok || !/@/.test(String(v.email || ''))) { error = 'AUTH_JWT_REQUIRED'; detail = v.ok ? 'NO_EMAIL' : String(v.error || ''); } else user = v.email;
+    }
+    if (error) {
+      // 認証前の拒否は、同じ理由につき 1 分に 1 件へ間引く (監査ログの洪水を避ける)
+      const nowMs = Date.now();
+      const key = action + ':' + error;
+      if (!(promptRejectAudit[key] && nowMs - promptRejectAudit[key] < 60000)) {
+        promptRejectAudit[key] = nowMs;
+        appendAudit({ action: action + '-rejected', error, detail: detail || undefined, remote,
+          project: body && typeof body.project === 'string' ? body.project.slice(0, 120) : '' });
+      }
+      json(res, 403, { ok: false, error });
+      return { ok: false };
+    }
+    return { ok: true, user };
   }
 
   /**
@@ -1933,7 +1968,13 @@ function createServer(cfg) {
       if (req.method === 'POST' && pn === '/api/startup/launch') {
         const b = await readBody(req);
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
-        return handleLaunch(res, b.value, remote);
+        let who = '';
+        if (b.value && b.value.confirm === true && !conf.dryRunOnly) {   // 実起動のときだけ (計画の表示は従来どおり)
+          const a = await requireLaunchJwt(req, res, 'launch', b.value, remote);
+          if (!a.ok) return;
+          who = a.user;
+        }
+        return handleLaunch(res, b.value, remote, who);
       }
       if (req.method === 'POST' && pn === '/api/startup/stop') {
         const b = await readBody(req);
@@ -1961,7 +2002,13 @@ function createServer(cfg) {
       if (req.method === 'POST' && pn === '/api/startup/apply-all') {
         const b = await readBody(req);
         if (!b.ok) return json(res, 400, { ok: false, error: b.error });
-        return handleApplyAll(res, b.value, remote);
+        let who = '';
+        if (b.value && b.value.confirm === true && !conf.dryRunOnly) {
+          const a = await requireLaunchJwt(req, res, 'apply-all', b.value, remote);
+          if (!a.ok) return;
+          who = a.user;
+        }
+        return handleApplyAll(res, b.value, remote, who);
       }
 
       /* 読み取り専用の運用情報 (cron / systemd / agents)。値は実測で、書き込みは一切しない。 */

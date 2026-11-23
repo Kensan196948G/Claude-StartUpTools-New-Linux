@@ -2049,3 +2049,104 @@ test('ops-restart: 実行中の再起動があるときは 409 (同時実行は 
   });
   assert.equal(f.callLines().length, 2);
 });
+
+// ---------------------------------------------------------------------------
+// 実起動 (launch / apply-all の confirm=true) の追加認証 (Approval PR): STARTUP_WEB_LAUNCH_REQUIRE_JWT=1
+//   Cloudflare のエッジ認証を迂回された場合 (オリジンへの直接アクセス) でも実起動できないようにする。計画の表示は従来どおり。
+// ---------------------------------------------------------------------------
+const jwtCfg = (extra) => Object.assign({ launchRequireJwt: true, accessTeamDomain: 'test.cloudflareaccess.com', accessAud: 'aud-1', accessKeys: async () => [ACC_JWK] }, extra || {});
+const launchBody = { project: 'Alpha-App', mode: 'team', goal: 'auto', intent: '評価して', duration: 0, confirm: true };   // team: スタブは supervisor を作らないため background は起動確認で失敗する
+
+test('launch-jwt: 既定 (フラグ無し) は従来どおり JWT 無しで実起動できる (後方互換)', async () => {
+  fs.rmSync(MARK, { force: true });
+  await withServer({}, async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch', launchBody);
+    assert.equal(r.json.started, true);
+  });
+});
+
+test('launch-jwt: 有効時、JWT 無し・不正・未設定の実起動は拒否 (fail-closed)。Basic では代替できない。実起動しない', async () => {
+  fs.rmSync(MARK, { force: true });
+  await withServer(jwtCfg({ authUser: 'u', authPass: 'pw' }), async (port) => {
+    const basic = { Authorization: 'Basic ' + Buffer.from('u:pw').toString('base64') };
+    const none = await req(port, 'POST', '/api/startup/launch', launchBody, basic);
+    assert.equal(none.status, 403);
+    assert.equal(none.json.error, 'AUTH_JWT_REQUIRED', 'Basic が通っても JWT が無ければ拒否');
+    const bad = await req(port, 'POST', '/api/startup/launch', launchBody, Object.assign({ 'Cf-Access-Jwt-Assertion': signJwt({ aud: ['other'] }) }, basic));
+    assert.equal(bad.json.error, 'AUTH_JWT_REQUIRED');
+    const noEmail = await req(port, 'POST', '/api/startup/launch', launchBody, Object.assign({ 'Cf-Access-Jwt-Assertion': signJwt({ email: '' }) }, basic));
+    assert.equal(noEmail.json.error, 'AUTH_JWT_REQUIRED', '実行者を特定できない JWT は拒否');
+    const all = await req(port, 'POST', '/api/startup/apply-all', { confirm: true }, basic);
+    assert.equal(all.status, 403);
+    assert.equal(all.json.error, 'AUTH_JWT_REQUIRED', 'apply-all の実適用も同じ');
+  });
+  await withServer(jwtCfg({ accessTeamDomain: '', accessAud: '' }), async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch', launchBody, { 'Cf-Access-Jwt-Assertion': signJwt() });
+    assert.equal(r.status, 403);
+    assert.equal(r.json.error, 'AUTH_NOT_CONFIGURED', 'Access 未設定のまま有効化しても実起動しない');
+  });
+  assert.equal(fs.existsSync(MARK), false, '拒否では CLI を起動しない');
+});
+
+test('launch-jwt: 署名不正・期限切れ・鍵の取得失敗 (JWKS 例外)・sub だけの JWT・truthy な confirm は、実起動しない (apply-all の実適用も走らない)', async () => {
+  fs.rmSync(MARK, { force: true });
+  const autoLog = path.join(TMP, 'autonomy-calls.log');
+  const calls = () => (fs.existsSync(autoLog) ? fs.readFileSync(autoLog, 'utf8').split('\n').filter(Boolean).length : 0);
+  const { privateKey: otherKey } = require('crypto').generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const before = calls();
+  await withServer(jwtCfg(), async (port) => {
+    const post = (jwt) => req(port, 'POST', '/api/startup/launch', launchBody, { 'Cf-Access-Jwt-Assertion': jwt });
+    assert.equal((await post(signJwt({}, otherKey))).json.error, 'AUTH_JWT_REQUIRED', '署名不正');
+    assert.equal((await post(signJwt({ exp: Math.floor(Date.now() / 1000) - 10 }))).json.error, 'AUTH_JWT_REQUIRED', '期限切れ');
+    assert.equal((await post(signJwt({ email: undefined, sub: 'abc-123' }))).json.error, 'AUTH_JWT_REQUIRED', 'メールが無く sub だけの JWT は実行者を特定できない');
+    const all = await req(port, 'POST', '/api/startup/apply-all', { confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: '' }) });
+    assert.equal(all.status, 403);
+    // truthy でも === true でない confirm は、ゲートを通らなくてもハンドラが計画のみにする (実起動しない)
+    for (const c of ['true', 1, {}]) {
+      const r = await req(port, 'POST', '/api/startup/launch', Object.assign({}, launchBody, { confirm: c }));
+      assert.equal(r.json.started, undefined, 'confirm=' + JSON.stringify(c));
+      assert.equal(r.json.requiresConfirm, true);
+    }
+  });
+  await withServer(jwtCfg({ accessKeys: async () => { throw new Error('network down'); } }), async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch', launchBody, { 'Cf-Access-Jwt-Assertion': signJwt() });
+    assert.equal(r.status, 403, '鍵を取得できないときは通さない (fail-closed)');
+    assert.equal(r.json.error, 'AUTH_JWT_REQUIRED');
+  });
+  assert.equal(fs.existsSync(MARK), false, '拒否では CLI を起動しない');
+  assert.equal(calls(), before, '拒否では apply-all の CLI を呼ばない');
+  const log = fs.readFileSync(path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log'), 'utf8');
+  assert.ok(log.split('\n').some(l => l.includes('launch-rejected') && l.includes('"detail"')), '拒否の内部理由 (detail) は監査にだけ残す');
+});
+
+test('launch-jwt: 有効時でも、計画の表示 (confirm 無し) と dryRunOnly は JWT 無しで使える。実起動は何も起きない', async () => {
+  fs.rmSync(MARK, { force: true });
+  await withServer(jwtCfg(), async (port) => {
+    const plan = await req(port, 'POST', '/api/startup/launch', Object.assign({}, launchBody, { confirm: undefined }));
+    assert.equal(plan.status, 200);
+    assert.equal(plan.json.requiresConfirm, true);
+    const allPlan = await req(port, 'POST', '/api/startup/apply-all', {});
+    assert.equal(allPlan.json.requiresConfirm, true);
+  });
+  await withServer(jwtCfg({ dryRunOnly: true }), async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch', launchBody);
+    assert.equal(r.json.dryRunOnly, true);
+    assert.equal(r.json.started, undefined);
+  });
+  assert.equal(fs.existsSync(MARK), false);
+});
+
+test('launch-jwt: 有効時、正しい JWT なら実起動でき、監査ログに実行者のメールを残す', async () => {
+  fs.rmSync(MARK, { force: true });
+  await withServer(jwtCfg(), async (port) => {
+    const r = await req(port, 'POST', '/api/startup/launch', launchBody, { 'Cf-Access-Jwt-Assertion': signJwt({ email: 'launch-audit@example.test' }) });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.started, true);
+    const all = await req(port, 'POST', '/api/startup/apply-all', { confirm: true }, { 'Cf-Access-Jwt-Assertion': signJwt({ email: 'launch-audit@example.test' }) });
+    assert.equal(all.json.started, true);
+  });
+  const log = fs.readFileSync(path.join(process.env.CLAUDEOS_HOME, 'logs', 'web-startup-audit.log'), 'utf8');
+  assert.ok(log.split('\n').some(l => l.includes('"action":"launch"') && l.includes('launch-audit@example.test')), 'launch の監査に実行者を残す');
+  assert.ok(log.split('\n').some(l => l.includes('"action":"apply-all"') && l.includes('launch-audit@example.test')), 'apply-all の監査に実行者を残す');
+  assert.ok(log.includes('launch-rejected') && log.includes('AUTH_JWT_REQUIRED'), '拒否も監査に残す');
+});

@@ -106,7 +106,7 @@ Web コンソールの Cron・Systemd・SubAgent 画面は、現在すべて**�
 - ~~スナップショットが台帳印を捨てる~~ → **解消済み**: `bin/cron-snapshot.sh` は、台帳印（`# CLAUDEOS:<id> project=… duration=…`）の直後の cron 行に `claudeos: {id, project, duration, created, goal}` を付ける。印が効くのは直後の 1 行だけ（`cron__list` と同じ対応）で、他用途の行・他の接頭辞（`OPENCODE` 等）・project/duration が読めない印には付けない。スナップショットは 5 分ごとに更新されるため、実行側は `generated_at` が約 10 分（2 周期）より古ければ拒否する。
 - 現在の crontab に ClaudeOS 管理のエントリは 0 件（他用途の生コマンドのみ）。実機で確認できる対象がない。
 - **crontab の生コマンドは実行しない**（`rm` など ClaudeOS 管理外のコマンドを含み得る）。実装するなら、スナップショットに ClaudeOS の印・プロジェクト名・実行時間を残す拡張（通常 PR）を先に行い、台帳印のあるエントリだけを対象とし、実行は既存の BG 起動経路を再利用する。スナップショットの鮮度（`generated_at`）も検査する。
-- 認証が弱い既存の `POST /api/startup/launch` は、同じ種類の起動を既に許している（残存リスク。段階 2 では変更しない）。
+- 認証が弱かった既存の `POST /api/startup/launch`（と `apply-all`）は、`STARTUP_WEB_LAUNCH_REQUIRE_JWT=1` で実起動に Access JWT を要求できるようにした（既定は無効。運用者が有効化するまで従来どおり）。詳細は `WEB_SESSION_PROMPT.md` の環境変数表。
 
 ### 段階 2（`Systemd restart`）の実装内容
 
