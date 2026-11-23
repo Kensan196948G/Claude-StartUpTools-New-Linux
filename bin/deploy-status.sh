@@ -26,8 +26,8 @@
 #   CCSU_CURL_BIN       curl 実体 (既定 curl)
 #   CCSU_SYSTEMCTL_BIN  systemctl 実体 (既定 systemctl)
 #   CLAUDEOS_HOME       releases / state の親 (テストは一時ディレクトリ)
-#   CCSU_STATE_FILE     state.json を明示指定 (未指定なら $CLAUDEOS_HOME/state.json
-#                       → $CCSU_ROOT/state.json の順で存在するもの)
+#   CCSU_STATE_FILE     state.json を明示指定 (未指定なら $CCSU_ROOT/state.json
+#                       → $CLAUDEOS_HOME/state.json の順で存在するもの)
 #
 # unit 名と port は lib/release-promote.sh を正本として共用する
 # (staging=claudeos-web-startup-stg.service:3742 / production=claudeos-web-startup.service:3740)。
