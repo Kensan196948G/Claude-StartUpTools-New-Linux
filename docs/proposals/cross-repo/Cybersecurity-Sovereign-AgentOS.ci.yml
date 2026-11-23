@@ -1,0 +1,49 @@
+# 提案: Cybersecurity-Sovereign-AgentOS の最小 CI
+#
+# 根拠（2026-11-23 実測）:
+#   languages = HTML 197656 B / JavaScript 38497 B（package.json は無い）
+#   tests/    = sample-app.test.cjs, sample-app-controls.test.cjs, verify-local.test.cjs
+#   scripts/  = verify-local.cjs
+#   テストは 'node:test' + 'node:assert/strict'（依存追加なし・DOM/外部通信なし）
+#
+# 実測した「今の状態」（重要）:
+#   node --check scripts/verify-local.cjs   → PASS（この提案はこれだけを CI にする）
+#   node --test tests/*.test.cjs            → 82 件中 75 pass / 7 fail
+#   失敗 7 件はすべて sample-app.test.cjs（キルスイッチ再評価・本番昇格拒否・
+#   Manifest 型検証など）。アプリの実装とテストの期待が一致していない。
+#
+# したがって:
+#   テスト step は**あえて入れていない**。このまま入れると初日から赤くなり、
+#   ruleset を後から当てた瞬間に全 PR が止まる。テストは 7 件を解消してから足す。
+#
+#   なお `node --test tests/` は Node 22 では「ディレクトリをモジュールとして解決」して
+#   MODULE_NOT_FOUND になる（実測）。テストを足すときは `node --test tests/*.test.cjs`
+#   か引数なしの `node --test`（cwd 探索）を使う。
+#
+# 将来: 下のコメントアウトを外し、7 件の失敗を解消してからマージする。
+#       job 名 ci は変えない（必須チェック名を保つ）。
+
+name: ci
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 構文検査
+        run: node --check scripts/verify-local.cjs
+
+      # --- 7 件の失敗を解消したら有効化する ---------------------------
+      # - name: テスト
+      #   run: node --test tests/*.test.cjs

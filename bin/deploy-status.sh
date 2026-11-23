@@ -9,9 +9,17 @@
 #   3. health (http://127.0.0.1:<port>/api/health の ok / commit / version)
 #      失敗しても表示は継続する (exit は 0 のまま)
 #   4. unit 状態 (systemctl --user show <unit> -p ActiveState -p NRestarts)
-#   5. 直近の昇格 5 件 (<CLAUDEOS_HOME>/releases/promotions.jsonl の末尾 5 行。
+#   5. dashboard の状態 (本体とは別 unit / 別 port)
+#      production = claude-startuptools-dashboard.service (3737)
+#      staging    = claude-startuptools-dashboard-stg.service (3743)
+#      ActiveState / NRestarts / health(http,commit) / drop-in 有無 / serving_from
+#      serving_from は WorkingDirectory から判定する
+#        release  = $CLAUDEOS_HOME/releases/<sha> 配下（成果物起動）
+#        worktree = それ以外（作業ツリー直実行）
+#        unknown  = 取得できない（誤って release と表示しない）
+#   6. 直近の昇格 5 件 (<CLAUDEOS_HOME>/releases/promotions.jsonl の末尾 5 行。
 #      台帳は閾値超過で .1〜.N へ回転するため、古い世代 (.N→.1) と現行を連結して読む)
-#   6. state.json の deploy サマリ (ready / environment / runbook_path / checklist)
+#   7. state.json の deploy サマリ (ready / environment / runbook_path / checklist)
 #
 # **読み取り専用**: symlink・unit・state・台帳を一切変更しない。
 #   systemctl は show のみ、curl は GET のみ、ファイルは読み取りのみ。
@@ -171,12 +179,110 @@ ds__unit_json() {
       error:(if $err == "" then null else $err end)}'
 }
 
+# ds__dashboard_unit <env> — dashboard の unit 名
+#   production = claude-startuptools-dashboard.service     (127.0.0.1:3737)
+#   staging    = claude-startuptools-dashboard-stg.service (127.0.0.1:3743)
+ds__dashboard_unit() {
+  case "$1" in
+    production) printf '%s' "claude-startuptools-dashboard.service" ;;
+    staging)    printf '%s' "claude-startuptools-dashboard-stg.service" ;;
+    *) return 1 ;;
+  esac
+}
+
+# ds__dashboard_port <env> — dashboard の port
+ds__dashboard_port() {
+  case "$1" in
+    production) printf '%s' "3737" ;;
+    staging)    printf '%s' "3743" ;;
+    *) return 1 ;;
+  esac
+}
+
+# ds__dashboard_serving_from <working_directory> — 成果物起動か作業ツリー起動か
+#   成果物は $CLAUDEOS_HOME/releases/<sha> 配下で動く。それ以外は worktree。
+#   取得できない場合は unknown（誤って release と表示しない）。
+ds__dashboard_serving_from() {
+  local wd="${1:-}"
+  if [[ -z "$wd" ]]; then
+    printf '%s' "unknown"
+  elif [[ "$wd" == */releases || "$wd" == */releases/* ]]; then
+    printf '%s' "release"
+  else
+    printf '%s' "worktree"
+  fi
+}
+
+# ds__dashboard_json <env> — dashboard の状態（読み取りのみ）
+#   systemctl show 1 回 + /api/health 1 回。取れない項目は空文字 / null にする。
+#   serving_from は WorkingDirectory から判定する（本番が成果物起動へ切り替わったかを一目で分かるように）。
+ds__dashboard_json() {
+  local env="$1" unit port url out rc=0 status="" body="" err=""
+  local bin="" wd="" dropins="" state="" restarts="" commit=""
+  local dropin="false" health_http="null" serving="unknown"
+
+  unit="$(ds__dashboard_unit "$env")" || unit=""
+  port="$(ds__dashboard_port "$env")" || port=""
+
+  bin="$(rp__systemctl_bin)"
+  if [[ -z "$unit" ]]; then
+    err="dashboard の unit 名が不明です (env=$env)"
+  elif command -v -- "$bin" >/dev/null 2>&1; then
+    out="$("$bin" --user show "$unit" -p ActiveState -p NRestarts -p WorkingDirectory -p DropInPaths 2>/dev/null)" || rc=$?
+    state="$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p' | head -n 1)"
+    restarts="$(printf '%s\n' "$out" | sed -n 's/^NRestarts=//p' | head -n 1)"
+    wd="$(printf '%s\n' "$out" | sed -n 's/^WorkingDirectory=//p' | head -n 1)"
+    dropins="$(printf '%s\n' "$out" | sed -n 's/^DropInPaths=//p' | head -n 1)"
+    if [[ -n "$dropins" ]]; then dropin="true"; fi
+    if [[ -z "$state" ]]; then
+      if (( rc != 0 )); then
+        err="systemctl show が失敗しました (exit $rc)"
+      else
+        err="ActiveState を取得できません (unit 未登録の可能性)"
+      fi
+    fi
+  else
+    err="systemctl が見つかりません"
+  fi
+
+  serving="$(ds__dashboard_serving_from "$wd")"
+
+  if [[ -n "$port" ]]; then
+    url="http://127.0.0.1:${port}/api/health"
+    rc=0
+    out="$("$(rp__curl_bin)" -sS --max-time 3 -w $'\n%{http_code}' "$url" 2>/dev/null)" || rc=$?
+    status="$(printf '%s' "$out" | tail -n 1)"
+    # 000 は「接続できなかった」を表す curl の値なので、HTTP ステータスとして扱わない
+    if [[ "$status" =~ ^[0-9]{3}$ ]] && [[ "$status" != "000" ]]; then
+      health_http="$status"
+    else
+      status=""
+    fi
+    body="$(printf '%s' "$out" | sed '$d')"
+    if printf '%s' "$body" | jq -e . >/dev/null 2>&1; then
+      commit="$(ds__get "$body" '.commit' '')"
+    fi
+  fi
+
+  jq -cn --arg env "$env" --arg unit "$unit" --argjson port "${port:-null}" \
+    --arg state "$state" --arg restarts "$restarts" --arg wd "$wd" \
+    --argjson dropin "$dropin" --arg serving "$serving" \
+    --argjson health_http "$health_http" --arg commit "$commit" \
+    --arg err "$err" \
+    '{env:$env, unit:$unit, port:$port,
+      active_state:$state, n_restarts:$restarts,
+      health_http:$health_http, commit:$commit,
+      dropin_present:$dropin, serving_from:$serving,
+      working_directory:$wd,
+      error:(if $err == "" then null else $err end)}'
+}
+
 # ds__env_json <env> <selected:0|1> — 1 環境ぶんの状態を JSON で返す
 ds__env_json() {
   local env="$1" selected="$2"
   local port unit link target resolved cur prev_file prev_target prev_dir prev
   local rollback=0 rb_reason="" same="false" sel="false"
-  local cur_commit prev_commit health unitjson
+  local cur_commit prev_commit health unitjson dashjson
 
   port="$(rp__env_port "$env")"
   unit="$(rp__env_unit "$env")"
@@ -230,6 +336,7 @@ ds__env_json() {
 
   health="$(ds__health_json "$port")"
   unitjson="$(ds__unit_json "$unit")"
+  dashjson="$(ds__dashboard_json "$env")"
 
   jq -cn \
     --arg env "$env" --argjson selected "$sel" --argjson port "$port" --arg unit "$unit" \
@@ -239,6 +346,7 @@ ds__env_json() {
     --argjson previous "$prev" \
     --argjson rollback "$rollback" --arg rb_reason "$rb_reason" \
     --argjson same "$same" --argjson health "$health" --argjson unit_info "$unitjson" \
+    --argjson dash "$dashjson" \
     --argjson symlink_present "$symlink_present" \
     '{env:$env, selected:$selected, port:$port, unit:$unit,
       current:{symlink:$link, target:$target, path:$path,
@@ -248,7 +356,7 @@ ds__env_json() {
                 present:(($prev_path != "") and ($previous.valid == true)), manifest:$previous},
       rollback_available:($rollback == 1), rollback_reason:$rb_reason,
       same_commit_as_previous:$same,
-      health:$health, unit:$unit_info}'
+      health:$health, unit:$unit_info, dashboard:$dash}'
 }
 
 # ds__promotions_files — 台帳の読み順 (古い世代 → 現行)
@@ -356,6 +464,8 @@ ds__render_env() {
   local rollback reason same
   local h_ok h_status h_commit h_version h_err
   local u_ok u_state u_restarts u_err
+  local d_unit d_port d_state d_restarts d_http d_commit d_dropin d_serving d_wd d_err
+  local d_color d_dropin_text
 
   env="$(ds__get "$j" '.env' '')"
   port="$(ds__get "$j" '.port' '')"
@@ -422,6 +532,42 @@ ds__render_env() {
       "$C_GREEN" "${u_state:-?}" "$C_RESET" "${u_restarts:-?}" "$unit"
   else
     printf '  unit      : %s取得不可%s %s (%s)\n' "$C_YELLOW" "$C_RESET" "${u_err:-不明}" "$unit"
+  fi
+
+  # 5. dashboard（本体とは別 unit / 別 port）
+  d_unit="$(ds__get "$j" '.dashboard.unit' '')"
+  d_port="$(ds__get "$j" '.dashboard.port' '')"
+  d_state="$(ds__get "$j" '.dashboard.active_state' '')"
+  d_restarts="$(ds__get "$j" '.dashboard.n_restarts' '')"
+  d_http="$(ds__get "$j" '.dashboard.health_http' '')"
+  d_commit="$(ds__get "$j" '.dashboard.commit' '')"
+  d_dropin="$(ds__get "$j" '.dashboard.dropin_present' 'false')"
+  d_serving="$(ds__get "$j" '.dashboard.serving_from' 'unknown')"
+  d_wd="$(ds__get "$j" '.dashboard.working_directory' '')"
+  d_err="$(ds__get "$j" '.dashboard.error' '')"
+
+  # serving_from は一目で分かるよう色を変える（release=緑 / worktree=黄 / unknown=白）
+  d_color="$C_WHITE"
+  if [[ "$d_serving" == "release" ]]; then
+    d_color="$C_GREEN"
+  elif [[ "$d_serving" == "worktree" ]]; then
+    d_color="$C_YELLOW"
+  fi
+  d_dropin_text="なし"
+  if [[ "$d_dropin" == "true" ]]; then d_dropin_text="あり"; fi
+
+  if [[ -n "$d_state" ]]; then
+    printf '  dashboard : %s%s%s / NRestarts=%s (%s / 127.0.0.1:%s)\n' \
+      "$C_GREEN" "$d_state" "$C_RESET" "${d_restarts:-?}" "${d_unit:-?}" "${d_port:-?}"
+  else
+    printf '  dashboard : %s取得不可%s %s (%s)\n' \
+      "$C_YELLOW" "$C_RESET" "${d_err:-不明}" "${d_unit:-?}"
+  fi
+  printf '              成果物起動 : %s%s%s (http=%s commit=%s drop-in=%s)\n' \
+    "$d_color" "${d_serving:-unknown}" "$C_RESET" \
+    "${d_http:-?}" "${d_commit:-(なし)}" "$d_dropin_text"
+  if [[ -n "$d_wd" ]]; then
+    printf '              WorkingDirectory=%s\n' "$d_wd"
   fi
 }
 

@@ -1,0 +1,53 @@
+# 提案: Construction-Public-Twin-Portal の最小 CI
+#
+# 根拠（2026-11-23 実測）:
+#   languages = TypeScript 642677 B / HTML 116232 B / CSS 72896 B / JavaScript 77401 B / Shell 19865 B
+#   ルートに package.json / package-lock.json / eslint.config.mjs / vitest.config.ts / tsconfig.json
+#   package.json scripts（実測）:
+#     lint = eslint .        typecheck = tsc --noEmit        test = vitest run
+#   devDependencies に eslint / eslint-config-next / typescript / vitest が入っている
+#   テストは tests/**/*.test.ts（vitest.config.ts の include と一致）
+#
+# 採用コマンド（実在を確認済み）:
+#   npm ci               … package-lock.json があるため再現可能
+#   npm run lint         … eslint .
+#   npm run typecheck    … tsc --noEmit
+#   npm run test         … vitest run
+#
+# 採用しなかったコマンド:
+#   npm run build        … 先頭で scripts/copy-cesium.mjs を実行する。vendor 済み資産に依存するため
+#                          クリーンな CI では成立しない可能性があり、最小 CI の範囲外とする
+#
+# 注意: npm run test は Route Handler を直接 import する（サーバ起動なし）。
+#       将来 DB を要するテストが増えた場合は、この step だけ外すか service を足す。
+
+name: ci
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 依存インストール
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 型検査
+        run: npm run typecheck
+
+      - name: テスト
+        run: npm run test
