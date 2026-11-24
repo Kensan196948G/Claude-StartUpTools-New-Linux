@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# ============================================================
+# .githooks/pre-commit — コミット前の shell 検査 (ClaudeOS v5.0)
+#
+# 変更された .sh だけを bash -n と shellcheck -S error で検査する
+# (npm run lint と同じ重大度)。旧 PreToolUse(Bash) の pre-commit-gate.js を置き換える。
+#
+# 置き換えた理由 (docs/architecture/SHIP_HOOK_PROPOSAL.md):
+#   - 旧フックの lint は ESLint/ruff 専用で、本リポジトリでは何も検査していなかった
+#   - checkout の .claude/settings.json に Bash の PreToolUse フックがあると、
+#     公式仕様により /ship の watch が始まらない
+#
+# 注意: /ship の watch で Claude が作るコミットは公式仕様により
+#       git -c core.hooksPath=/dev/null で実行され、このフックを通らない。
+#       そのコミットの品質は Local Quality Engine (bin/ship.sh quality) と CI が担う。
+#
+# 有効化: bash scripts/setup/install-githooks.sh   (git config core.hooksPath .githooks)
+# ============================================================
+set -euo pipefail
+
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR -- '*.sh')
+(( ${#files[@]} )) || exit 0
+
+status=0
+for f in "${files[@]}"; do
+  bash -n "$f" || { echo "pre-commit: bash -n failed: $f" >&2; status=1; }
+done
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck -S error "${files[@]}" || status=1
+else
+  echo "pre-commit: shellcheck が無いため構文検査 (bash -n) のみ実施" >&2
+fi
+(( status == 0 )) || echo "pre-commit: 検査に失敗しました。修正してから再度コミットしてください" >&2
+exit "$status"

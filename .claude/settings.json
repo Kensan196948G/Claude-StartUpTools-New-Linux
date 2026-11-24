@@ -26,21 +26,6 @@
     "baseRef": "head"
   },
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/claudeos/scripts/hooks/pre-commit-gate.js\"",
-            "if": "Bash(git commit *)",
-            "continueOnBlock": true,
-            "timeout": 240,
-            "statusMessage": "pre-commit gate: lint / test:quick"
-          }
-        ]
-      }
-    ],
     "PreCompact": [
       {
         "matcher": "*",
