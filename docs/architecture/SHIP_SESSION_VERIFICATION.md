@@ -34,7 +34,7 @@ claude
 
 - **引数なしの `/ship` を main で実行しない。** `/ship` は確認なしで、未コミットの変更をコミットし、新しいブランチを push し、PR を開く。
   このフォルダには ClaudeOS の学習データ（`.claude/claudeos/data/*.json`）の未コミット変更が常にあり、それが PR に含まれてしまう。
-- 本リポジトリは **auto-merge が有効**で、ruleset は人間承認をまだ要求していない（承認事項 #3 が未）。
+- 本リポジトリは **auto-merge が有効**で、ruleset は人間承認をまだ要求していない（承認事項 #3 が未）。**【2026-11-24 20:30 追記】ruleset 第 1 段階は適用済みで、人間承認は必須になった（`SHIP_RULESET_CHANGE.md` §9）。以下は適用前の記録。**
   公式 docs の警告どおり、auto-merge が登録された PR では watch の push がそのままマージに至り得る。
 
 ## 3. 実際に /ship を使うとき（次の段階）
@@ -86,7 +86,7 @@ PR #230（文書のみ・R2）を使い、Ship Native の全工程を人とAIで
 | `ship-attest`（結果への署名） | 人 | `sa_mwukbrfc_405adedd7cec`（important_open=0, watch=not-started） |
 | AI Quality Gate | AI | **PASS**（15 項目すべて PASS、R2） |
 | `approve`（人間承認） | 人 | `ha_mwukiolq_abf2a8e3e813`、`claudeos/human-approval=success`。別の head では `STALE_HEAD` で無効になることを確認 |
-| ClaudeOS Merge Executor（dry-run） | AI | REFUSED（施行フラグ無効・ruleset が 2 context を未要求。設計どおり） |
+| ClaudeOS Merge Executor（dry-run） | AI | REFUSED（施行フラグ無効・ruleset が 2 context を未要求。設計どおり。※適用前の記録。第 1 段階適用後は解消、`SHIP_RULESET_CHANGE.md` §9） |
 | マージ | 人 | 画面からマージ（`63449b3`）。承認した `1d87dab` と内容が同一であることを確認 |
 
 ### 実機で分かった `/ship` の注意点
