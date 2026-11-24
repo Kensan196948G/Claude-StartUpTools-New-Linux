@@ -13,7 +13,7 @@
 | `config/claude-code-compat.json` | ship 系 capability 3 件追加、tested/recommended を 2.1.330 へ | `diag-claude-compat.sh` の表示行が増える。version policy は supported のまま | `claude-capability.bats` |
 | `package.json` | `test:node` の find から node_modules を除外、`ship*` スクリプト追加 | 既存スクリプトの意味は不変 | `npm test` |
 | `db/control/migrations/0006` | 追加のみ（ALTER/DROP なし） | 既存テーブルの列・制約は不変。未適用のまま（本番 DB へは未適用） | 使い捨て DB で 0001→0006 適用・再適用・ロールバック・再適用 |
-| GitHub 設定 | **変更なし** | ruleset・Actions・中央ポリシーは未変更 | API 再取得で確認 |
+| GitHub 設定 | **変更なし** | ruleset・Actions・中央ポリシーは未変更（2026-11-24 時点の分析。ruleset は同日 20:30 に第 1 段階を適用、`SHIP_RULESET_CHANGE.md` §9） | API 再取得で確認 |
 | systemd / cron | **追加なし** | 既存 timer に影響なし | `systemctl --user list-timers` |
 | Goal Router / `/goal` | 変更なし | 後方互換 | `goal-router.bats` |
 

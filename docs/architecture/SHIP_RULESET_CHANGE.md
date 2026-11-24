@@ -1,8 +1,8 @@
-# 承認事項 #3: ruleset に 2 つの必須チェックを加える変更案（未適用）
+# 承認事項 #3: ruleset に 2 つの必須チェックを加える変更案（第 1 段階適用済み）
 
 状態: **第 1 段階を 2026-11-24 20:30:56 にユーザーが適用済み**（§9）。第 2 段階は保留。適用は owner（ユーザー）が行い、AI は確認（readback）だけを行う。
 
-## 1. 現状（API で再取得、2026-11-24）
+## 1. 適用前の現状（API で再取得、2026-11-24。第 1 段階適用前のスナップショット。適用後は §9）
 
 | 項目 | 値 |
 | --- | --- |
@@ -66,7 +66,7 @@ GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は�
    - 第 1 段階を適用した瞬間から、すべての PR に `claudeos/human-approval` が必要になる。
    - 承認ステータスを付けるには、承認者鍵が main に登録されていること（#10 は PR #232 で登録済み）と、`bin/ship-approve.sh approve` が動くことが必要。
    - 過去 30 日のマージは 108 件（すべて本人）。**承認ステータスが実際に付くことを確認する（下記手順 2）前に #3 を適用すると、この流れが止まる**。
-   - 現在 OPEN の #230・#231 も、適用後はこの手順でしか入らない。
+   - （適用前の記述）当時 OPEN だった #230・#231 も、適用後はこの手順でしか入らない。いずれも適用前にマージ済み（§9）。
 2. **dependabot / renovate の PR も止まる**（横断巡回 `cross-repo-automerge` の対象から実質外れる）。承認事項 #2 は事実上これで解決するが、依存更新も人が承認する運用になる。
 3. **ローカル品質の登録が必要になる。** `claudeos/local-quality` は `bin/ship.sh quality --publish` で付く（GitHub Actions では付かない）。実測で 1 回 約 12 分（npm-test が大半）。
 4. 中央の ruleset 配布（`bin/policy-pr.sh`）は、必須チェックを持つ ruleset が既にあれば**作り直さない**（`ruleset_exists` を確認済み）。配布で上書きされる心配は無い。
@@ -77,8 +77,8 @@ GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は�
 | --- | --- | --- |
 | 1 | ~~承認者鍵を作り（`keygen`）、公開鍵を登録する PR をマージ（#10）~~ — 完了（PR #232） | 人 |
 | 2 | 練習用の PR 1 件で `quality --publish` → `gate` → `approve` を通し、2 つのステータスが付くことを確認（ruleset 変更前なので何も止まらない） | AI + 人 |
-| 3 | **第 1 段階**を適用（下記 §6） | 人 |
-| 4 | 検証（§7） | AI（読み取り）+ 人 |
+| 3 | ~~**第 1 段階**を適用（下記 §6）~~ — 完了（2026-11-24 20:30、§9） | 人 |
+| 4 | 検証（§7）— 手順 1〜3 は完了（§9）。手順 4（承認後 push で再 BLOCKED）は未実施 | AI（読み取り）+ 人 |
 | 5 | （保留）AI のトークン分離・別ユーザー化（#7）と人間専用 GitHub App（#4）をセットで検討 → **第 2 段階** | 人 |
 | 6 | `centralProfileEnforced=true` にする PR（R4）→ 初めて ClaudeOS の自動マージが有効になる | 人の承認 |
 
@@ -115,7 +115,7 @@ gh api -X PUT repos/Kensan196948G/Claude-StartUpTools-New-Linux/rulesets/2088281
 
 画面で行う場合は、追加した 2 件を削除する。即時に元の状態（必須チェック 2 件）へ戻る。
 
-> **一部確認済み（2026-11-24）**: 同じ形式の入力（6 項目だけの JSON）による `PUT` は、第 1 段階の適用で成功した（§9）。`before.json` そのものを送る戻しはまだ実行していない。`ruleset-20882817-before.json` は GET の応答から `id`・`source`・`created_at`・`updated_at`・`_links`・`current_user_can_bypass` などの読み取り専用項目を落とし、`name`・`target`・`enforcement`・`conditions`・`bypass_actors`・`rules` だけを残してある。GitHub の REST 定義（`PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}` の requestBody）が受け付ける項目はちょうどこの 6 つで、保存した JSON に受付外の項目は無い（2026-11-24 に OpenAPI 定義と照合）。ただし実際に送って成功するかは未確認。初回の適用時（§6）に、第 1 段階の `PUT` が成功することで同じ形式の入力が通ることを確かめる。失敗した場合は画面からの削除で戻す。
+> **一部確認済み（2026-11-24）**: 同じ形式の入力（6 項目だけの JSON）による `PUT` は、第 1 段階の適用で成功した（§9）。一方、`before.json` そのものを送る戻しの `PUT` はまだ実行していない。`ruleset-20882817-before.json` は GET の応答から `id`・`source`・`created_at`・`updated_at`・`_links`・`current_user_can_bypass` などの読み取り専用項目を落とし、`name`・`target`・`enforcement`・`conditions`・`bypass_actors`・`rules` だけを残してある。GitHub の REST 定義（`PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}` の requestBody）が受け付ける項目はちょうどこの 6 つで、保存した JSON に受付外の項目は無い（2026-11-24 に OpenAPI 定義と照合）。戻しが失敗した場合は画面から追加した 2 件を削除して戻す。
 
 ## 9. 第 1 段階の適用記録（2026-11-24）
 
@@ -126,3 +126,26 @@ gh api -X PUT repos/Kensan196948G/Claude-StartUpTools-New-Linux/rulesets/2088281
 | 適用後の確認（AI） | 再取得した ruleset が `stage1.json` と完全一致。必須チェック 4 件・strict=true・bypass なし。§8 で「未検証」とした `PUT` の入力形式は、この適用が成功したことで通ることを確認できた |
 | 承認なし PR の確認（AI） | 確認用 PR #234 を作成。linux-validate・gitleaks は success だが `claudeos/local-quality`・`claudeos/human-approval` が無く **`mergeStateStatus=BLOCKED`**。GitHub が必須と判定したチェックは Actions の 2 件のみ報告され、ClaudeOS の 2 件は「未報告」として不足扱い。マージせずに閉じた |
 | ClaudeOS Merge Executor | `RULESET_DOES_NOT_REQUIRE` の拒否理由が消え、残りは施行フラグ・gate・品質・人間承認のみ |
+
+### §9 の根拠（2026-11-24 21:08 に AI が API で再取得した実測値）
+
+```console
+$ gh api repos/Kensan196948G/Claude-StartUpTools-New-Linux/rules/branches/main \
+    --jq '[.[]|select(.type=="required_status_checks")|{ruleset_id, strict:.parameters.strict_required_status_checks_policy, checks:[.parameters.required_status_checks[].context]}]'
+[{"checks":["Secrets scan (gitleaks)","linux-validate","claudeos/local-quality","claudeos/human-approval"],"ruleset_id":20882817,"strict":true}]
+
+$ gh api repos/Kensan196948G/Claude-StartUpTools-New-Linux/rulesets/20882817 --jq '{updated_at}'
+{"updated_at":"2026-11-24T20:30:56.018+09:00"}
+```
+
+確認用 PR #234（head `2aeff726186d412ccf4ffd101219ff237e4fd33c`）:
+
+| 項目 | 値 |
+| --- | --- |
+| `linux-validate` / `Secrets scan (gitleaks)` | `success` / `success` |
+| Commit Status（`claudeos/*`） | 0 件（付けていない） |
+| `mergeStateStatus`（20:41 時点、AI が読み取り） | `BLOCKED` |
+| 状態 | `CLOSED`（`closedAt 2026-11-24T11:41:56Z`、`mergedAt null`） |
+| 記録 | PR #234 のコメント（11:41:54Z）に確認結果を残した |
+
+`BLOCKED` は PR を閉じる前に読み取った値で、閉じた後の PR からは再取得できない。
