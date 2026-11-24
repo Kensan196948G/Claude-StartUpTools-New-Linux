@@ -1,6 +1,6 @@
 # Ship Native と中央 GitHub ポリシーの整合（変更案・未施行）
 
-状態: **起案済み・未発効（2026-11-24）。** 方式 B を中央リポジトリのドラフト PR [Deep-Seek-Harness-Project#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) として作成した（§10.2）。中央正本 main は未変更。発効はユーザーによる同 PR のマージ。
+状態: **発効済み（2026-11-24、中央 `db62ffa`）。** 方式 B は中央リポジトリの [Deep-Seek-Harness-Project#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) としてユーザーがマージした（§10.2）。残りは本リポジトリのミラー `GITHUB_POLICY.md` の再同期。
 対象: 中央正本 `Kensan196948G/Deep-Seek-Harness-Project` の `GITHUB_POLICY.md` v3（本リポジトリの `GITHUB_POLICY.md` は 2026-11-23 同期のミラー）
 
 ## 1. 矛盾の内容
@@ -67,7 +67,7 @@
 1. 中央リポジトリに §3 の PR を作成し、人間がレビュー・マージ（承認事項 #1）。
 2. 本リポジトリのミラー `GITHUB_POLICY.md` を中央正本に再同期（通常 PR）。
 3. 承認者鍵の登録（`bin/ship-approve.sh keygen` → `config/ship-policy.json` の `humanGate.approverKeys` に追加する PR を人間がマージ）。
-4. （推奨）人間専用 GitHub App を作成し、ruleset で `claudeos/human-approval` の integration_id を限定（承認事項 #4）。
+4. （保留）人間専用 GitHub App を作成し、ruleset で `claudeos/human-approval` の integration_id を限定（承認事項 #4）。AI のトークンが admin 権限を持つ間は効果が限定的なため、#7・トークン分離とセットで後日検討する（2026-11-24 判断）。
 5. ruleset `central-auto-merge` に 2 context を追加（承認事項 #3。下の JSON）。
 6. 新しい必須チェックが機能することを検証用 PR で確認（承認ステータスなしでマージ不可になること）。
 7. `config/ship-policy.json` の `merge.centralProfileEnforced` を `true` にする PR（R4・人間承認）。

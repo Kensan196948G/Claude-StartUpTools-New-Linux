@@ -1,6 +1,6 @@
 # Ship Native 開発状況（永続化された進捗）
 
-最終更新: 2026-11-24 / ブランチ `feat/ship-native-v5` / 基点 `a35988a` (origin/main) / PR #228 (Draft)
+最終更新: 2026-11-24 / **main `2bf919d` にマージ済み**（PR #228）。関連: PR #229（`4bf8a55`）、中央 PR #185（`db62ffa`）
 
 コンテキストが縮小・再起動された場合は、まず本書を読んで再開する。
 
@@ -21,7 +21,7 @@
 | 10 | 総合テスト | ✅ |
 | 11 | ドキュメント | ✅ |
 | 12 | 本リポジトリへの /ship 適用 | ❌ 実施不能（下記 §4） |
-| 13 | 人間承認・自動マージ | ⏳ 承認待ち |
+| 13 | 人間承認・マージ | ✅ #185・#229・#228 をユーザーがマージ（自動マージの施行は未: 鍵登録 #10・ruleset #3・`centralProfileEnforced`） |
 
 ## 2. 実測結果（2026-11-24）
 
@@ -43,10 +43,10 @@
 
 ## 3. 未解決・残課題
 
-1. `/ship` の実機セッション検証（人が対話セッションで `/ship terms` を実行）— 未。
+1. ~~`/ship` の実機セッション検証~~ → 2026-11-24 17:42 に人が `/ship terms` を実行し成功（`SHIP_SESSION_VERIFICATION.md` §5）。同日 PR #230 で `/ship`（レビューのみ）→ 署名 → Quality Gate PASS → 人間承認 → マージまで通した（同 §6）。**watch は未実施**（リモートコントロール有効のため）。
 2. ~~gh 2.45.0 < 2.63~~ → 2026-11-24 に gh 2.105.0 へ更新済み（承認 #9）。
-3. 本リポジトリの PreToolUse(Bash) フックにより watch 不可（review のみ）。
-4. Human Gate の施行（中央ポリシーは PR #185 で起案済み・未発効。ruleset・鍵登録・GitHub App は未）。
+3. ~~PreToolUse(Bash) フックにより watch 不可~~ → PR #229 で解消。マージ後の capability は **overall=available / watch_possible=true**（2026-11-24 実測）。
+4. Human Gate の施行（中央ポリシーは PR #185 で発効済み、承認者鍵は PR #232 で登録済み。ruleset（#3）・`centralProfileEnforced`・GitHub App は未）。
 5. Actions 並走比較（10 PR）。
 6. Playwright E2E の隔離実行（ブラウザが ro-root で動くか）— 未検証。
 
