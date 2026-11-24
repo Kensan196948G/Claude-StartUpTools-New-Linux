@@ -46,7 +46,7 @@
 1. ~~`/ship` の実機セッション検証~~ → 2026-11-24 17:42 に人が `/ship terms` を実行し成功（`SHIP_SESSION_VERIFICATION.md` §5）。同日 PR #230 で `/ship`（レビューのみ）→ 署名 → Quality Gate PASS → 人間承認 → マージまで通した（同 §6）。**watch は未実施**（リモートコントロール有効のため）。
 2. ~~gh 2.45.0 < 2.63~~ → 2026-11-24 に gh 2.105.0 へ更新済み（承認 #9）。
 3. ~~PreToolUse(Bash) フックにより watch 不可~~ → PR #229 で解消。マージ後の capability は **overall=available / watch_possible=true**（2026-11-24 実測）。
-4. Human Gate の施行（中央ポリシーは PR #185 で発効済み、承認者鍵は PR #232 で登録済み。ruleset（#3）・`centralProfileEnforced`・GitHub App は未）。
+4. Human Gate の施行（中央ポリシーは PR #185 で発効済み、承認者鍵は PR #232 で登録済み、**ruleset 第 1 段階は 2026-11-24 20:30 に適用済み**（PR #234 で `BLOCKED` を確認）。残りは `centralProfileEnforced` と GitHub App（保留））。
 5. Actions 並走比較（10 PR）。
 6. Playwright E2E の隔離実行（ブラウザが ro-root で動くか）— 未検証。
 

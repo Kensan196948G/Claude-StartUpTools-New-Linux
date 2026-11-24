@@ -12,9 +12,9 @@
 
 ## Ship Native — 人間承認待ち（番号は完成報告書と共通）
 
-- [x] #1 中央 GITHUB_POLICY への Ship Native 適用除外（方式 B）— 中央 PR [#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) を 2026-11-24 にユーザーがマージ（中央 `db62ffa`）。本リポジトリのミラー再同期は未
+- [x] #1 中央 GITHUB_POLICY への Ship Native 適用除外（方式 B）— 中央 PR [#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) を 2026-11-24 にユーザーがマージ（中央 `db62ffa`）。本リポジトリのミラーは PR [#231](https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux/pull/231) で同期済み（`ab43d3c`）
 - [ ] #2 横断自動マージ巡回から本リポジトリを除外
-- [ ] #3 ruleset に `claudeos/local-quality`・`claudeos/human-approval` を必須追加 — 変更案・確認・元に戻す手順を `docs/architecture/SHIP_RULESET_CHANGE.md` に作成（未適用）。練習 PR（#230、2026-11-24）で `quality --publish` → `/ship` → `ship-attest` → `gate` PASS → `approve` が通り、2 つのステータスが付くことを確認済み。**適用は人間の判断待ち**
+- [x] #3 ruleset に `claudeos/local-quality`・`claudeos/human-approval` を必須追加（第 1 段階）— 2026-11-24 20:30 にユーザーが適用。確認用 PR #234 で、Actions の必須 2 件が success でも承認ステータスが無ければ `BLOCKED` になることを確認（マージせず閉じた）。第 2 段階（`integration_id` 限定）は #4・#7 とセットで保留
 - [ ] #4 人間専用 GitHub App の作成と integration_id 限定 — **保留（2026-11-24 判断）**。AI の gh トークンが admin 権限を持つ間は ruleset ごと書き換えられ効果が限定的なため、#7（AI の別 OS ユーザー化）・トークン分離とセットで後日検討
 - [ ] #5 週次の全履歴シークレット走査の実施方式
 - [ ] #6 並走比較後に `linux-validate`・gitleaks を必須から外す

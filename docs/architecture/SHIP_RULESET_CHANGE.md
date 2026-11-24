@@ -1,6 +1,6 @@
 # 承認事項 #3: ruleset に 2 つの必須チェックを加える変更案（未適用）
 
-状態: 2026-11-24 調査・変更案のみ。**ruleset は変更していない。** 適用は owner（ユーザー）が行い、AI は確認（readback）だけを行う。
+状態: **第 1 段階を 2026-11-24 20:30:56 にユーザーが適用済み**（§9）。第 2 段階は保留。適用は owner（ユーザー）が行い、AI は確認（readback）だけを行う。
 
 ## 1. 現状（API で再取得、2026-11-24）
 
@@ -115,4 +115,14 @@ gh api -X PUT repos/Kensan196948G/Claude-StartUpTools-New-Linux/rulesets/2088281
 
 画面で行う場合は、追加した 2 件を削除する。即時に元の状態（必須チェック 2 件）へ戻る。
 
-> **未検証**: 上の `PUT` は実行して確かめていない（ruleset を実際に変更する必要があるため）。`ruleset-20882817-before.json` は GET の応答から `id`・`source`・`created_at`・`updated_at`・`_links`・`current_user_can_bypass` などの読み取り専用項目を落とし、`name`・`target`・`enforcement`・`conditions`・`bypass_actors`・`rules` だけを残してある。GitHub の REST 定義（`PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}` の requestBody）が受け付ける項目はちょうどこの 6 つで、保存した JSON に受付外の項目は無い（2026-11-24 に OpenAPI 定義と照合）。ただし実際に送って成功するかは未確認。初回の適用時（§6）に、第 1 段階の `PUT` が成功することで同じ形式の入力が通ることを確かめる。失敗した場合は画面からの削除で戻す。
+> **一部確認済み（2026-11-24）**: 同じ形式の入力（6 項目だけの JSON）による `PUT` は、第 1 段階の適用で成功した（§9）。`before.json` そのものを送る戻しはまだ実行していない。`ruleset-20882817-before.json` は GET の応答から `id`・`source`・`created_at`・`updated_at`・`_links`・`current_user_can_bypass` などの読み取り専用項目を落とし、`name`・`target`・`enforcement`・`conditions`・`bypass_actors`・`rules` だけを残してある。GitHub の REST 定義（`PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}` の requestBody）が受け付ける項目はちょうどこの 6 つで、保存した JSON に受付外の項目は無い（2026-11-24 に OpenAPI 定義と照合）。ただし実際に送って成功するかは未確認。初回の適用時（§6）に、第 1 段階の `PUT` が成功することで同じ形式の入力が通ることを確かめる。失敗した場合は画面からの削除で戻す。
+
+## 9. 第 1 段階の適用記録（2026-11-24）
+
+| 項目 | 結果 |
+| --- | --- |
+| 適用前の確認（AI） | 現在の ruleset が `ruleset-20882817-before.json` と完全一致。開いている PR 0 件、このリポジトリの PR を作る定期処理なし |
+| 適用（人） | `gh api -X PUT …/rulesets/20882817 --input ruleset-20882817-stage1.json`。`updated_at: 2026-11-24T20:30:56.018+09:00` |
+| 適用後の確認（AI） | 再取得した ruleset が `stage1.json` と完全一致。必須チェック 4 件・strict=true・bypass なし。§8 で「未検証」とした `PUT` の入力形式は、この適用が成功したことで通ることを確認できた |
+| 承認なし PR の確認（AI） | 確認用 PR #234 を作成。linux-validate・gitleaks は success だが `claudeos/local-quality`・`claudeos/human-approval` が無く **`mergeStateStatus=BLOCKED`**。GitHub が必須と判定したチェックは Actions の 2 件のみ報告され、ClaudeOS の 2 件は「未報告」として不足扱い。マージせずに閉じた |
+| ClaudeOS Merge Executor | `RULESET_DOES_NOT_REQUIRE` の拒否理由が消え、残りは施行フラグ・gate・品質・人間承認のみ |
