@@ -12,16 +12,16 @@
 
 ## Ship Native — 人間承認待ち（番号は完成報告書と共通）
 
-- [ ] #1 中央 GITHUB_POLICY への Ship Native 適用除外（方式 B）追記 — 変更案を中央 PR [#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185)（2026-11-24 ドラフト解除・未発効・自動マージ未登録）として起案済み。**マージ（発効）はユーザー判断**
+- [x] #1 中央 GITHUB_POLICY への Ship Native 適用除外（方式 B）— 中央 PR [#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) を 2026-11-24 にユーザーがマージ（中央 `db62ffa`）。本リポジトリのミラー再同期は未
 - [ ] #2 横断自動マージ巡回から本リポジトリを除外
-- [ ] #3 ruleset に `claudeos/local-quality`・`claudeos/human-approval` を必須追加
-- [ ] #4 人間専用 GitHub App の作成と integration_id 限定
+- [ ] #3 ruleset に `claudeos/local-quality`・`claudeos/human-approval` を必須追加 — 変更案・確認・元に戻す手順を `docs/architecture/SHIP_RULESET_CHANGE.md` に作成（未適用）。**練習 PR で `quality --publish` → `gate` → `approve` が通ることを確認する前に適用すると main へのマージが全面的に止まる**（承認者鍵の登録 #10 は完了済み）
+- [ ] #4 人間専用 GitHub App の作成と integration_id 限定 — **保留（2026-11-24 判断）**。AI の gh トークンが admin 権限を持つ間は ruleset ごと書き換えられ効果が限定的なため、#7（AI の別 OS ユーザー化）・トークン分離とセットで後日検討
 - [ ] #5 週次の全履歴シークレット走査の実施方式
 - [ ] #6 並走比較後に `linux-validate`・gitleaks を必須から外す
-- [ ] #7 AI エージェントを sudo 無しの別 OS ユーザーで実行
-- [ ] #8 本リポジトリの PreToolUse(Bash) フックの扱い（/ship watch 可否）— 案 A を PR [#229](https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux/pull/229)（Draft・R4）として実装済み。**マージはユーザー判断**
+- [ ] #7 AI エージェントを sudo 無しの別 OS ユーザーで実行（あわせて AI 用 gh トークンを admin 権限なしに分離する。#4 はこの後）
+- [x] #8 PreToolUse(Bash) フックの扱い — 案 A を PR [#229](https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux/pull/229) としてユーザーがマージ（`4bf8a55`）。各 clone で `bash scripts/setup/install-githooks.sh` が必要
 - [x] #9 gh を 2.63 以上へ更新 — 2026-11-24 に 2.105.0 へ更新（公式 deb・sha256 検証済み・`apt-mark hold gh`）
-- [ ] #10 承認者鍵の作成・登録（bootstrap）
+- [x] #10 承認者鍵の作成・登録（bootstrap）— 承認者 Kensan の公開鍵を PR [#232](https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux/pull/232) で登録済み（`config/ship-policy.json` の `humanGate.approverKeys`）
 - [ ] #11 本 PR の最終マージ承認
 
 ## Next

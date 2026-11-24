@@ -11,7 +11,7 @@ bash bin/ship-approve.sh keygen --name Kensan  # パスフレーズを 2 回入�
 # 自分で内容を確認してマージする (bootstrap)。以後の承認検証は main 上のこの値だけを信頼する。
 ```
 
-任意（推奨）: 人間専用 GitHub App（権限は Commit statuses: write のみ）を作り、
+任意（保留中。#7・トークン分離とセットで検討。単独では偽装を防げない — `SHIP_SECURITY_MODEL.md` §4）: 人間専用 GitHub App（権限は Commit statuses: write のみ）を作り、
 `bash bin/ship-approve.sh attach-app --app-id N --installation-id N --pem app.pem` で鍵束へ暗号化格納する。PEM は格納後に削除する。
 
 ## 1. 1 件の開発（SH2）

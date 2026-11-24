@@ -34,7 +34,7 @@
   │     署名 / head・base 一致 / 期限 / 取り消し / nonce 未使用 / gate 再判定と hash 一致
   │
   └─▶ GitHub: head SHA に Commit Status `claudeos/human-approval=success`
-        (GitHub App があれば App として登録 → ruleset で integration_id を限定すれば AI は偽装不能)
+        (GitHub App があれば App として登録。ただし AI の token が admin 権限を持つ間は ruleset を書き換えられるため、偽装の完全な防止にはトークン分離が前提)
 ```
 
 ## 3. 脅威と対策
@@ -64,12 +64,12 @@
 
 1. **root 権限を持つ能動的に悪意あるエージェント**は、人間の承認プロセスのメモリ読み取りや端末入力の盗聴が理論上可能。
    完全な対策は AI を **sudo 無しの別 OS ユーザー**で動かすこと（承認事項 #7）。
-2. **Commit Status の偽装**: GitHub App 化と ruleset の integration_id 限定（承認事項 #4）までは、
+2. **Commit Status の偽装**: AI のトークンから admin 権限を外し（#7・トークン分離）、そのうえで GitHub App 化と ruleset の integration_id 限定（#4）を行うまでは、
    admin token を持つ AI が `claudeos/human-approval=success` を付け得る。ClaudeOS の Merge Executor は署名を検証するので
    ClaudeOS 経由では起きないが、AI が直接 `gh pr merge` すれば GitHub は通してしまう。
    グローバルフック `kensan-auto-merge-guard.py` は `--match-head-commit` 必須化までで、承認の有無は見ない。
 3. **HMAC 鍵と証跡は同一 OS ユーザーが読める**ため、証跡改ざんの「検出」はできるが「防止」はできない（OS ユーザー分離で解消）。
-4. **ruleset 変更権限**: ADMIN token を持つ AI は ruleset を緩められる。CLAUDE.md で禁止しているが技術的強制は無い。
+4. **ruleset 変更権限**（実測 2026-11-24: AI の gh トークンは所有者本人のもので admin・`repo` スコープ）: ADMIN token を持つ AI は ruleset を緩められる。**このため GitHub App（#4）だけでは意図的な偽装を防げず、#7・トークン分離とセットで検討する。**CLAUDE.md で禁止しているが技術的強制は無い。
    GitHub の ruleset 変更は監査ログに残るため、定期 readback を推奨。
 5. `/ship` の watch は人間の gh / git 資格情報で動く（公式警告）。auto-merge 登録済み PR では watch の push がマージに至り得るため、
    Merge Executor は承認後・登録直前にのみ auto-merge を登録し、head 変化時は解除する。
