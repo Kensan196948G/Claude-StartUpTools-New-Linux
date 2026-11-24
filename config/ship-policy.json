@@ -1,0 +1,214 @@
+{
+  "_comment": "ClaudeOS v5.0 Ship Native — 品質・承認・マージのポリシー正本。PR の変更コードでこのファイルを緩和しても、Human Gate / Merge Executor は main (base) 側の版を読む (scripts/ship/lib/policy.js loadTrustedPolicy)。値を緩める変更は R4 (Human Gate 基盤) に分類される。",
+  "schema": "claudeos.ship-policy/v1",
+  "policyVersion": "5.0.0",
+  "ship": {
+    "required": false,
+    "requiredForRisk": [
+      "R2",
+      "R3",
+      "R4"
+    ],
+    "fallbackReviewAllowed": false,
+    "minClaudeVersion": "2.1.330",
+    "minGhVersion": "2.63.0",
+    "minGitVersion": "2.38.0",
+    "maxConcurrentShips": 1,
+    "headlessSupported": false,
+    "_notes": "公式仕様: /ship と /steward は人が対話セッションで入力した行からのみ起動する (claude -p / プログラムからは 'Nothing started')。ClaudeOS は入力を代行しない (tmux send-keys による模擬入力も行わない)。"
+  },
+  "quality": {
+    "requireLocalQuality": true,
+    "isolation": "bwrap",
+    "allowUnisolated": false,
+    "network": "deny",
+    "checkTimeoutSec": 1800,
+    "maxRemediationRounds": 3,
+    "statusContext": "claudeos/local-quality",
+    "profiles": {
+      "claudeos-self": {
+        "_comment": "本リポジトリ自身。.github/workflows/ci.yml の linux-validate と security-scan.yml を Ubuntu ローカルで再現する。",
+        "checks": [
+          {
+            "id": "npm-test",
+            "category": "unit+regression",
+            "cmd": [
+              "npm",
+              "test"
+            ],
+            "parser": "tap"
+          },
+          {
+            "id": "dry-run-matrix",
+            "category": "regression",
+            "cmd": [
+              "npm",
+              "run",
+              "test:dry-run"
+            ]
+          },
+          {
+            "id": "shell-lint",
+            "category": "static",
+            "cmd": [
+              "npm",
+              "run",
+              "lint"
+            ]
+          },
+          {
+            "id": "shell-lint-extra",
+            "category": "static",
+            "cmd": [
+              "bash",
+              "-c",
+              "shellcheck -S error scripts/release/*.sh scripts/e2e/*.sh"
+            ]
+          },
+          {
+            "id": "adversarial",
+            "category": "security",
+            "cmd": [
+              "bash",
+              "bin/adversarial-probe.sh",
+              "run",
+              "--json"
+            ]
+          },
+          {
+            "id": "policy-matrix",
+            "category": "security",
+            "cmd": [
+              "bash",
+              "bin/policy-check.sh",
+              "matrix",
+              "--json"
+            ]
+          },
+          {
+            "id": "formal",
+            "category": "formal",
+            "cmd": [
+              "bash",
+              "-c",
+              "for s in formal/specs/*.tla; do bash scripts/tools/tla-check.sh run \"$s\" --no-download --json || exit 1; done"
+            ],
+            "_note": "ネットワーク遮断下のため tla2tools.jar はキャッシュ必須 (~/.cache/claudeos/formal)。sandbox の $HOME は tmpfs なので CCSU_FORMAL_CACHE で ro マウントを渡す"
+          },
+          {
+            "id": "secrets-scan",
+            "category": "secrets",
+            "cmd": [
+              "@secrets"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "risk": {
+    "_comment": "変更パスから R0..R4 を判定する。最も高いものを採用。どのルールにも当たらないファイルは R2。",
+    "default": "R2",
+    "rules": [
+      {
+        "level": "R4",
+        "patterns": [
+          "config/ship-policy.json",
+          "scripts/ship/lib/human-gate.js",
+          "scripts/ship/lib/quality-gate.js",
+          "scripts/ship/lib/policy.js",
+          "scripts/ship/lib/merge.js",
+          "bin/ship-approve.sh",
+          "GITHUB_POLICY.md",
+          ".github/workflows/**",
+          ".claude/settings.json",
+          "Claude/templates/claude/settings.json",
+          "**/hooks/**",
+          "SECURITY.md",
+          "bin/cross-repo-*.sh"
+        ]
+      },
+      {
+        "level": "R3",
+        "patterns": [
+          "db/**",
+          "**/*.sql",
+          "scripts/web/startup-server.js",
+          "config/cloudflare/**",
+          "config/systemd/**",
+          "lib/postgres.sh",
+          "lib/control-db.sh",
+          "lib/release-promote.sh",
+          "bin/promote-production.sh",
+          "**/auth*",
+          "**/*secret*"
+        ]
+      },
+      {
+        "level": "R1",
+        "patterns": [
+          "tests/**",
+          "**/*.test.js",
+          "**/*.bats"
+        ]
+      },
+      {
+        "level": "R0",
+        "patterns": [
+          "docs/**",
+          "**/*.md",
+          "LICENSE",
+          "reports/**"
+        ]
+      }
+    ],
+    "requirements": {
+      "R0": {
+        "impactAnalysis": false,
+        "rollbackPlan": false
+      },
+      "R1": {
+        "impactAnalysis": false,
+        "rollbackPlan": false
+      },
+      "R2": {
+        "impactAnalysis": false,
+        "rollbackPlan": true
+      },
+      "R3": {
+        "impactAnalysis": true,
+        "rollbackPlan": true
+      },
+      "R4": {
+        "impactAnalysis": true,
+        "rollbackPlan": true
+      }
+    }
+  },
+  "humanGate": {
+    "requiredForAllRisks": true,
+    "approvalTtlHours": 24,
+    "baseChangePolicy": "invalidate",
+    "approverKeys": [],
+    "statusContext": "claudeos/human-approval",
+    "_notes": "approverKeys は承認者公開鍵の fingerprint (sha256:<hex>) と名前。検証は base ブランチ版のこのファイルで行う。空なら fail-closed (承認は常に無効)。鍵の秘密部分はパスフレーズ (scrypt) で暗号化され、パスフレーズは人間だけが知る。AI エージェントは同じ OS ユーザーで sudo も持つため、OS 権限やファイル所有では人間を証明できない — 証明はパスフレーズの知識だけに依存する。最初の鍵の登録は人間が通常のレビューでマージする (bootstrap)。"
+  },
+  "merge": {
+    "method": "squash",
+    "allowedBaseBranches": [
+      "main"
+    ],
+    "requireCentralPolicyProfile": "ship-native-human-approval",
+    "centralProfileEnforced": false,
+    "deleteBranchAfterMerge": true,
+    "_notes": "centralProfileEnforced は中央 GITHUB_POLICY が Ship Native プロファイルを正式施行した後に人間が true にする。false の間 Merge Executor は auto-merge 登録を行わず安全側に停止する。"
+  },
+  "limits": {
+    "maxRetries": 3,
+    "backoffBaseSec": 60,
+    "backoffMaxSec": 3600,
+    "circuitBreakerFailures": 5,
+    "dailyRunCap": 20,
+    "dailyQualityRunCap": 40
+  }
+}

@@ -166,6 +166,25 @@ tmux attach -t claudeos-<project>               # 中に入る（Ctrl-b d でデ
 - `S1` は Supervisor 管理なので、**止まっても自動で再開**します（再起動は既定で 1 日 1 回まで）。人間は結果だけ確認すれば十分です。
 - どのモードも Goal Router を通り、Human Gate は共通です。
 
+### 🚢 Ship Native モード（v5.0 / Experimental）
+
+Claude Code の `/ship`（PR 作成 → `/code-review` → 修正の watch）を開発ライフサイクルに組み込みます。
+`/ship` は公式仕様で **人が対話セッションに入力したときだけ** 起動するため（`claude -p` では起動しない）、ClaudeOS は入力を代行せず、前後の工程を担います。
+
+| モード | 内容 | 状態の表示 |
+|---|---|---|
+| `SH1` | 現在のブランチ / PR に `/ship` で品質検証（手順を表示） | `bash bin/ship-mode.sh status` |
+| `SH2` | Ship Native 自律開発（run 作成 → 対話セッション起動） | 同上 |
+| `SH3` | Agent Teams + Ship | 同上 |
+| `SH4` | 既存 PR 改善（`/steward`） | 同上 |
+| `SH5` | 複数プロジェクトの run / PR 監視 | 同上 |
+| `QC` | Ubuntu ローカル品質検証（bwrap 隔離・証跡封印） | `bash bin/ship.sh quality ...` |
+| `HG` | Human Gate（承認は人の端末から `bin/ship-approve.sh`） | — |
+
+人間の最終承認は **パスフレーズ保護の署名** で head / base SHA に固定され、コードが 1 コミットでも変われば無効になります。
+自動マージは、中央 GitHub ポリシーの施行と ruleset 変更（人間承認事項）が済むまで登録されません。
+詳細: [アーキテクチャ](docs/architecture/SHIP_NATIVE_ARCHITECTURE.md) / [運用手順](docs/architecture/SHIP_OPERATIONS_RUNBOOK.md) / [セキュリティ](docs/architecture/SHIP_SECURITY_MODEL.md) / [ポリシー変更案](docs/architecture/SHIP_POLICY_MIGRATION.md)
+
 ---
 
 ## 📺 画面ギャラリー（Web コンソール）

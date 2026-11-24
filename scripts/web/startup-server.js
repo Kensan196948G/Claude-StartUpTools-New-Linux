@@ -2215,6 +2215,30 @@ function createServer(cfg) {
       if (req.method === 'GET' && pn === '/api/ops/devops') return handleDevopsOps(res);
       if (req.method === 'GET' && pn === '/api/ops/secops') return handleSecopsOps(res);
 
+      /* Ship Native Control Center (v5.0)。GET は読み取り専用の集約。POST は承認の取り消し (安全側) のみで、
+         Access JWT (メール付き) を必須にする。承認 (approve) の経路は意図的に無い (scripts/web/ship-api.js 参照)。 */
+      if (pn.startsWith('/api/ship/')) {
+        let shipApi;
+        try { shipApi = require('./ship-api.js'); } catch { return json(res, 503, { ok: false, error: 'SHIP_API_UNAVAILABLE' }); }
+        return await shipApi.handle(req, res, url, {
+          json, readBody, checkStrict: checkPromptRequest,
+          authEmail: async (r) => {
+            if (!conf.accessTeamDomain || !conf.accessAud) return { ok: false, status: 403, error: 'SHIP_AUTH_NOT_CONFIGURED' };
+            if (!r.headers['cf-access-jwt-assertion']) return { ok: false, status: 401, error: 'AUTH_JWT_REQUIRED' };
+            const v = await verifyAccessJwt(r.headers['cf-access-jwt-assertion'], {
+              teamDomain: conf.accessTeamDomain, aud: conf.accessAud, getKeys: getAccessKeys });
+            if (!v.ok || !isEmailLike(v.email)) return { ok: false, status: 403, error: 'SHIP_AUTH_FAILED' };
+            return { ok: true, email: v.email };
+          },
+          onReject: (info) => {   // 認証前の拒否は同じ理由につき 1 分に 1 件へ間引く (handleOpsRestart と同じ)
+            const nowMs = Date.now(); const key = 'ship:' + info.error;
+            if (promptRejectAudit[key] && nowMs - promptRejectAudit[key] < 60000) return;
+            promptRejectAudit[key] = nowMs;
+            appendAudit({ action: 'ship-revoke-rejected', error: info.error, status: info.status, remote });
+          },
+        });
+      }
+
       /**
        * 旧 UI (設計プロトタイプ) の画面 URL は単一ページへ集約したため、
        * ブックマークからの流入が 404 にならないよう 302 で `/` へ送る。
