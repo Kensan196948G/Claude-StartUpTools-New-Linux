@@ -59,4 +59,4 @@ Monitor → Plan → Development → Verify → Review → Improvement を完了
 
 ## 11. 本リポジトリ固有（ClaudeOS 自体を開発するとき）
 
-bash + Node.js。検証は `npm test`（bats + node --test）、`npm run lint`（shellcheck）、`bin/release-check.sh`。正本は `Claude/templates/**`（`.claude/claudeos/**` は配布コピー。編集はテンプレート側で行い runtime へ同期する）。変更時はテストと docs を同じコミットで更新する。`.claude/rules/` の path-scoped rules が bin / lib / libexec、hooks、templates の規約を必要時にロードする。Claude Code の機能可否は version 固定ではなく `libexec/diag-claude-compat.sh`（Capability Detection）で判定する。
+bash + Node.js。検証は `npm test`（bats + node --test）、`npm run lint`（shellcheck）、`bin/release-check.sh`。コミット前の shell 検査は git の pre-commit（`.githooks/pre-commit`。clone ごとに `bash scripts/setup/install-githooks.sh` で有効化）で行う。`/ship` の watch を止めるため、`.claude/settings.json` に Bash の PreToolUse / PermissionRequest フックを追加しない（`tests/bats/unit/githooks.bats` が検証）。正本は `Claude/templates/**`（`.claude/claudeos/**` は配布コピー。編集はテンプレート側で行い runtime へ同期する）。変更時はテストと docs を同じコミットで更新する。`.claude/rules/` の path-scoped rules が bin / lib / libexec、hooks、templates の規約を必要時にロードする。Claude Code の機能可否は version 固定ではなく `libexec/diag-claude-compat.sh`（Capability Detection）で判定する。

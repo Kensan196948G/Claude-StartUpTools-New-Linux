@@ -39,7 +39,7 @@
 |---|---|---|
 | Claude Code Native | subagents (`.claude/agents`, first-class 9) / `claude --bg` + `claude agents` / `--worktree` / `/workflows` / skills (`.claude/skills`) / hooks / MCP / `/goal` / `/loop` / cross-session messaging / auto mode | Native |
 | ClaudeOS Orchestration | `scripts/tools/agent-router.js`（決定表 + golden eval）、`config/agent-catalog.json`（Lazy Agent Catalog）、`policy/*.md`、`.claude/rules`、SDLC テンプレート | Thin adapter |
-| Governance / Verification | 品質ゲート付き自動マージ（組織方針 §5）、Approval PR、`permissions.allow/deny`、hooks（audit-trail / pre-commit-gate / stop-failure）、Generator/Verifier 分離、`bin/release-check.sh`、`pg-ops.sh migration-risk` | Adapter + Custom（モデルの外側） |
+| Governance / Verification | 品質ゲート付き自動マージ（組織方針 §5）、Approval PR、`permissions.allow/deny`、hooks（audit-trail / stop-failure）＋ git pre-commit（`.githooks/pre-commit`。shell の構文・shellcheck 検査。旧 pre-commit-gate の PreToolUse 配線は /ship watch と両立しないため v5.0 で廃止）、Generator/Verifier 分離、`bin/release-check.sh`、`pg-ops.sh migration-risk` | Adapter + Custom（モデルの外側） |
 | Self-Improvement | `/improver` skill、reasoning-bank（観測）、`tests/evals/*.json` + `scripts/*.test.js`（回帰 eval）、PR ゲート | Adapter |
 | Linux Operations | cron / Supervisor / tmux / systemd / heartbeat / Mission Control / pg-ops / release-check / メール報告 | Custom（KEEP 境界） |
 
