@@ -44,9 +44,9 @@
 ## 3. 未解決・残課題
 
 1. `/ship` の実機セッション検証（人が対話セッションで `/ship terms` を実行）— 未。
-2. gh 2.45.0 < 2.63（watch 不可）。
+2. ~~gh 2.45.0 < 2.63~~ → 2026-11-24 に gh 2.105.0 へ更新済み（承認 #9）。
 3. 本リポジトリの PreToolUse(Bash) フックにより watch 不可（review のみ）。
-4. Human Gate の施行（中央ポリシー・ruleset・鍵登録・GitHub App）。
+4. Human Gate の施行（中央ポリシーは PR #185 で起案済み・未発効。ruleset・鍵登録・GitHub App は未）。
 5. Actions 並走比較（10 PR）。
 6. Playwright E2E の隔離実行（ブラウザが ro-root で動くか）— 未検証。
 

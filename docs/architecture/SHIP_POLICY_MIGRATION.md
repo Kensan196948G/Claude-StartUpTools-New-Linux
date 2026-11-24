@@ -1,6 +1,6 @@
 # Ship Native と中央 GitHub ポリシーの整合（変更案・未施行）
 
-状態: **起案のみ（2026-11-24）。中央正本は変更していない。人間の承認待ち。**
+状態: **起案済み・未発効（2026-11-24）。** 方式 B を中央リポジトリのドラフト PR [Deep-Seek-Harness-Project#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) として作成した（§10.2）。中央正本 main は未変更。発効はユーザーによる同 PR のマージ。
 対象: 中央正本 `Kensan196948G/Deep-Seek-Harness-Project` の `GITHUB_POLICY.md` v3（本リポジトリの `GITHUB_POLICY.md` は 2026-11-23 同期のミラー）
 
 ## 1. 矛盾の内容

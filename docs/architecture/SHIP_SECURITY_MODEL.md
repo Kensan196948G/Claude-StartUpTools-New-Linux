@@ -81,4 +81,4 @@
 | 本リポジトリ `.claude/settings.json` の `PreToolUse[matcher=Bash]`（pre-commit-gate） | 公式仕様により **`/ship` の watch が始まらない**（review は可能） | capability が `settings.project.hooks=fail` と報告。変更は承認事項 #8（フック削除は品質ゲート緩和になるため） |
 | ユーザー設定の `kensan-auto-merge-guard.py` | watch 中に Claude Code 自身が実行する gh/git には PreToolUse は効かない | マージ防止は ruleset に依存すると明記 |
 | ユーザー設定 `deny: git push --force*` | `/ship` 自身の push・watch を妨げない（`git push *` の deny ではない） | 問題なし |
-| gh 2.45.0 | 公式要件 2.63 未満。watch が修正を push できない | 承認事項 #9（gh の更新） |
+| gh 2.45.0 → 2.105.0 | 2026-11-24 に更新済み（承認 #9） | `apt-mark hold gh` で apt 版 2.45 への戻りを防止 |
