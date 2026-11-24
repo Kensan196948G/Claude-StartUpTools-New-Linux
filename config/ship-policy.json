@@ -145,6 +145,21 @@
         ]
       },
       {
+        "level": "R2",
+        "_comment": "エージェントの指示書。Markdown でもエージェントの動作を決めるため R0 (文書) にしない (プロンプト注入の経路)。R0/R1 より先に評価される",
+        "patterns": [
+          "CLAUDE.md",
+          "**/CLAUDE.md",
+          "AGENTS.md",
+          "**/AGENTS.md",
+          "**/SKILL.md",
+          ".claude/**",
+          "Claude/templates/**",
+          ".agents/**",
+          "Codex/templates/**"
+        ]
+      },
+      {
         "level": "R1",
         "patterns": [
           "tests/**",

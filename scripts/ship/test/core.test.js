@@ -144,6 +144,23 @@ test('risk: パスからレベルを判定し最大を採る', () => {
   assert.equal(risk.classify(['.github/workflows/ci.yml'], pol.risk).level, 'R4');
   assert.equal(risk.classify(['Claude/templates/claude/claudeos/scripts/hooks/x.js'], pol.risk).level, 'R4');
 });
+test('risk: エージェントの指示書は Markdown でも R0 にしない (R2)', () => {
+  // プロンプト注入の経路になり得るため、**/*.md (R0) より先に R2 として評価する
+  for (const f of ['CLAUDE.md', 'AGENTS.md', '.claude/CLAUDE.md', '.claude/rules/hooks.md', '.claude/commands/x.md',
+    'Claude/templates/claude/CLAUDE.md', '.claude/skills/verify-startuptools/SKILL.md', 'Codex/templates/x/AGENTS.md',
+    '.agents/skills/a/SKILL.md', 'sub/dir/CLAUDE.md']) {
+    assert.equal(risk.classifyFile(f, pol.risk).level, 'R2', f);
+  }
+  // 通常の文書は R0 のまま
+  for (const f of ['README.md', 'CHANGELOG.md', 'docs/architecture/X.md', 'reports/ship-native/COMPLETION_REPORT.md']) {
+    assert.equal(risk.classifyFile(f, pol.risk).level, 'R0', f);
+  }
+  // 指示書を 1 つでも含む PR は R2 以上 (最大値)
+  assert.equal(risk.classify(['docs/a.md', 'CLAUDE.md'], pol.risk).level, 'R2');
+  // 既存の上位規則は優先されたまま
+  assert.equal(risk.classifyFile('.claude/settings.json', pol.risk).level, 'R4');
+  assert.equal(risk.classifyFile('Claude/templates/claude/claudeos/scripts/hooks/x.js', pol.risk).level, 'R4');
+});
 test('risk: 変更ファイルが取れない場合は安全側 R4', () => {
   assert.equal(risk.classify([], pol.risk).level, 'R4');
   assert.equal(risk.classify(null, pol.risk).level, 'R4');
