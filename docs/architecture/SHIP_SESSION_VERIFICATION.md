@@ -72,3 +72,36 @@ claude
 | 「a PreToolUse or PermissionRequest hook runs on shell commands ... where it answers "allow"」 | ユーザー設定 `~/.claude/settings.json` の PreToolUse（`kensan-auto-merge-guard.py`、matcher `Bash|mcp__github__merge_pull_request`） | このフックは **deny しか返さない**（allow を返すコードが無いことを確認）。Claude Code は「allow を返し得る」ことを一般的に警告している。実害は無いが、表示は消えない |
 | 「If auto-merge is on for this pull request, GitHub merges it ...」 | 本リポジトリは `allow_auto_merge=true` | `/ship` で試す PR に auto-merge を登録しない（手順 §3） |
 | 「For a public repository, commit your work yourself first」 | 本リポジトリは PUBLIC | 手順 §3 のとおり、先に自分でコミットしドラフト PR を作ってから `/ship` |
+
+## 6. 実 PR での練習の結果（2026-11-24 18:30〜19:48、PR #230）
+
+PR #230（文書のみ・R2）を使い、Ship Native の全工程を人とAIで分担して通した。
+
+| 工程 | 担当 | 結果 |
+| --- | --- | --- |
+| ローカル品質（隔離実行・8 チェック） | AI | PASS（npm-test 2,095 pass / 0 fail / 3 skip）。`claudeos/local-quality=success` |
+| `/ship 230`（レビュー） | 人 | 指摘 8 件。すべて文書の古い記述・曖昧さで、コードの不具合の指摘は無し |
+| 指摘の反映 | AI | `/ship` が作業ツリーで直した 4 件を確認して取り込み、残り 4 件を Lead が反映（`1d87dab`） |
+| ローカル品質（新しい head で再実行） | AI | PASS |
+| `ship-attest`（結果への署名） | 人 | `sa_mwukbrfc_405adedd7cec`（important_open=0, watch=not-started） |
+| AI Quality Gate | AI | **PASS**（15 項目すべて PASS、R2） |
+| `approve`（人間承認） | 人 | `ha_mwukiolq_abf2a8e3e813`、`claudeos/human-approval=success`。別の head では `STALE_HEAD` で無効になることを確認 |
+| ClaudeOS Merge Executor（dry-run） | AI | REFUSED（施行フラグ無効・ruleset が 2 context を未要求。設計どおり） |
+| マージ | 人 | 画面からマージ（`63449b3`）。承認した `1d87dab` と内容が同一であることを確認 |
+
+### 実機で分かった `/ship` の注意点
+
+| 現象 | 原因 | 対処 |
+| --- | --- | --- |
+| 起動直後の 1 回目の入力が `Nothing started` になる | 起動時の SessionStart フックと重なり、人の入力と判定されないとみられる（**推測**） | `Async hook SessionStart completed` の表示を待ってから入力する。出たら同じ行をもう一度入力する |
+| `claude` を起動すると一覧画面（Agent View）が開き、そこから送った `/ship` は `start /ship yourself by typing it in an interactive session` で止まる | ユーザー設定 `~/.claude.json` の `defaultToAgentsView=true`。一覧から送った指示はバックグラウンドセッションになり、`/ship` は動かない（公式仕様） | `claude "こんにちは"` のように最初の一言を付けて起動すると通常の会話画面になる（公式）。設定を戻すなら通常画面で `/config defaultToAgentsView=false` |
+| 止まったバックグラウンドセッションが一覧に残る | 上と同じ | `claude stop <id>` で止める。完了済みの行は選ばずに `Esc` で抜けてよい |
+| `/ship` が「watch できない。レビューだけ行う」と表示する | ユーザー設定 `remoteControlAtStartup=true`。リモート経由の入力を人の入力と区別できないため（公式の表示） | レビューと署名の練習ならこのままでよい。watch も使うなら `/rc` で Disconnect してから実行（auto-merge 有効のリポジトリでは推奨しない） |
+| 起動しただけで `heartbeat.json` と `.claude/claudeos/data/.heavy-sync.stamp` が作られる | ClaudeOS のフック | `/ship` は未コミット変更をコミットし得るため、練習用 clone では `.git/info/exclude` に 2 行を足して除外する |
+| 練習用 clone で `/ship` が作業ツリーを直す | レビューのみモードでも、本当の問題は作業ツリーで直す（公式の表示。コミット・push・コメントはしない） | 差分を確認し、取り込むなら PR 側にコミットする。取り込み後は練習用 clone の変更を `git restore` で戻す |
+
+### 署名の対象について
+
+`/ship` のレビューは修正前の `b229229` に対して行い、署名と承認は指摘を反映した `1d87dab` に対して行った。
+`ship-attest` は head に紐づくため、修正後の head で署名し、`--notes` にレビュー時の head と反映の事実を残した。
+レビューした head と署名した head が異なる場合は、この経緯を必ず notes に書く。
