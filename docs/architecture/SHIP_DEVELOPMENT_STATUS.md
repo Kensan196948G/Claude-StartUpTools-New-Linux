@@ -43,7 +43,7 @@
 
 ## 3. 未解決・残課題
 
-1. `/ship` の実機セッション検証（人が対話セッションで `/ship terms` を実行）— 未。
+1. ~~`/ship` の実機セッション検証~~ → 2026-11-24 17:42 に人が `/ship terms` を実行し成功（`SHIP_SESSION_VERIFICATION.md` §5）。実 PR での `/ship` と watch は未実施。
 2. ~~gh 2.45.0 < 2.63~~ → 2026-11-24 に gh 2.105.0 へ更新済み（承認 #9）。
 3. ~~PreToolUse(Bash) フックにより watch 不可~~ → PR #229 で解消。マージ後の capability は **overall=available / watch_possible=true**（2026-11-24 実測）。
 4. Human Gate の施行（中央ポリシーは PR #185 で起案済み・未発効。ruleset・鍵登録・GitHub App は未）。

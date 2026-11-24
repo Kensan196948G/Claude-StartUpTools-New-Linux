@@ -50,3 +50,25 @@ claude
 
 確認できたら、結果（成功 / 表示されたメッセージ）を伝えてもらえれば、AI が `docs/architecture/SHIP_DEVELOPMENT_STATUS.md`
 と `config/claude-code-compat.json` の該当項目（`ship-command` / `steward-command`）を「実機確認済み」に更新する PR を作る。
+
+## 5. 実機確認の結果（2026-11-24 17:42、人が実施）
+
+| 項目 | 結果 |
+| --- | --- |
+| `/` の候補 | `/ship-local`（`/ship` の実体のスキル名）と `/steward` が表示された |
+| 1 回目の `/ship terms` | `Nothing started. /ship starts only from a line that you type, not from claude -p or a program.`（起動直後の非同期 SessionStart フックと重なった入力が「人の入力」と判定されなかったとみられる。**推測**） |
+| 2 回目の `/ship terms` | **watch の条件と制限の全文が表示された（成功）**。コミット・push・PR 作成は行われていない |
+| `/tasks` | `No tasks currently running`（watch は動いていない） |
+
+**結論: 本環境（Claude Code 2.1.330 / Max）で `/ship` と `/steward` は利用できる。**
+1 回目が起動しなかったときは、起動直後のフックが終わってから（プロンプトが落ち着いてから）もう一度入力する。
+
+### `/ship terms` が示した注意点（本環境固有）と ClaudeOS の評価
+
+| `/ship terms` の表示 | 原因（読み取りで確認） | 評価・対応 |
+| --- | --- | --- |
+| `Deny rule Write(.claude/settings.json) never matches · use Edit(.claude/settings.json)` | 本リポジトリとテンプレートの `permissions.deny` に `Write(.claude/settings.json)` がある | 同じ deny に `Edit(.claude/settings.json)` も既にあるため保護は効いている。`Write(...)` の行は効果の無い記述。整理する場合は R4（権限設定）として別 PR |
+| 「permission rules here let a shell, an interpreter, a task or test runner ... run unasked」 | `.claude/settings.json` の allow に `npm run *`・`node scripts/*`・`bats *`・`bash scripts/*`・`bash tests/*`・`make *` など | **watch の制限を迂回できる経路**。テストやスクリプトは gh/git をあなたの資格情報で実行できる。ClaudeOS の自律開発には必要な許可なので削除は推奨しない。対策は ruleset による人間承認の必須化（承認事項 #3） |
+| 「a PreToolUse or PermissionRequest hook runs on shell commands ... where it answers "allow"」 | ユーザー設定 `~/.claude/settings.json` の PreToolUse（`kensan-auto-merge-guard.py`、matcher `Bash|mcp__github__merge_pull_request`） | このフックは **deny しか返さない**（allow を返すコードが無いことを確認）。Claude Code は「allow を返し得る」ことを一般的に警告している。実害は無いが、表示は消えない |
+| 「If auto-merge is on for this pull request, GitHub merges it ...」 | 本リポジトリは `allow_auto_merge=true` | `/ship` で試す PR に auto-merge を登録しない（手順 §3） |
+| 「For a public repository, commit your work yourself first」 | 本リポジトリは PUBLIC | 手順 §3 のとおり、先に自分でコミットしドラフト PR を作ってから `/ship` |
