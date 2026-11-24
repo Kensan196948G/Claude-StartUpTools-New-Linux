@@ -2,6 +2,8 @@
 
 ## 0. 初回セットアップ（人間が行う）
 
+詳しい手順・注意点: [SHIP_APPROVER_KEY_SETUP.md](SHIP_APPROVER_KEY_SETUP.md)
+
 ```bash
 bash bin/ship.sh capability                  # 前提条件。overall / watch_blockers を確認
 bash bin/ship-approve.sh keygen --name Kensan  # パスフレーズを 2 回入力 (12 文字以上)
