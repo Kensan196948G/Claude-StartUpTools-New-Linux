@@ -16,7 +16,7 @@ claude
 
 | # | 入力 | 確認すること |
 | --- | --- | --- |
-| 1 | `/` | 候補一覧に `/ship` と `/steward` が出る |
+| 1 | `/` | 候補一覧に `/ship-local`（`/ship` の実体のスキル名）と `/steward` が出る。2026-11-24 の実機では `/ship` という名前では表示されなかった（§5） |
 | 2 | `/ship terms` | watch の制限（merge / approve / auto-merge 有効化 / force-push を止める等）の説明が表示される |
 | 3 | `/tasks` | watch は動いていない（一覧に `/steward --tend` が無い） |
 | 4 | `/exit` | 終了 |

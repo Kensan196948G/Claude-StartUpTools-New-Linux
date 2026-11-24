@@ -37,7 +37,7 @@
 > **2026-11-24 訂正**: GitHub App と `integration_id` の限定だけでは、意図的な偽装は防げない。AI が使う gh トークンはリポジトリ所有者本人のもので admin 権限（`repo` スコープ）を持ち、ruleset 自体を書き換えて `integration_id` の条件を外せる（`bypass_actors: []` はマージ時の迂回を禁じるだけで、ruleset の編集は止めない）。App が意味を持つのは、AI のトークンから admin 権限を外した後（承認事項 #7・トークン分離）である。そのため #4（App）は単独では行わず、#7・トークン分離とセットで後日検討する。
 
 GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は「この status check が由来しなければならない integration の ID」で省略可。
-`claudeos/human-approval` にだけ App の ID を付ける。テンプレート: [`ruleset/ruleset-20882817-stage2.template.json`](ruleset/ruleset-20882817-stage2.template.json)（`integration_id: 0` を実際の App ID に置き換える）。
+`claudeos/human-approval` にだけ App の ID を付ける。テンプレート: [`ruleset/ruleset-20882817-stage2.template.json`](ruleset/ruleset-20882817-stage2.template.json)（`integration_id: 0` は仮の値。**このファイルをそのまま `PUT` してはいけない** — 実際の App ID に置き換えるまで適用不可）。
 
 ## 3. 適用すると何が変わるか（正直な評価）
 
@@ -64,8 +64,8 @@ GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は�
 
 1. **承認できる状態になるまで、main へのマージが全面的に止まる。**
    - 第 1 段階を適用した瞬間から、すべての PR に `claudeos/human-approval` が必要になる。
-   - 承認ステータスを付けるには、承認者鍵が main に登録されていること（#10、まだ 0 件）と、`bin/ship-approve.sh approve` が動くことが必要。
-   - 過去 30 日のマージは 108 件（すべて本人）。**#10 より先に #3 を適用すると、この流れが止まる**。
+   - 承認ステータスを付けるには、承認者鍵が main に登録されていること（#10 は PR #232 で登録済み）と、`bin/ship-approve.sh approve` が動くことが必要。
+   - 過去 30 日のマージは 108 件（すべて本人）。**承認ステータスが実際に付くことを確認する（下記手順 2）前に #3 を適用すると、この流れが止まる**。
    - 現在 OPEN の #230・#231 も、適用後はこの手順でしか入らない。
 2. **dependabot / renovate の PR も止まる**（横断巡回 `cross-repo-automerge` の対象から実質外れる）。承認事項 #2 は事実上これで解決するが、依存更新も人が承認する運用になる。
 3. **ローカル品質の登録が必要になる。** `claudeos/local-quality` は `bin/ship.sh quality --publish` で付く（GitHub Actions では付かない）。実測で 1 回 約 12 分（npm-test が大半）。
@@ -75,7 +75,7 @@ GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は�
 
 | # | 作業 | 担当 |
 | --- | --- | --- |
-| 1 | 承認者鍵を作り（`keygen`）、公開鍵を登録する PR をマージ（#10） | 人 |
+| 1 | ~~承認者鍵を作り（`keygen`）、公開鍵を登録する PR をマージ（#10）~~ — 完了（PR #232） | 人 |
 | 2 | 練習用の PR 1 件で `quality --publish` → `gate` → `approve` を通し、2 つのステータスが付くことを確認（ruleset 変更前なので何も止まらない） | AI + 人 |
 | 3 | **第 1 段階**を適用（下記 §6） | 人 |
 | 4 | 検証（§7） | AI（読み取り）+ 人 |
@@ -114,3 +114,5 @@ gh api -X PUT repos/Kensan196948G/Claude-StartUpTools-New-Linux/rulesets/2088281
 ```
 
 画面で行う場合は、追加した 2 件を削除する。即時に元の状態（必須チェック 2 件）へ戻る。
+
+> **未検証**: 上の `PUT` は実行して確かめていない（ruleset を実際に変更する必要があるため）。`ruleset-20882817-before.json` は GET の応答から `id`・`source`・`created_at`・`updated_at`・`_links`・`current_user_can_bypass` などの読み取り専用項目を落とし、`name`・`target`・`enforcement`・`conditions`・`bypass_actors`・`rules` だけを残してある。GitHub の REST 定義（`PUT /repos/{owner}/{repo}/rulesets/{ruleset_id}` の requestBody）が受け付ける項目はちょうどこの 6 つで、保存した JSON に受付外の項目は無い（2026-11-24 に OpenAPI 定義と照合）。ただし実際に送って成功するかは未確認。初回の適用時（§6）に、第 1 段階の `PUT` が成功することで同じ形式の入力が通ることを確かめる。失敗した場合は画面からの削除で戻す。
