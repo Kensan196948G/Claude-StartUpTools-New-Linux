@@ -87,7 +87,7 @@ Claude Code の新機能 Ship を開発ライフサイクルに組み込み、�
 ## 7. 残存リスク・未実装・未検証
 
 - root 権限を持つ悪意あるエージェントは人間の承認入力を盗み得る（対策: AI を sudo 無しの別ユーザーで実行 = 承認事項 #7）。
-- GitHub App 化前は、admin token を持つ AI が承認ステータスを偽装し `gh pr merge` を直接実行し得る（ClaudeOS 経由では署名検証で防止）。
+- AI のトークン分離（admin 権限の除去）と GitHub App 化の前は、admin token を持つ AI が承認ステータスを偽装し `gh pr merge` を直接実行し得る（ClaudeOS 経由では署名検証で防止）。
 - 証跡の改ざんは検出できるが防止はできない（OS ユーザー分離が必要）。
 - `/ship` の対話セッション実機検証、Playwright の隔離実行、Actions との並走比較（10 PR）は [未検証]。
 - `review_findings` / `remediation_events` / `recovery_events` は DB 表のみで書き手が未実装。
@@ -125,7 +125,7 @@ GitHub 設定・中央ポリシー・systemd・cron・本番 DB は変更して�
 | 1 | 中央 GITHUB_POLICY への Ship Native 適用除外（方式 B 推奨） | 中央ポリシー改定 |
 | 2 | 横断自動マージ巡回から本リポジトリを除外 | 横断設定 |
 | 3 | ruleset に 2 つの必須チェックを追加 | GitHub 設定 |
-| 4 | 人間専用 GitHub App の作成・integration_id 限定 | GitHub 設定・認証 |
+| 4 | 人間専用 GitHub App の作成・integration_id 限定（**保留**: #7・トークン分離とセットで後日。2026-11-24 判断） | GitHub 設定・認証 |
 | 5 | 週次全履歴シークレット走査の方式 | 運用 |
 | 6 | 並走比較後に Actions の必須チェックを外す | GitHub 設定 |
 | 7 | AI を sudo 無しの別 OS ユーザーで実行 | OS 権限 |

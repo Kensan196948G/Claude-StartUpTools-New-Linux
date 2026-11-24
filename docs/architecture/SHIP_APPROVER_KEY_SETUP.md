@@ -73,10 +73,12 @@ bash bin/ship-approve.sh show --repo Kensan196948G/Claude-StartUpTools-New-Linux
 - **パスフレーズを忘れた**: 復元できない。`keygen --force` で作り直し、手順 2 で `approverKeys` を新しい鍵に差し替える（R4 の PR）。古い鍵による未使用の承認は自動で無効になる。
 - **パスフレーズや鍵束が漏れた疑い**: 直ちに `approverKeys` から該当の `key_id` を外す PR をマージする（以後その鍵の承認はすべて無効）。発行済みの承認は `bin/ship-approve.sh revoke --id <承認ID>` でも個別に取り消せる。
 
-## 6. 任意: 人間専用 GitHub App（承認事項 #4）
+## 6. 任意（保留中）: 人間専用 GitHub App（承認事項 #4）
+
+> **2026-11-24 訂正**: GitHub App と `integration_id` の限定だけでは、意図的な偽装は防げない。AI が使う gh トークンはリポジトリ所有者本人のもので admin 権限（`repo` スコープ）を持ち、ruleset 自体を書き換えて `integration_id` の条件を外せる（`bypass_actors: []` はマージ時の迂回を禁じるだけで、ruleset の編集は止めない）。App が意味を持つのは、AI のトークンから admin 権限を外した後（承認事項 #7・トークン分離）である。そのため #4（App）は単独では行わず、#7・トークン分離とセットで後日検討する。
 
 鍵束に GitHub App の秘密鍵も暗号化して入れると、承認ステータスを App として付けられる。ruleset で
-`claudeos/human-approval` の `integration_id` をその App に限定すれば、AI の token では偽装できなくなる。
+`claudeos/human-approval` の `integration_id` をその App に限定できる（ただし上の訂正のとおり、AI の token が admin 権限を持つ間は ruleset ごと書き換えられる）。
 
 ```bash
 bash bin/ship-approve.sh attach-app --app-id <App ID> --installation-id <ID> --pem <app.pem>

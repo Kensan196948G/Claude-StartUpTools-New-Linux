@@ -32,7 +32,9 @@
 
 全文: [`ruleset/ruleset-20882817-stage1.json`](ruleset/ruleset-20882817-stage1.json)
 
-### 第 2 段階: 承認の付与元を人間専用 GitHub App に限定（#4 の後）
+### 第 2 段階: 承認の付与元を人間専用 GitHub App に限定（**保留**: #4・#7・トークン分離とセットで後日検討）
+
+> **2026-11-24 訂正**: GitHub App と `integration_id` の限定だけでは、意図的な偽装は防げない。AI が使う gh トークンはリポジトリ所有者本人のもので admin 権限（`repo` スコープ）を持ち、ruleset 自体を書き換えて `integration_id` の条件を外せる（`bypass_actors: []` はマージ時の迂回を禁じるだけで、ruleset の編集は止めない）。App が意味を持つのは、AI のトークンから admin 権限を外した後（承認事項 #7・トークン分離）である。そのため #4（App）は単独では行わず、#7・トークン分離とセットで後日検討する。
 
 GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は「この status check が由来しなければならない integration の ID」で省略可。
 `claudeos/human-approval` にだけ App の ID を付ける。テンプレート: [`ruleset/ruleset-20882817-stage2.template.json`](ruleset/ruleset-20882817-stage2.template.json)（`integration_id: 0` を実際の App ID に置き換える）。
@@ -44,11 +46,11 @@ GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は�
 | 承認ステータスの無い PR | **GitHub がマージを拒否**（auto-merge も、画面のマージボタンも） | 同左 |
 | 承認後に 1 コミットでも push | 新しい SHA には承認ステータスが無い → **マージ不可** | 同左 |
 | base が進む（strict） | update-branch で head が変わる → 再承認が必要 | 同左 |
-| AI が admin token で `claudeos/human-approval=success` を付ける | **防げない**（context 名だけで判定するため） | **防げる**（App 以外が付けた同名ステータスは条件を満たさない） |
+| AI が admin token で `claudeos/human-approval=success` を付ける | **防げない**（context 名だけで判定するため） | **一部のみ**（同名ステータスの偽装は防げるが、admin token なら ruleset を書き換えて条件を外せる） |
 | ClaudeOS の Merge Executor | ruleset 条件は満たす。ただし `centralProfileEnforced=false` の間は登録しない | 同左 |
 
 **第 1 段階の効果は「うっかりマージ」の防止**（watch の push・auto-merge・`/ship` の迂回経路・人の誤操作）。
-**意図的な偽装の防止は第 2 段階が必要**。どちらも ClaudeOS 側の署名検証（Merge Executor）と二重になる。
+**意図的な偽装の防止には、第 2 段階に加えて AI のトークンから admin 権限を外すこと（#7・トークン分離）が必要**。第 2 段階だけでは不十分（上の訂正を参照）。どちらの段階も ClaudeOS 側の署名検証（Merge Executor）と二重になる。
 
 ### 模擬確認（ClaudeOS Merge Executor の preflight、ruleset の値だけを差し替えて実行）
 
@@ -77,7 +79,7 @@ GitHub の仕様（REST の `StatusCheckConfiguration`）: `integration_id` は�
 | 2 | 練習用の PR 1 件で `quality --publish` → `gate` → `approve` を通し、2 つのステータスが付くことを確認（ruleset 変更前なので何も止まらない） | AI + 人 |
 | 3 | **第 1 段階**を適用（下記 §6） | 人 |
 | 4 | 検証（§7） | AI（読み取り）+ 人 |
-| 5 | 人間専用 GitHub App を作成（#4）→ **第 2 段階**を適用 | 人 |
+| 5 | （保留）AI のトークン分離・別ユーザー化（#7）と人間専用 GitHub App（#4）をセットで検討 → **第 2 段階** | 人 |
 | 6 | `centralProfileEnforced=true` にする PR（R4）→ 初めて ClaudeOS の自動マージが有効になる | 人の承認 |
 
 ## 6. 適用手順（owner が実行）
