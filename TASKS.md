@@ -14,7 +14,7 @@
 
 - [x] #1 中央 GITHUB_POLICY への Ship Native 適用除外（方式 B）— 中央 PR [#185](https://github.com/Kensan196948G/Deep-Seek-Harness-Project/pull/185) を 2026-11-24 にユーザーがマージ（中央 `db62ffa`）。本リポジトリのミラー再同期は未
 - [ ] #2 横断自動マージ巡回から本リポジトリを除外
-- [ ] #3 ruleset に `claudeos/local-quality`・`claudeos/human-approval` を必須追加
+- [ ] #3 ruleset に `claudeos/local-quality`・`claudeos/human-approval` を必須追加 — 変更案・確認・元に戻す手順を `docs/architecture/SHIP_RULESET_CHANGE.md` に作成（未適用）。**#10（承認者鍵の登録）より先に適用すると main へのマージが全面的に止まる**
 - [ ] #4 人間専用 GitHub App の作成と integration_id 限定
 - [ ] #5 週次の全履歴シークレット走査の実施方式
 - [ ] #6 並走比較後に `linux-validate`・gitleaks を必須から外す
