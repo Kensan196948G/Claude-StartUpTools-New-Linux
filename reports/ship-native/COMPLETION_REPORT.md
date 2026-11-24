@@ -51,7 +51,7 @@ Claude Code の新機能 Ship を開発ライフサイクルに組み込み、�
 | --- | --- |
 | `npm test`（bats 1,447 件 + node 636 件） | **全件 PASS**（失敗 0・skip 0） |
 | `npm run lint` / `test:dry-run` / adversarial probe / doc-version check | PASS |
-| Ship 追加: node（core 25・human-gate 30・quality 10・lifecycle 5・ship-api 15・project-to-db 16） | 101 / 101 PASS |
+| Ship 追加: node（core 25・human-gate 30・quality 10・lifecycle 5・github 6・ship-api 15・project-to-db 16） | 107 / 107 PASS |
 | Ship 追加: bats（ship 16・control-db-0006 9） | 25 / 25 PASS |
 | TLA+ `ship_gate`（163,181 状態） | verified。承認の head 照合を外した変異モデルでは反例を検出 |
 | 実リポジトリ origin/main `a35988a` の隔離品質検証 | **PASS**（7 チェック、npm-test 1,953 pass / 0 fail / 4 skip） |
@@ -71,7 +71,7 @@ Claude Code の新機能 Ship を開発ライフサイクルに組み込み、�
 | --- | --- |
 | 本 PR への `/ship` 適用 | **未実施**（headless 不可・watch 不可。人が対話セッションで実行する必要がある） |
 | Ship 自動修正 | 未実施（同上） |
-| AI Quality Gate（本 PR） | PR 作成後に実行（§9 に結果を記載） |
+| AI Quality Gate（本 PR） | FAIL（Draft・Ship 証跡なし。§9） |
 
 ## 6. GitHub Actions 削減
 
@@ -98,9 +98,25 @@ Claude Code の新機能 Ship を開発ライフサイクルに組み込み、�
 `git revert`（既存ファイルの変更は menu.sh / startup-server.js / index.html / compat.json / package.json / README / CHANGELOG / TASKS のみ）。
 GitHub 設定・中央ポリシー・systemd・cron・本番 DB は変更していないため戻す必要がない。詳細: `docs/architecture/SHIP_IMPACT_ANALYSIS.md`。
 
-## 9. PR・承認
+## 9. PR と本 PR 自身の判定 [実測]
 
-PR URL・最新 head SHA・本 PR の AI Quality Gate 結果は PR 作成後に追記する。
+- PR: https://github.com/Kensan196948G/Claude-StartUpTools-New-Linux/pull/228 （Draft）
+- 判定対象 head: `aa71de398ff63d461986a403005d36f162820027` / base: `a35988a7c5eb253854f2696d8889689d66c5def6`
+  （この後に追加するコミットは報告書の更新のみ。head が変わるため、承認前に quality → gate の再実行が必要）
+
+| 工程 | 結果 |
+| --- | --- |
+| Local Quality（隔離・8 チェック） | **PASS**（npm-test 2,086 pass / 0 fail / 3 skip、TLA+ を含む。eval `qe_mwu7hmls_879108fef940`）→ `claudeos/local-quality=success` を GitHub に登録 |
+| GitHub Actions（参考・並走） | linux-validate / gitleaks / e2e-console / staging-smoke / release-artifact すべて pass |
+| AI Quality Gate | **FAIL**（R4）: Draft のため FAIL、Ship レビュー証跡なし（UNKNOWN）、要件一部未充足（CONDITIONAL） |
+| Merge Executor（dry-run） | **REFUSED**: Draft、中央ポリシー未施行、ruleset が 2 チェックを未要求、gate 非 PASS、人間承認なし |
+
+**この PR は現時点で自動マージ不可（設計どおり）。** 不合格・拒否はエンジンが正しく働いている証拠であり、不具合ではない。
+
+### ドッグフーディングで発見・修正した不具合
+
+5. gh 2.45 の `pr view --json` に `baseRefOid` が無く、PR 取得全体が失敗して gate が BLOCKED になっていた（偽 gh のテストでは検出できなかった）。
+   → base を GraphQL から取得し、2 回の取得間の head 変化（HEAD_RACE）と base 取得不能は失敗として扱うよう修正。偽 gh を実機準拠に修正し、回帰テスト 6 件を追加。
 
 ## 10. 承認が必要な事項（番号は TASKS.md と共通）
 

@@ -1,6 +1,6 @@
 # Ship Native 開発状況（永続化された進捗）
 
-最終更新: 2026-11-24 / ブランチ `feat/ship-native-v5` / 基点 `a35988a` (origin/main)
+最終更新: 2026-11-24 / ブランチ `feat/ship-native-v5` / 基点 `a35988a` (origin/main) / PR #228 (Draft)
 
 コンテキストが縮小・再起動された場合は、まず本書を読んで再開する。
 
