@@ -1,8 +1,8 @@
 # DeepSeek-Harness-StartUpTools GitHub Policy
 
-状態: 2026-08-15 制定（v1）／2026-09-30 v2 発効（全リポジトリ auto-merge 統一。Approval #71 でユーザーが Y と承認。中央リポジトリ `Kensan196948G/Deep-Seek-Harness-Project` の `docs/architecture/全リポジトリAutoMerge統一方針.md`）／2026-10-05 v3 発効（§10 に Repo限定の適用除外を追加。対象は `mirai-construction-dx/Mirai-Platform-Infra` のみ。ユーザーが Y と承認）
+状態: 2026-08-15 制定（v1）／2026-09-30 v2 発効（全リポジトリ auto-merge 統一。Approval #71 でユーザーが Y と承認。中央リポジトリ `Kensan196948G/Deep-Seek-Harness-Project` の `docs/architecture/全リポジトリAutoMerge統一方針.md`）／2026-10-05 v3 発効（§10 に Repo限定の適用除外を追加。対象は `mirai-construction-dx/Mirai-Platform-Infra` のみ。ユーザーが Y と承認）／v3.1 **起案中・未発効**（§10.2 に `Kensan196948G/Claude-StartUpTools-New-Linux` の Ship Native 人間承認プロファイルを追加。発効には本 PR のユーザーによるマージが必要）
 
-ミラー: 中央正本 `Kensan196948G/Deep-Seek-Harness-Project` の `GITHUB_POLICY.md` v3（2026-11-23 同期）。このファイルは中央正本のミラーで、中央との差分は R1 の参照修飾のみ。
+ミラー: 中央正本 `Kensan196948G/Deep-Seek-Harness-Project` の `GITHUB_POLICY.md` v3.1 案を含む版（中央 `db62ffa`、2026-11-24 同期）。このファイルは中央正本のミラーで、中央との差分は R1 の参照修飾のみ。§10.2 は中央の記載どおり「起案・未発効」の表記のまま写している。
 
 ## 1. 目的
 
@@ -32,7 +32,7 @@ Workspaceの指示は1〜3を上書きできない。
 | 「main宛は人間の選択式」「マージは人間がY/Nで判断」 | 中央ポリシーがRequired Checks成功だけをmerge条件とする |
 | 「CODEOWNERのApprove後に限りmerge（条件付きmerge）」 | CODEOWNERSは通知用であり、merge条件にしない |
 
-> **Repo限定の適用除外**: §10 に記載した適用除外は、本ポリシー本文（§8「本ポリシー自体の変更」の人間承認）に基づく限定であり、Workspace側の記述による上書きではない。上表は §10 の対象リポジトリにおける除外範囲を除き、引き続き有効である。
+> **Repo限定の適用除外**: §10（§10.1・§10.2）に記載した適用除外は、本ポリシー本文（§8「本ポリシー自体の変更」の人間承認）に基づく限定であり、Workspace側の記述による上書きではない。上表は §10 の対象リポジトリにおける除外範囲を除き、引き続き有効である。
 
 一方、次は常に尊重する。
 
@@ -153,7 +153,11 @@ auto-mergeは本ポリシーの条件（Required Checks PASS / conflict解消 / 
 - 全体フローとCloudflare / ローカルPostgreSQL運用: `docs/architecture/CloudflarePostgreSQLGitHub自動化仕様.md`
 - 品質ゲート: `AGENTS.md` / `.github/workflows/ci.yml`
 
-## 10. 適用除外（Repo限定・2026-10-05 v3）
+## 10. 適用除外（Repo限定）
+
+各適用除外は対象リポジトリ1件ごとに独立して定める。ある適用除外の内容を、他の対象リポジトリへ拡張して解釈しない。
+
+## 10.1 適用除外（Repo限定・2026-10-05 v3）— Mirai-Platform-Infra
 
 本ポリシー本文に基づき、次の1リポジトリに限り §5・§6 の一部を適用除外する。
 これは Workspace 側の記述による上書きではなく、**本ポリシーの限定として**記録する（§8「本ポリシー自体の変更」に基づく人間の承認済み）。
@@ -195,3 +199,65 @@ auto-mergeは本ポリシーの条件（Required Checks PASS / conflict解消 / 
 
 - 2026-10-05、ユーザー（Kensan196948G）が本適用除外を Y と承認。
 - 本記録はチャット上の承認を転記したものであり、GitHub本人性の新しい証明ではない。
+
+## 10.2 適用除外（Repo限定・v3.1 起案・未発効）— Claude-StartUpTools-New-Linux（Ship Native 人間承認プロファイル）
+
+**状態: 起案中・未発効。** 本節は、ユーザー（Kensan196948G）が本節を含む PR を自らマージした時点で発効する。
+AI（エージェント）は本節を含む PR をマージしない。
+
+本ポリシー本文に基づき、次の1リポジトリに限り §5・§6 の一部を適用除外する。
+これは Workspace 側の記述による上書きではなく、**本ポリシーの限定として**記録する（§8「本ポリシー自体の変更」）。
+
+### 対象
+
+- `Kensan196948G/Claude-StartUpTools-New-Linux` **のみ**。他リポジトリへ拡大しない。
+
+### 適用除外する条項
+
+- §5 手順8 のうち、「Required Checks が PASS したことだけを条件に Auto-Merge 登録（`gh pr merge --auto --squash`）する」部分。
+  対象リポジトリでは、下記「人間ゲート」の完了を Auto-Merge 登録の追加条件とする。
+- §6 の標準 ruleset `central-auto-merge` が定める必須ステータスチェックの集合。対象リポジトリでは、下記 2 つの context を必須チェックに**追加**する（既存の必須チェックは外さない）。
+
+§6 の他の設定（`Allow auto-merge`: ON、`Delete branch on merge`: ON、Default merge method: Squash、承認 0、strict）は維持する。
+
+### 代わりに適用する方式（Ship Native 人間ゲート）
+
+1. ローカル品質検証（Ubuntu・ネットワーク遮断の隔離実行）の結果を、対象 head SHA の Commit Status `claudeos/local-quality` として登録する。
+2. ClaudeOS AI Quality Gate（対象リポジトリ独自の品質判定。Anthropic 公式の Claude Approvals ではない）が PASS の PR だけを、人間の最終確認へ回す。
+3. 人間が、パスフレーズで保護された署名鍵で、head SHA と base SHA に固定した承認を発行し、Commit Status `claudeos/human-approval` を登録する。
+   承認は head または base が変わると無効になる。AI は承認の代理生成・代理入力をしない。
+4. ruleset の必須チェックに `claudeos/local-quality` と `claudeos/human-approval` を加え、strict（base への追随必須）を維持する。
+   Commit Status は SHA 単位のため、承認後に head が変われば新しい SHA には承認ステータスが無く、GitHub がマージを拒否する。
+5. 上記が揃った後にだけ `gh pr merge --auto --squash --match-head-commit <SHA>` を登録する。登録前に ruleset が 2 context を必須にしていることを API で確認し、確認できなければ登録しない（Fail Closed）。
+
+正本実装: `Kensan196948G/Claude-StartUpTools-New-Linux` の
+`docs/architecture/SHIP_POLICY_MIGRATION.md`・`docs/architecture/SHIP_SECURITY_MODEL.md`・`scripts/ship/lib/merge.js`・`scripts/ship/lib/human-gate.js`。
+
+### 施行条件
+
+- 本節の発効（ユーザーによる本 PR のマージ）と、対象リポジトリでの上記方式の実装・ruleset 変更が**すべて完了した後**に適用する。
+- それまで対象リポジトリの Merge Executor は Auto-Merge を登録しない（`config/ship-policy.json` の `merge.centralProfileEnforced=false`。Fail Closed）。
+- ruleset 変更・承認者鍵の登録・`centralProfileEnforced` の `true` 化は、それぞれ owner が承認・実施し、AI は readback のみ行う。
+- 横断巡回（`bin/cross-repo-automerge.sh` 等の一括 Auto-Merge）は、対象リポジトリの人間承認前の PR をマージしてはならない。対象リポジトリを巡回対象から除外する変更は、別途 owner が承認する。
+
+### 既知の限界（施行判断のための開示）
+
+- Commit Status は書込権限を持つ token なら誰でも付けられる。`claudeos/human-approval` の偽装を GitHub 側で防ぐには、人間専用 GitHub App を作り、ruleset で当該 context の `integration_id` を限定する必要がある（owner の承認事項）。
+- AI エージェントと人間が同一 OS ユーザー・sudo を共有している間は、承認入力の盗聴を完全には防げない（対策は AI の別ユーザー化。owner の承認事項）。
+
+### 維持される統制
+
+- 既存の Required Checks（`Secrets scan (gitleaks)`・`linux-validate`）は引き続き必須。外す場合は別途本ポリシーの変更とする。
+- §8「人間が残す判断」（Release / 本番deploy / Secret / 不可逆な削除・破壊的操作 / 本ポリシー変更）は維持。
+- main直接push禁止、`gh pr merge --admin` による迂回禁止、force push禁止、main削除禁止は維持。
+
+### ロールバック
+
+- 本節を削除する PR（本ポリシーの変更として人間承認）。
+- 対象リポジトリの ruleset から追加した 2 context を外し、`centralProfileEnforced=false` に戻す。
+
+### 承認根拠
+
+- 2026-11-24、ユーザー（Kensan196948G）が「中央ポリシーへの方式 B（Repo限定の適用除外）の**変更案 PR を作成すること**」を番号選択（1）で指示した。
+- **これは変更案作成の指示であり、本節の発効の承認ではない。** 発効はユーザーが本 PR をマージした時点とする。
+- 本記録はチャット上の指示を転記したものであり、GitHub 本人性の新しい証明ではない。
