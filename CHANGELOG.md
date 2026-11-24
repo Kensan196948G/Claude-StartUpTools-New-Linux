@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — ClaudeOS v5.0 Ship Native（Experimental、2026-11-24）
+
+- 🚢 `bin/ship.sh` / `scripts/ship/`: Ship Integration Engine（Capability Detection・22 状態の状態機械・run 管理・既存 PR 再利用・監視・バックオフ/サーキット・監査 hash 連鎖）。
+  `/ship` は公式仕様で headless 不可のため入力を代行せず、前後工程を担う。
+- 🧪 Local Quality Engine: 対象 head SHA の独立 clone を bwrap（ネットワーク遮断・$HOME 隠蔽・clearenv）で検証し、証跡を HMAC 封印。`claudeos/local-quality` Commit Status。
+- ⚖️ ClaudeOS AI Quality Gate（独自機能。Anthropic 公式 Claude Approvals ではない）と R0〜R4 リスク分類。
+- 🔐 Human Gate: パスフレーズ保護 Ed25519 署名による承認（head/base SHA 固定・期限・取り消し・nonce リプレイ防止・base ブランチのポリシーのみ信頼）。`bin/ship-approve.sh`。
+- 🔀 Merge Executor: 全条件の再照合・ruleset 必須 context の確認後にのみ `gh pr merge --auto --squash --match-head-commit`。中央ポリシー施行前は登録しない。
+- 🧭 起動モード SH1〜SH5 / QC / HG（`bin/ship-mode.sh`、メニュー追加。L1/T1/S1 は無変更）。
+- 🖥️ Web コンソール `ship.html`（Ship Control Center。承認ボタンは置かない）。
+- 🗄️ `db/control/migrations/0006_ship_native.sql`（追加のみ）と射影 `scripts/ship/project-to-db.js`。
+- 📐 `formal/specs/ship_gate.tla`（承認なしマージ不可・SHA 固定・nonce 1 回をモデル検査）。
+- 📄 `docs/architecture/SHIP_*.md`、中央ポリシー変更案（未施行）、Actions 廃止計画（未施行）。
+
 ### Added — README をアイコン・デモ動画・アニメーションで刷新（2026-11-22）
 
 - 🎬 `docs/assets/demo/claudeos-demo.{mp4,gif}`: 統合コンソールの 30 秒デモ。隔離したデモ環境（demo-* 3 プロジェクト）で実際の UI を操作して撮影。

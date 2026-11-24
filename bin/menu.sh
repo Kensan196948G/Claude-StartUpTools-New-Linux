@@ -116,6 +116,12 @@ show_menu() {
   fi
   printf '   %s S1 %s  🌙 バックグラウンド起動 (自律 / %s)\n' "$C_BG_YELLOW" "$C_RESET" "$dur_label"
   printf '\n'
+  # Ship Native (v5.0)。/ship は人が対話セッションで入力する公式仕様のため、各モードは手順表示と前後工程を担う
+  printf '  %s🚢 Ship Native (v5.0 / Experimental)%s\n' "$C_CYAN" "$C_RESET"
+  printf '   %s SH %s  🧭 Ship モード一覧と利用可否 (SH1〜SH5 / QC / HG)\n' "$C_BG_DKBLUE" "$C_RESET"
+  printf '   %s QC %s  🧪 Ubuntu ローカル品質検証 (隔離実行・証跡封印)\n' "$C_BG_DKBLUE" "$C_RESET"
+  printf '   %s HG %s  🔐 Human Gate (承認待ち確認。承認は人の端末から)\n' "$C_BG_DKBLUE" "$C_RESET"
+  printf '\n'
 
   if (( is_maint == 0 )); then
     printf '  %s🚢 デプロイ管理%s\n' "$C_BLUE" "$C_RESET"
@@ -505,6 +511,10 @@ menu_loop() {
           fi
         fi ;;
       S1) launch_claude background ;;
+      SH) run_menu_script "$BIN/ship-mode.sh" status ;;
+      QC) local _qp; _qp="$(launcher__select_project background "")" || true
+          [[ -n "$_qp" ]] && run_menu_script "$BIN/ship-mode.sh" QC --project "$(config_projects_dir)/$_qp" ;;
+      HG) run_menu_script "$BIN/ship-mode.sh" HG ;;
       DP) deploy_prep_menu ;;
       M)  run_menu_script "$BIN/maintenance-mode.sh" ;;
       I)  run_menu_script "$BIN/incident-response.sh" ;;

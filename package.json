@@ -14,12 +14,15 @@
     "start:watch": "node scripts/dashboards/watch-and-run.js",
     "test": "npm run test:bats && npm run test:node",
     "test:bats": "bats tests/bats/unit/",
-    "test:node": "files=$(find scripts -name '*.test.js'); if [ -n \"$files\" ]; then node --test $files; else echo 'No Node test files found'; fi",
+    "test:node": "files=$(find scripts -name '*.test.js' -not -path '*/node_modules/*'); if [ -n \"$files\" ]; then node --test $files; else echo 'No Node test files found'; fi",
     "test:dry-run": "node scripts/test/dry-run-execution-matrix.js",
     "test:e2e:console": "node scripts/e2e/console.e2e.js",
     "lint": "shellcheck -S error start.sh lib/*.sh bin/*.sh libexec/*.sh Claude/templates/linux/*.sh scripts/setup/*.sh scripts/tools/*.sh",
     "audit:scan": "node scripts/tools/run-audit-scan.js",
-    "cmdb:scan": "node scripts/tools/run-cmdb-scan.js"
+    "cmdb:scan": "node scripts/tools/run-cmdb-scan.js",
+    "ship": "bash bin/ship.sh",
+    "ship:quality": "bash bin/ship-mode.sh QC --project .",
+    "ship:capability": "bash bin/ship.sh capability"
   },
   "dependencies": {},
   "devDependencies": {},

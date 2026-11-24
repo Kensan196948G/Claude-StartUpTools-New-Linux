@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>🚢 Ship Native Control Center — ClaudeOS v5.0</title>
+<link rel="stylesheet" href="/ship.css">
+<script>
+  /* 初期テーマを描画前に決める (ちらつき防止)。保存値 > OS 設定 > ライト */
+  (function () {
+    try {
+      var s = localStorage.getItem('claudeos.ship.theme');
+      var t = s === 'dark' || s === 'light' ? s
+        : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* localStorage 不可でもライトで表示する */ }
+  })();
+</script>
+</head>
+<body>
+<a class="skip" href="#main">本文へスキップ</a>
+<header class="top" role="banner">
+  <div class="brand">
+    <h1>🚢 Ship Native Autonomous Development Control Center</h1>
+    <p class="sub">ClaudeOS v5.0 “Ship Native” — 実データのみ表示 (デモデータは表示しません)</p>
+  </div>
+  <nav class="top-nav" aria-label="コンソール間の移動">
+    <a href="/">統合コンソール</a>
+    <a href="/index.html">旧コンソール</a>
+    <button type="button" id="theme-toggle" class="btn ghost" aria-pressed="false">🌙 ダーク</button>
+    <button type="button" id="refresh" class="btn">再読み込み</button>
+  </nav>
+</header>
+
+<nav class="sections" aria-label="セクション">
+  <a href="#overview">概要</a>
+  <a href="#pipeline">パイプライン</a>
+  <a href="#ship">Ship Control</a>
+  <a href="#quality">Local Quality</a>
+  <a href="#approval">Human Approval</a>
+  <a href="#merge">Merge</a>
+  <a href="#audit">監査</a>
+</nav>
+
+<div id="live" class="live" role="status" aria-live="polite">読み込み中…</div>
+
+<main id="main" tabindex="-1">
+  <section id="overview" class="panel" aria-labelledby="h-overview">
+    <h2 id="h-overview">📊 Overview Dashboard</h2>
+    <div class="kpis" id="kpis"><p class="empty">読み込み中…</p></div>
+    <dl class="facts" id="facts"></dl>
+  </section>
+
+  <section id="pipeline" class="panel" aria-labelledby="h-pipeline">
+    <h2 id="h-pipeline">🧭 Pipeline (状態機械)</h2>
+    <p class="hint">状態の正本は <code>scripts/ship/lib/state-machine.js</code>。選択中 run の現在状態を強調表示します。</p>
+    <label class="inline">対象 run:
+      <select id="pipeline-run" aria-label="パイプラインに表示する run"></select>
+    </label>
+    <ol class="pipeline" id="pipeline-list" aria-label="状態の一覧"></ol>
+  </section>
+
+  <section id="ship" class="panel" aria-labelledby="h-ship">
+    <h2 id="h-ship">🛠️ Ship Control Center</h2>
+    <p class="hint">停止は、その run を動かしている Claude Code セッションで <code>/ship stop</code> を入力してください (Web からは停止しません)。</p>
+    <div class="table-wrap" id="runs-table"></div>
+  </section>
+
+  <section id="quality" class="panel" aria-labelledby="h-quality">
+    <h2 id="h-quality">🧪 Local Quality Workbench</h2>
+    <label class="inline">PR:
+      <select id="pr-select" aria-label="詳細を表示する PR"></select>
+    </label>
+    <div id="quality-body"><p class="empty">データなし — デモデータは表示しません</p></div>
+  </section>
+
+  <section id="approval" class="panel" aria-labelledby="h-approval">
+    <h2 id="h-approval">🧑‍⚖️ Human Approval Center</h2>
+    <div class="notice" role="note">
+      <strong>Web からは承認できません。</strong>
+      Web サーバは AI エージェントと同じ OS ユーザで動作するため、ボタン押下では「人間が承認した」ことを証明できません。
+      承認は人間が端末で次のコマンドを実行してください。取り消し (安全側) のみ Web から行えます (Cloudflare Access のメール認証が必要)。
+      <br><small>この画面の有効性 (VALID / STALE_HEAD / EXPIRED / REVOKED) は表示用の計算です。マージ可否の強制は <code>scripts/ship/lib/human-gate.js</code> が行います。</small>
+    </div>
+    <h3>承認待ち (ゲート PASS かつ有効な承認なし)</h3>
+    <div id="pending"></div>
+    <h3>承認一覧 (選択中の PR)</h3>
+    <div class="table-wrap" id="approvals-table"></div>
+  </section>
+
+  <section id="merge" class="panel" aria-labelledby="h-merge">
+    <h2 id="h-merge">🔀 GitHub Merge Center</h2>
+    <p class="hint">MERGED は GitHub API の再取得で確認済み (confirmed) の記録だけを表示します。</p>
+    <div class="table-wrap" id="merge-table"></div>
+  </section>
+
+  <section id="audit" class="panel" aria-labelledby="h-audit">
+    <h2 id="h-audit">📜 監査ログ</h2>
+    <p id="chain" class="chain">チェーン検証: 未取得</p>
+    <p class="hint">prev_hash 連鎖による改ざん「検出」です。改ざん防止には OS 権限分離が必要です。</p>
+    <div class="table-wrap" id="audit-table"></div>
+  </section>
+</main>
+
+<dialog id="revoke-dialog" aria-labelledby="revoke-title">
+  <form method="dialog" id="revoke-form">
+    <h2 id="revoke-title">承認を取り消す</h2>
+    <p>承認 ID: <code id="revoke-id"></code></p>
+    <label for="revoke-reason">理由 (必須・500 文字以内)</label>
+    <textarea id="revoke-reason" maxlength="500" required rows="3"></textarea>
+    <p class="hint">Cloudflare Access のメール付き JWT が無い場合は拒否されます (401/403)。</p>
+    <div class="row">
+      <button type="button" class="btn ghost" id="revoke-cancel">キャンセル</button>
+      <button type="submit" class="btn danger" id="revoke-submit">取り消す</button>
+    </div>
+    <p id="revoke-result" role="alert"></p>
+  </form>
+</dialog>
+
+<footer class="foot" role="contentinfo">
+  <span id="generated">生成時刻: 未取得</span> · 15 秒ごとに自動更新
+</footer>
+<script src="/ship.js"></script>
+</body>
+</html>
