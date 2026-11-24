@@ -32,7 +32,8 @@ function classifyError(r) {
   return 'GH_ERROR';
 }
 
-const PR_FIELDS = 'number,state,isDraft,mergeable,mergeStateStatus,headRefOid,headRefName,baseRefOid,baseRefName,url,title,author,statusCheckRollup,mergeCommit,autoMergeRequest';
+// gh 2.45 (Ubuntu 24.04 の apt 版) で使えるフィールドだけを指定する。baseRefOid は GraphQL で取る
+const PR_FIELDS = 'number,state,isDraft,mergeable,mergeStateStatus,headRefOid,headRefName,baseRefName,url,title,author,statusCheckRollup,mergeCommit,autoMergeRequest';
 
 /** fetchPr(repo, n) → 正規化した PR (statusChecks / reviewThreadsUnresolved を含む) */
 function fetchPr(repo, n) {
@@ -44,24 +45,31 @@ function fetchPr(repo, n) {
     name: c.name || c.context, context: c.context || c.name,
     status: c.status || c.state || null, conclusion: c.conclusion || (c.state && ['SUCCESS', 'FAILURE', 'ERROR'].includes(c.state) ? c.state : null),
   }));
-  const threads = fetchUnresolvedThreads(repo, n);
+  // baseRefOid は gh 2.45 の `pr view --json` に無い (2026-11-24 実機)。GraphQL で取得する
+  const extra = fetchGraphqlExtra(repo, n);
+  if (!extra.ok) return { ok: false, error: extra.error || 'GRAPHQL_FAILED' };
+  if (extra.headRefOid && extra.headRefOid !== d.headRefOid) return { ok: false, error: 'HEAD_RACE' }; // 2 回の取得の間に push された
   return { ok: true, data: {
     number: d.number, state: d.state, isDraft: d.isDraft, mergeable: d.mergeable, mergeStateStatus: d.mergeStateStatus,
-    headRefOid: d.headRefOid, headRefName: d.headRefName, baseRefOid: d.baseRefOid, baseRefName: d.baseRefName,
+    headRefOid: d.headRefOid, headRefName: d.headRefName, baseRefOid: extra.baseRefOid, baseRefName: d.baseRefName,
     url: d.url, title: d.title, author: d.author && d.author.login, statusChecks,
     mergeCommit: d.mergeCommit && d.mergeCommit.oid, autoMerge: !!d.autoMergeRequest,
-    reviewThreadsUnresolved: threads.ok ? threads.count : null,
+    reviewThreadsUnresolved: extra.unresolved,
   } };
 }
 
-function fetchUnresolvedThreads(repo, n) {
+/** fetchGraphqlExtra — baseRefOid / headRefOid / 未解決レビュースレッド数 (取れなければ null = UNKNOWN) */
+function fetchGraphqlExtra(repo, n) {
   const [owner, name] = repo.split('/');
-  const q = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved}}}}}';
+  const q = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){baseRefOid headRefOid reviewThreads(first:100){totalCount nodes{isResolved}}}}}';
   const r = ghJson(['api', 'graphql', '-f', `query=${q}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`]);
-  if (!r.ok) return { ok: false };
-  const nodes = (((r.data.data || {}).repository || {}).pullRequest || {}).reviewThreads;
-  if (!nodes) return { ok: false };
-  return { ok: true, count: nodes.nodes.filter((t) => !t.isResolved).length };
+  if (!r.ok) return { ok: false, error: r.error };
+  const pr = ((r.data.data || {}).repository || {}).pullRequest;
+  if (!pr || !/^[0-9a-f]{40}$/.test(String(pr.baseRefOid || ''))) return { ok: false, error: 'BASE_OID_UNAVAILABLE' };
+  const t = pr.reviewThreads;
+  // 100 件を超えると数え切れないため UNKNOWN
+  const unresolved = t && t.totalCount <= 100 ? t.nodes.filter((x) => !x.isResolved).length : null;
+  return { ok: true, baseRefOid: pr.baseRefOid, headRefOid: pr.headRefOid || null, unresolved };
 }
 
 /** changedFiles(repo, n) — PR の変更ファイル一覧 (最大 3000 件、gh の制約) */
