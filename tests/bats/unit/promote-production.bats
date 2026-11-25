@@ -116,6 +116,13 @@ EOF
   cat > "$CCSU_PROMOTE_BIN_DIR/release-promote.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "release-promote $*" >> "${ORDER:?}"
+# 手順 (2) 事前準備 / 手順 (4) 本実行 / 復旧で、台帳の二重記録を省く環境変数がどう渡ったかを別ファイルへ残す
+case " $* " in
+  *" --rollback "*) _label=rollback ;;
+  *" --no-restart "*) _label=step2 ;;
+  *) _label=step4 ;;
+esac
+echo "$_label=${CCSU_PROMOTE_SKIP_PROMOTED_LEDGER:-unset}" >> "${ORDER}.ledger-env"
 case " $* " in
   *" --rollback "*)
     if [[ "${PP_STUB_ROLLBACK_NO_PREVIOUS:-0}" == "1" ]]; then
@@ -242,6 +249,15 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
 # ------------------------------------------------------------
 # 正常系
 # ------------------------------------------------------------
+
+@test "promote-production: 台帳の PROMOTED は手順 (4) だけが残す (手順 (2) の事前準備は省く)" {
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 0 ]
+  # 手順 (2) は省略指定あり、手順 (4) の本実行には渡さない (二重記録の防止)
+  [ "$(sed -n 1p "${ORDER}.ledger-env")" = "step2=1" ]
+  [ "$(sed -n 2p "${ORDER}.ledger-env")" = "step4=unset" ]
+  [ "$(wc -l < "${ORDER}.ledger-env")" -eq 2 ]
+}
 
 @test "promote-production: 正常系は手順順序どおり実行して exit 0" {
   run bash "$SCRIPT" --release "$SHA" --yes --json

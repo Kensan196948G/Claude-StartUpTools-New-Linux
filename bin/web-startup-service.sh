@@ -186,7 +186,7 @@ ws_svc__unit_body() {
   cat <<EOF
 [Unit]
 Description=ClaudeOS Web Startup Console (bin/menu.sh の Web 版)
-Documentation=$ROOT/docs/architecture/WEB_STARTUP_TOOL.md
+Documentation=file:$ROOT/docs/architecture/WEB_STARTUP_TOOL.md
 After=network.target
 
 [Service]

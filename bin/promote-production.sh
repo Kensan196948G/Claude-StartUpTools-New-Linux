@@ -783,7 +783,9 @@ main() {
   pp__arm_trap
 
   # (2) symlink 準備 (--no-restart)
+  # 台帳の PROMOTED は手順 (4) の本実行が 1 行だけ残す (二重記録の防止)
   if ! pp__run_step "symlink-prep" \
+    env CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 \
     bash "$(pp__bin release-promote.sh)" --env production --release "$PP_RELEASE" --no-restart --json; then
     pp__disarm_trap
     PP_RESULT="ABORTED"
