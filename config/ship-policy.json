@@ -122,6 +122,9 @@
           "GITHUB_POLICY.md",
           ".github/workflows/**",
           ".claude/settings.json",
+          ".claude/settings*.json",
+          "**/.claude/settings*.json",
+          "**/.codex/hooks.json",
           "Claude/templates/claude/settings.json",
           "**/hooks/**",
           "SECURITY.md",
@@ -146,7 +149,7 @@
       },
       {
         "level": "R2",
-        "_comment": "エージェントの指示書。Markdown でもエージェントの動作を決めるため R0 (文書) にしない (プロンプト注入の経路)。R0/R1 より先に評価される。glob は大文字小文字を区別するため表記揺れも列挙する。入れ子の設定ディレクトリ (sub/.claude/ など) も対象。リネームは変更前のパスも分類される (github.changedFiles)",
+        "_comment": "エージェントの指示書。Markdown でもエージェントの動作を決めるため R0 (文書) にしない (プロンプト注入の経路)。R0/R1 より先に評価される。glob は大文字小文字を区別するため表記揺れ (主要なもの) も列挙する。Copilot/Cline/Windsurf/Roo/Kiro/Gemini の指示書も含む。入れ子の設定ディレクトリ (sub/.claude/ など) も対象。リネームは変更前のパスも分類される (github.changedFiles)",
         "patterns": [
           "CLAUDE.md",
           "Claude.md",
@@ -176,7 +179,24 @@
           ".cursor/**",
           "**/.cursor/**",
           "Claude/**",
-          "Codex/**"
+          "Codex/**",
+          ".Claude/**",
+          "**/.Claude/**",
+          ".github/agents/**",
+          ".github/prompts/**",
+          ".github/chatmodes/**",
+          ".github/copilot-instructions.md",
+          "**/*.prompt.md",
+          "**/*.chatmode.md",
+          ".clinerules/**",
+          ".windsurf/**",
+          ".roo/**",
+          ".kiro/**",
+          ".gemini/**",
+          "Skill.md",
+          "**/Skill.md",
+          "CLAUDE.MD",
+          "AGENTS.MD"
         ]
       },
       {

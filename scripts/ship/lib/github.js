@@ -74,14 +74,14 @@ function fetchGraphqlExtra(repo, n) {
 
 /**
  * changedFiles(repo, n) — PR の変更ファイル一覧 (リスク分類の入力)。
- * REST の pulls/{n}/files を使い、リネーム・コピーは**変更前のパスも含める**。
+ * REST の pulls/{n}/files を使い、リネームは**変更前のパスも含める** (API が previous_filename を返す場合)。
  * gh pr view --json files は新しいパスしか返さないため、指示書 (R2) を docs/ (R0) へリネームすると
  * 低いリスクに見えてしまう (2026-11-25 /ship 237 の指摘)。旧パスも分類すれば、最大値で R2 以上になる。
  * GitHub の上限は 3000 件。changed_files と件数が合わない (取り切れない) 場合は失敗として返し、
  * 呼び出し側は安全側 (R4) で扱う。
  */
 function changedFiles(repo, n) {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo)) || !/^\d+$/.test(String(n))) return { ok: false, error: 'INVALID_ARGS' };
+  try { store.assertRepo(repo); store.assertPr(n); } catch { return { ok: false, error: 'INVALID_ARGS' }; }
   const r = ghJson(['api', '--paginate', '--slurp', `repos/${repo}/pulls/${n}/files?per_page=100`]);
   if (!r.ok) return r;
   const entries = (Array.isArray(r.data) ? r.data : []).flat();

@@ -65,6 +65,21 @@ test('changedFiles: 複数ページを結合し、件数が changed_files と合
   assert.equal(r.ok, false);
   assert.equal(r.error, 'FILES_INCOMPLETE');
 });
+test('changedFiles: gh へ渡す引数 (--paginate --slurp / per_page / files エンドポイント) を固定する', () => {
+  const log = path.join(T, 'files-args.log');
+  fakeGh(`require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(a)+'\\n');
+if(a.includes('--paginate')){console.log('[[{"filename":"a.md"}]]');process.exit(0);}
+console.log(JSON.stringify({changed_files:1}));process.exit(0);`);
+  assert.equal(github.changedFiles('o/r', 7).ok, true);
+  const first = JSON.parse(fs.readFileSync(log, 'utf8').split('\n')[0]);
+  assert.deepEqual(first, ['api', '--paginate', '--slurp', 'repos/o/r/pulls/7/files?per_page=100']);
+});
+test('changedFiles: files エンドポイントの gh 失敗はエラーとして返る (呼び出し側が R4 で扱う)', () => {
+  fakeGh('process.stderr.write("HTTP 503 Service Unavailable");process.exit(1);');
+  const r = github.changedFiles('o/r', 1);
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'GH_UNAVAILABLE');
+});
 test('changedFiles: 不正な引数・壊れた応答は失敗', () => {
   assert.equal(github.changedFiles('o/r;rm', 1).error, 'INVALID_ARGS');
   assert.equal(github.changedFiles('o/r', '1 2').error, 'INVALID_ARGS');

@@ -151,7 +151,7 @@ test('risk: エージェントの指示書は Markdown でも R0 にしない (R
     '.agents/skills/a/SKILL.md', 'sub/dir/CLAUDE.md',
     // /ship 237 の指摘: ローカル版・表記揺れ・入れ子の設定ディレクトリ・別ツールの指示書
     'CLAUDE.local.md', 'sub/claude.local.md', 'Agents.md', 'agents.md', '.claude/claudeos/rules/common/agents.md',
-    'scripts/web/.claude/rules/x.md', 'pkg/.claude/settings.local.json', '.codex/hooks.json', 'GEMINI.md',
+    'scripts/web/.claude/rules/x.md', 'GEMINI.md', '.github/agents/r.md', '.github/prompts/p.prompt.md', '.clinerules/x.md', '.kiro/steering/x.md', 'Skill.md',
     '.github/copilot-instructions.md', '.github/instructions/a.instructions.md', 'x/.cursorrules']) {
     assert.equal(risk.classifyFile(f, pol.risk).level, 'R2', f);
   }
@@ -167,6 +167,10 @@ test('risk: エージェントの指示書は Markdown でも R0 にしない (R
   assert.equal(risk.classify(['docs/notes.md', 'CLAUDE.md'], pol.risk).level, 'R2');
   // 指示書を 1 つでも含む PR は R2 以上 (最大値)
   assert.equal(risk.classify(['docs/a.md', 'CLAUDE.md'], pol.risk).level, 'R2');
+  // 権限・フックを決める設定ファイルは入れ子・local でも R4 (/ship 237 の指摘)
+  for (const f of ['pkg/.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', 'pkg/.codex/hooks.json']) {
+    assert.equal(risk.classifyFile(f, pol.risk).level, 'R4', f);
+  }
   // 既存の上位規則は優先されたまま
   assert.equal(risk.classifyFile('.claude/settings.json', pol.risk).level, 'R4');
   assert.equal(risk.classifyFile('Claude/templates/claude/claudeos/scripts/hooks/x.js', pol.risk).level, 'R4');

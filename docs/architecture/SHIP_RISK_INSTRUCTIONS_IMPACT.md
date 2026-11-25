@@ -1,6 +1,6 @@
 # 影響分析とロールバック: エージェントの指示書を R0 から R2 へ（PR #237、R4）
 
-状態: 2026-11-25。PR #237 の R4 要件（変更影響分析・ロールバック手順）を満たすための文書。`/ship 237` の指摘（7 件）を反映済み（§4）。
+状態: 2026-11-25。PR #237 の R4 要件（変更影響分析・ロールバック手順）を満たすための文書。`/ship 237` の指摘を 2 回分反映済み（§4）。
 
 ## 1. 変更内容
 
@@ -13,8 +13,14 @@ glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため�
 | --- | --- |
 | ファイル名（任意の階層） | `CLAUDE.md`・`Claude.md`・`claude.md`、`CLAUDE.local.md`（同 3 表記）、`AGENTS.md`・`Agents.md`・`agents.md`、`AGENTS.override.md`、`GEMINI.md`（同 3 表記）、`.cursorrules` |
 | パス | `**/SKILL.md`、`**/skill.md`、`**/copilot-instructions.md`、`**/*.instructions.md` |
-| 設定ディレクトリ（入れ子を含む） | `.claude/**`・`**/.claude/**`、`.codex/**`・`**/.codex/**`、`.agents/**`・`**/.agents/**`、`.cursor/**`・`**/.cursor/**` |
+| 設定ディレクトリ（入れ子を含む） | `.claude/**`・`**/.claude/**`（`.Claude/**` も）、`.codex/**`・`**/.codex/**`、`.agents/**`・`**/.agents/**`、`.cursor/**`・`**/.cursor/**` |
+| 他ツールの指示書 | `.github/agents/**`・`.github/prompts/**`・`.github/chatmodes/**`、`**/*.prompt.md`・`**/*.chatmode.md`、`.clinerules/**`、`.windsurf/**`、`.roo/**`、`.kiro/**`、`.gemini/**` |
+| 大文字の表記揺れ（主要なもの） | `CLAUDE.MD`・`AGENTS.MD`・`Skill.md` |
 | 配布テンプレート | `Claude/**`、`Codex/**` |
+
+### 1.1.1 R4 に追加（権限・フックを決める設定ファイル）
+
+`.claude/settings*.json`・`**/.claude/settings*.json`（入れ子・`settings.local.json` を含む）、`**/.codex/hooks.json`。これらは R2 の `.claude/**`・`.codex/**` より先に R4 として評価される。
 
 ### 1.2 変更ファイルの取得（`scripts/ship/lib/github.js` の `changedFiles`）
 
@@ -22,7 +28,7 @@ glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため�
 
 - **リネーム・コピーは変更前のパス（`previous_filename`）も返す。** 指示書（R2）を `docs/`（R0）へリネームしても、旧パスが分類されて R2 以上になる
 - ページを結合し、PR の `changed_files` と件数が合わなければ `FILES_INCOMPLETE` で失敗する（GitHub の上限 3000 件を超える場合など）。gate は失敗時に R4 として扱う（既存の安全側の挙動）
-- 引数（リポジトリ名・PR 番号）を検証する
+- 引数（リポジトリ名・PR 番号）を `store.assertRepo`・`store.assertPr` で検証する
 
 ## 2. 影響分析
 
@@ -31,11 +37,12 @@ glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため�
 | | R0 | R1 | R2 | R3 | R4 |
 | --- | --- | --- | --- | --- | --- |
 | 変更前（main） | 662 | 117 | 284 | 16 | 73 |
-| 変更後 | 88 | 115 | 860 | 16 | 73 |
+| 変更後 | 88 | 115 | 859 | 16 | 74 |
 
 - R0→R2: 574 件（エージェントの指示書。`.claude/rules/*.md`、`Claude/CLAUDE.md`、`scripts/templates/AGENTS.md` など）
 - R1→R2: 2 件（`.claude/claudeos/tests/lib/utils.test.js`、`Claude/templates/claudeos/tests/lib/utils.test.js`。エージェントの環境に配布されるテスト。R2 の規則が R1 より先に評価されるため）
-- R3・R4 は変化なし。上位規則（`.claude/settings.json`=R4、`**/hooks/**`=R4 など）は先に評価されるため優先されたまま
+- R2→R4: 1 件（`.codex/hooks.json`。フックの設定）
+- R3 は変化なし。上位規則（`.claude/settings.json`=R4、`**/hooks/**`=R4 など）は先に評価されるため優先されたまま
 - R0 に残るのは `docs/**`・`reports/**`、ルートの `README.md`・`CHANGELOG.md`・`TASKS.md`・`ONBOARDING.md`・`LICENSE`、`.github/ISSUE_TEMPLATE/*`・`PULL_REQUEST_TEMPLATE.md`、`config/README.md`・`formal/README.md`
 
 ### 2.2 運用への影響
@@ -61,6 +68,8 @@ gate は main 上のポリシー（`loadTrustedPolicy`）を使うため、新�
 - **当たり漏れ（既知）**:
   - `docs/architecture/**`・`docs/claude/**` にもエージェントが読むポリシー文書があるが、R0 のまま。人向けの設計文書と区別できないため、今回は対象外とする。エージェントが自動で読み込む場所（`CLAUDE.md` からの参照など）に移す場合はパターンを追加する
   - 上の表に無い独自名の指示書。見つけ次第パターンを追加する
+  - **大文字小文字の表記揺れは主要なものだけを列挙**しており、すべては塞いでいない（例: `cLaUdE.md`）。完全に塞ぐには glob の照合を大文字小文字無視にする必要があり、全規則に影響するため今回は見送った
+  - 変更ファイル一覧と PR の head SHA を結び付けていない（一覧を取る間に push されると、別の版の一覧になり得る）。この PR より前からある問題で、別件とする
   - `CLAUDE-back.md`・`docs/MY_AGENTS.md` のような名前は意図的に対象外（テストで R0 を確認）
 - **取得の失敗**: 変更ファイルが取れない・取り切れない場合は R4（既存の挙動）。3000 件を超える PR は常に R4 になる
 
@@ -75,6 +84,8 @@ gate は main 上のポリシー（`loadTrustedPolicy`）を使うため、新�
 
 ## 4. `/ship 237` の指摘への対応（2026-11-25）
 
+### 1 回目（版 `a81c761`、指摘 7 件）
+
 | # | 指摘 | 対応 |
 | --- | --- | --- |
 | 1 | リネームで R2 を回避できる（`changedFiles` が新パスのみ）【important】 | §1.2。REST で旧パスも分類。テスト追加（外すと失敗することを確認） |
@@ -84,3 +95,17 @@ gate は main 上のポリシー（`loadTrustedPolicy`）を使うため、新�
 | 5 | `.claude/claudeos/data/*.json` は元から既定値 R2 | §2.4 を訂正 |
 | 6 | `docs/architecture/**` などのポリシー文書が R0 のまま | §2.4 に既知の限界として明記（今回は対象外） |
 | 7 | R1→R2 の順序依存・紛らわしい名前・リネーム・入れ子が未テスト | テスト追加（`core.test.js`・`github.test.js`） |
+
+### 2 回目（`/ship 237`、版 `0c1eefb`、指摘 9 件）
+
+| 指摘 | 対応 |
+| --- | --- |
+| `--slurp` が gh 2.45 で失敗する疑い | 対応不要。gh は 2.105.0（必須 2.63 以上）で `--slurp` を確認済み |
+| `.github/agents/`・`.clinerules` など他ツールの指示書が R0 | §1.1 に追加 |
+| 大文字小文字の表記揺れ | 主要なもの（`CLAUDE.MD`・`AGENTS.MD`・`Skill.md`・`.Claude/**`）を追加。完全な対応は見送り（§2.4） |
+| 入れ子・local の `settings*.json` と `.codex/hooks.json` が R2 | §1.1.1。R4 に追加 |
+| ファイル一覧と head SHA を結び付けていない | この PR より前からの問題。§2.4 に既知の限界として明記、別件 |
+| コピー元パスの記述が過大 | コメントを「リネームは変更前のパスも含める」に訂正 |
+| gh へ渡す引数を検証していない | 引数の固定と、gh 失敗時に `GH_UNAVAILABLE` を返すテストを追加 |
+| リポジトリ名・PR 番号の検証が重複 | `store.assertRepo`・`store.assertPr` に統一 |
+| ブランチ名 `config/…` が規約外 | 変更しない（PR 作成済みでブランチ名を変えると PR の作り直しが必要。内容への影響は無い） |
