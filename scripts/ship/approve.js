@@ -10,8 +10,13 @@
  *   approve --repo O/R --pr N --head SHA   署名して承認。--head は人が画面で確認した SHA (現在の head と一致必須)
  *   reject  --repo O/R --pr N --head SHA --reason R   差し戻し (署名付き記録)
  *   revoke  --id APPROVAL_ID --reason R    承認取り消し (安全側の操作なので署名不要)
- *   ship-attest --repo O/R --pr N --head SHA --reviewed yes|no --important-open N --watch STATUS [--effort E] [--notes T]
- *                                          対話セッションで /ship を実行した人が、見た結果を署名して残す
+ *   ship-attest --repo O/R --pr N --head SHA --workdir DIR --reviewed yes|no --important-open N --watch STATUS [--effort E] [--notes T]
+ *                                          対話セッションで /ship を実行した人が、見た結果を署名して残す。
+ *                                          署名の前に 2 つの安全装置が働く (パスフレーズより前):
+ *                                          (1) --workdir (/ship を実行した作業フォルダ) が --head の版で、未コミットの変更が無いこと。
+ *                                              /ship が修正を作業フォルダに残したまま署名するのを止める
+ *                                          (2) --reviewed yes のとき、/ship の結果にあった重大な指摘 (important) の件数を
+ *                                              端末で入力し直させ、--important-open と一致しなければ止める
  *   ship-attest --kind human-diff --repo O/R --pr N --head SHA --important-open N [--notes T]
  *                                          R0・R1 の PR で、人が gh pr diff で差分を読んだことを署名して残す。
  *                                          変更ファイルの一覧とリスク分類を表示し、確認してから署名する。
@@ -23,6 +28,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const store = require('./lib/store');
 const hg = require('./lib/human-gate');
 const policyLib = require('./lib/policy');
@@ -48,6 +54,62 @@ function confirmTty(question) {
   } finally { fs.closeSync(fd); }
 }
 function readBundleSafe() { try { return readBundle(); } catch { return null; } }
+
+/** 件数は端末から 1 行読む。環境変数はテスト専用の鍵束でのみ使う。 */
+function readImportantCount(bundle, question) {
+  if (bundle.test === true && bundle.wrapped?.test === true && typeof process.env.CLAUDEOS_SHIP_TEST_IMPORTANT === 'string') {
+    return process.env.CLAUDEOS_SHIP_TEST_IMPORTANT;
+  }
+  let fd; try { fd = fs.openSync('/dev/tty', 'r+'); } catch { throw Object.assign(new Error('NO_TTY'), { exit: 1 }); }
+  try {
+    fs.writeSync(fd, question);
+    const buf = Buffer.alloc(64); const n = fs.readSync(fd, buf, 0, buf.length, null);
+    const line = buf.subarray(0, n).toString('utf8');
+    return line.endsWith('\n') ? line.trim() : ''; // EOF や途中で切れた行を件数として認めない
+  } finally { fs.closeSync(fd); }
+}
+
+/**
+ * checkReviewWorkdir — /ship を実行した作業フォルダの版と状態を確かめる。
+ * レビュー中の修正が PR に取り込まれていない状態で署名する事故を防ぐ。
+ * Git が報告する未追跡ファイルも変更として扱う。
+ */
+function checkReviewWorkdir(dir, headSha) {
+  const abs = path.resolve(dir);
+  // 呼び出し元の git hook などが設定した別のリポジトリ・index を参照しない。
+  const env = { ...process.env };
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_IMPLICIT_WORK_TREE', 'GIT_PREFIX', 'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS']) delete env[name];
+  const git = (...a) => spawnSync('git', ['--no-optional-locks', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', abs, ...a],
+    { encoding: 'utf8', env, timeout: 10000 });
+  const root = git('rev-parse', '--path-format=absolute', '--show-toplevel');
+  if (root.status !== 0 || root.stderr) throw Object.assign(new Error(`REVIEW_WORKDIR_NOT_GIT: ${JSON.stringify(abs)} の Git 作業フォルダを確認できません`), { exit: 2 });
+  const workdir = fs.realpathSync(root.stdout.replace(/\n$/, ''));
+  function verifyHead() {
+    const rev = git('rev-parse', '--verify', 'HEAD^{commit}');
+    const head = rev.status === 0 && !rev.stderr ? rev.stdout.trim() : '';
+    if (head !== headSha) {
+      throw Object.assign(new Error(`REVIEW_WORKDIR_HEAD_MISMATCH: 作業フォルダの版 ${head || '(不明)'} が署名する版 ${headSha} と違います。`
+        + ' /ship はこの版を取り出した作業フォルダで実行してください'), { exit: 1 });
+    }
+  }
+  verifyHead();
+  // git status より先に確認する。外部 clean/process フィルターは署名者の権限で動かさない。
+  const filters = git('config', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|process)$');
+  const index = git('ls-files', '-v', '--stage', '-z');
+  if (filters.status !== 1 || filters.stderr || index.status !== 0 || index.stderr ||
+      index.stdout.split('\0').some((f) => f && (!f.startsWith('H ') || f.startsWith('H 160000 ')))) {
+    throw Object.assign(new Error('REVIEW_WORKDIR_UNSUPPORTED: 外部 Git フィルター・サブモジュール・特殊なインデックス状態の無い作業フォルダを使用してください'), { exit: 1 });
+  }
+  const st = git('status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=all');
+  if (st.status !== 0 || st.stderr) throw Object.assign(new Error('REVIEW_WORKDIR_STATUS_FAILED: 作業フォルダの状態を確認できません'), { exit: 1 });
+  verifyHead();
+  if (st.stdout.length) {
+    throw Object.assign(new Error('REVIEW_WORKDIR_DIRTY: 未コミットの変更または未追跡ファイルがあります。'
+      + ' 署名を中止しました。指定した作業フォルダで git status --short --untracked-files=all を確認してください'), { exit: 1 });
+  }
+  return { workdir, head: headSha };
+}
 
 function context(o) {
   const pol = policyLib.loadTrustedPolicy(o.project ? path.resolve(o.project) : policyLib.REPO_ROOT, o['base-ref'] || 'origin/main');
@@ -114,14 +176,36 @@ const cmds = {
   'ship-attest'(o) {
     // --kind が指定されたら (値なし・空も含む) ship 以外は humanDiffAttest で検証する
     if (o.kind != null && o.kind !== 'ship') return humanDiffAttest(o);
-    for (const k of ['repo', 'pr', 'head', 'reviewed', 'important-open', 'watch']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
+    for (const k of ['repo', 'pr', 'head', 'workdir', 'reviewed', 'important-open', 'watch']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
+    store.assertSha(o.head, 'head');
+    const repo = store.assertRepo(o.repo);
+    const pr = store.assertPr(o.pr);
+    const reviewed = o.reviewed === 'yes';
+    if (!reviewed && o.reviewed !== 'no') throw Object.assign(new Error('REVIEWED_MUST_BE_YES_OR_NO'), { exit: 2 });
+    const importantOpen = Number(o['important-open']);
+    if (!/^(0|[1-9]\d*)$/.test(o['important-open']) || !Number.isSafeInteger(importantOpen)) {
+      throw Object.assign(new Error('IMPORTANT_OPEN_INVALID: 重大な指摘の件数は 0 以上の整数で指定してください'), { exit: 2 });
+    }
+    // 署名前に /ship を実行した作業フォルダ・対象 SHA・重大所見の件数を確認する。
+    const wd = checkReviewWorkdir(o.workdir, o.head);
     const bundle = readBundle();
-    const pass = hg.readPassphrase(bundle, `Ship 結果の証明 (PR #${o.pr}) パスフレーズ: `);
+    if (reviewed) {
+      const typed = readImportantCount(bundle, `対象: ${repo} #${pr} @ ${wd.head}\n作業フォルダ: ${JSON.stringify(wd.workdir)}\n/ship が報告した未解決の重大な指摘の件数を入力してください (nit は数えない): `);
+      if (typed !== String(importantOpen)) {
+        throw Object.assign(new Error('IMPORTANT_OPEN_MISMATCH: 入力した件数が --important-open と一致しません。署名を中止しました'), { exit: 1 });
+      }
+    }
+    const pass = hg.readPassphrase(bundle, `Ship 結果の証明 (PR #${pr}) パスフレーズ: `);
     const key = hg.loadPrivateKey(bundle, pass);
-    const a = hg.issueShipAttestation({ repo: o.repo, pr: o.pr, headSha: o.head, reviewed: o.reviewed === 'yes', importantOpen: o['important-open'],
+    // 端末での入力待ちの間にファイルや HEAD が変わっていないか再確認する。
+    if (checkReviewWorkdir(wd.workdir, o.head).workdir !== wd.workdir) {
+      throw Object.assign(new Error('REVIEW_WORKDIR_CHANGED: 確認した作業フォルダが変わりました'), { exit: 1 });
+    }
+    const a = hg.issueShipAttestation({ repo, pr, headSha: o.head, reviewed, importantOpen,
       watchStatus: o.watch, reviewEffort: o.effort || 'high', notes: o.notes || '', bundle, privateKey: key });
     store.writeRecord(path.join(hg.shipEvidenceDir(o.repo, o.pr), a.attestation_id + '.json'), a, { exclusive: true });
-    store.appendAudit('ship_attested', { repo: o.repo, pr: Number(o.pr), head_sha: o.head, reviewed: a.reviewed, important_open: a.important_open, approver: a.approver });
+    store.appendAudit('ship_attested', { repo, pr, head_sha: o.head, reviewed: a.reviewed, important_open: a.important_open, approver: a.approver,
+      workdir_clean: true, workdir_head: wd.head, important_retyped: reviewed });
     say(JSON.stringify({ attestation_id: a.attestation_id, head_sha: a.head_sha }));
     return 0;
   },
@@ -211,7 +295,11 @@ function decide(o, decision) {
 function main(argv = process.argv.slice(2)) {
   const o = parse(argv);
   const cmd = o._[0];
-  if (!cmd || !cmds[cmd]) { process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(3, 20).map((l) => l.replace(/^ \* ?/, '')).join('\n') + '\n'); return cmd ? 2 : 0; }
+  if (!cmd || !cmds[cmd]) {
+    const lines = fs.readFileSync(__filename, 'utf8').split('\n');
+    process.stdout.write(lines.slice(3, lines.indexOf(' */')).map((l) => l.replace(/^ \* ?/, '')).join('\n') + '\n');
+    return o.help === true || !cmd ? 0 : 2;
+  }
   try { return cmds[cmd](o); } catch (e) { process.stderr.write(`ship-approve: ${e.message}\n`); return e.exit || 1; }
 }
 

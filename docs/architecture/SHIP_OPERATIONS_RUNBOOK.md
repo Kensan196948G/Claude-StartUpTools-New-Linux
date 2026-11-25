@@ -21,7 +21,7 @@ bash bin/ship-approve.sh keygen --name Kensan  # パスフレーズを 2 回入�
 | 1 | 人 | `bash bin/ship-mode.sh SH2 --project ~/Projects/<repo> --intent "<開発目的>"` |
 | 2 | AI | 対話セッションで要件分析 → 実装 → ローカルテスト → commit → push → PR（既存 PR は `bin/ship.sh discover-pr` で再利用） |
 | 3 | 人 | 同じセッションで `/ship`（停止は `/ship stop`、状況は `/tasks`） |
-| 4 | 人 | 結果を署名: `bin/ship-approve.sh ship-attest --repo O/R --pr N --head <SHA> --reviewed yes --important-open 0 --watch checks-pass-comments-answered` |
+| 4 | 人 | 結果を署名: `bin/ship-approve.sh ship-attest --repo O/R --pr N --head <SHA> --workdir <手順 3 の作業フォルダ> --reviewed yes --important-open <重大な指摘の件数> --watch checks-pass-comments-answered`（下の「署名の安全装置」） |
 | 5 | AI | `bin/ship.sh quality --repo O/R --project DIR --head <SHA> --base <SHA> --pr N --publish` |
 | 6 | AI | `bin/ship.sh gate --repo O/R --pr N --requirements met [--impact-doc F] [--rollback-doc F]` |
 | 7 | 人 | `bin/ship-approve.sh show --repo O/R --pr N` → 完成報告書を読む → `approve --head <SHA>` |
@@ -43,6 +43,25 @@ gate は Ship 未実施を CONDITIONAL/UNKNOWN として扱う（承認できな
 - リスクは gate が変更ファイルから計算する。1 ファイルでも R2 以上（エージェントの指示書 `CLAUDE.md`・`.claude/**` などを含む）なら、署名自体が拒否され、gate も認めない。
 - 署名後に push して head が変わると、署名は無効になる（再署名が必要）。
 - 承認（手順 7）は省略できない。
+
+### 署名の安全装置（`ship-attest`）
+
+`/ship` が残した修正を PR に取り込む前に署名したり、実際の指摘と違う件数で署名したりする事故を防ぐ。次のどちらかに該当すれば、**パスフレーズ入力前に中止する**。
+
+| # | 止まるとき | 対処 |
+| --- | --- | --- |
+| 1 | `--workdir` が指定されていない、Git の作業フォルダでない、`HEAD` が `--head` と違う、または Git が未コミットの変更・未追跡ファイルを報告する | `/ship` を実行した作業フォルダを指定し、`git status --short --untracked-files=all` で状態を確認する。レビューによる修正が残っていれば PR に取り込み、新しい版で `/ship` をやり直す。署名のためだけに修正を捨てたり除外したりしない |
+| 2 | `--reviewed yes` で、端末に入力し直した件数が `--important-open` と違う | `/ship` の結果を読み直し、未解決の重大な指摘（important）の実数を指定・入力する。nit は数えない |
+
+端末には Git が認識した作業フォルダのルート、PR 番号、SHA が表示される。表示先が実際にレビューしたフォルダと異なれば中止する。パスフレーズ入力後にも、版と変更の有無を再確認する。
+
+`REVIEW_WORKDIR_UNSUPPORTED` は、外部 Git フィルター（Git LFS などの clean/process 設定を含む）、サブモジュール、変更を隠し得る特殊なインデックス設定がある場合に出る。検査のために既存の Git 設定を変更したり、修正を捨てたりせず、通常の作業フォルダで再レビューするか運用担当に相談する。
+
+監査ログの `ship_attested` には `workdir_clean`・`workdir_head`・`important_retyped` が残る。
+
+この検査は `/ship` を実行した事実や指摘件数を自動で検証するものではない。人がレビュー結果を読み、**実際に `/ship` を実行した、自分が管理する作業フォルダ**と GitHub 上でレビューした head SHA を指定する。`--kind human-diff`（R0・R1）と最終承認の手順は変更しない。
+
+変更の詳細と切り戻しは [署名の誤操作防止：影響分析とロールバック](SHIP_ATTEST_SAFEGUARDS_IMPACT.md) を参照。
 
 ## 2. 承認の取り消し・差し戻し
 

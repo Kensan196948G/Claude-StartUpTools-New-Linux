@@ -78,7 +78,7 @@ function ship(args, env = {}) {
 function approveCli(args, env = {}) {
   return spawnSync('node', [path.join(ROOT, 'scripts/ship/approve.js'), ...args], { env: { ...ENV, ...env }, encoding: 'utf8', timeout: 120000 });
 }
-const TESTAUTH = { CLAUDEOS_SHIP_TEST_PASSPHRASE: PASS, CLAUDEOS_SHIP_TEST_CONFIRM: 'yes' };
+const TESTAUTH = { CLAUDEOS_SHIP_TEST_PASSPHRASE: PASS, CLAUDEOS_SHIP_TEST_CONFIRM: 'yes', CLAUDEOS_SHIP_TEST_IMPORTANT: '0' };
 const ISO = require('../lib/quality').isolationAvailable();
 
 test('ライフサイクル: run → 品質 → (Ship 署名) → 判定 PASS → 承認 → マージ → 完了', { skip: !ISO && 'bwrap 不可' }, () => {
@@ -101,7 +101,7 @@ test('ライフサイクル: run → 品質 → (Ship 署名) → 判定 PASS �
   assert.notEqual(ap.status, 0);
   assert.match(ap.stderr, /GATE_NOT_PASS/);
   // 人が /ship の結果を署名
-  const at = approveCli(['ship-attest', '--repo', REPO, '--pr', '7', '--head', HEAD, '--reviewed', 'yes', '--important-open', '0', '--watch', 'checks-pass-comments-answered'], TESTAUTH);
+  const at = approveCli(['ship-attest', '--repo', REPO, '--pr', '7', '--head', HEAD, '--workdir', PROJ, '--reviewed', 'yes', '--important-open', '0', '--watch', 'checks-pass-comments-answered'], TESTAUTH);
   assert.equal(at.status, 0, at.stderr);
   const rollback = path.join(T, 'rollback.md'); fs.writeFileSync(rollback, 'git revert <merge-commit> で戻す。'.repeat(20));
   gate = ship(['gate', '--repo', REPO, '--pr', '7', '--requirements', 'met', '--rollback-doc', rollback]);
@@ -243,6 +243,116 @@ test('gate: 変更ファイルが取り切れないときは R4 にし、理由�
   const rec = JSON.parse(fs.readFileSync(path.join(SHIP_HOME, 'gates', 'acme__widget', 'pr-7', HEAD + '.json'), 'utf8'));
   assert.ok(gate.json.checks.some((c) => c.id === 'risk.classified' && /CHANGED_FILES_UNAVAILABLE: FILES_INCOMPLETE/.test(c.detail)), JSON.stringify(gate.json.checks));
   assert.ok(rec.checks.some((c) => c.id === 'risk.classified' && /FILES_INCOMPLETE/.test(c.detail)));
+});
+
+// ---- ship-attest の安全装置 (2026-11-25: /ship が修正を残したまま「修正なし・重大 0 件」と署名する事象が 4 回あった) ----
+function attestArgs(extra = []) {
+  return ['ship-attest', '--repo', REPO, '--pr', '7', '--head', HEAD, '--reviewed', 'yes', '--important-open', '0', '--watch', 'not-started', ...extra];
+}
+function evidenceCount() {
+  const d = path.join(SHIP_HOME, 'ship-evidence', 'acme__widget', 'pr-7');
+  return fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.json')).length : 0;
+}
+
+test('ship-attest 安全装置 (1): 作業フォルダに未コミットの変更があれば、署名せずに止める', () => {
+  setFake();
+  fs.rmSync(path.join(SHIP_HOME, 'ship-evidence'), { recursive: true, force: true });
+  // --workdir は必須
+  let r = approveCli(attestArgs(), TESTAUTH);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /MISSING --workdir/);
+  // /ship が作業フォルダを修正した状態 (追跡ファイルの変更)
+  fs.appendFileSync(path.join(PROJ, 'lib', 'a.sh'), 'echo fixed-by-ship\n');
+  r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_DIRTY/);
+  assert.equal(g('add', 'lib/a.sh').status, 0);
+  r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_DIRTY/);
+  assert.equal(g('restore', '--staged', '--worktree', '--', 'lib/a.sh').status, 0);
+  // 作業フォルダで未追跡ファイルを非表示にしていても署名は拒否する。
+  assert.equal(g('config', 'status.showUntrackedFiles', 'no').status, 0);
+  const untracked = path.join(PROJ, 'new-by-ship.md');
+  fs.writeFileSync(untracked, 'x\n');
+  try {
+    r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_DIRTY/);
+  } finally {
+    fs.rmSync(untracked);
+    assert.equal(g('config', '--unset', 'status.showUntrackedFiles').status, 0);
+  }
+  assert.equal(evidenceCount(), 0, '止めた場合は署名ファイルを作らない');
+  // 片付けた後は署名できる
+  r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(evidenceCount(), 1);
+});
+
+test('ship-attest 安全装置 (1): 作業フォルダの版が署名する版と違えば止める', () => {
+  setFake();
+  fs.rmSync(path.join(SHIP_HOME, 'ship-evidence'), { recursive: true, force: true });
+  g('switch', '-q', '--detach', BASE);
+  try {
+    const r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_HEAD_MISMATCH/);
+  } finally { g('switch', '-q', 'feat/x'); }
+  const notGit = fs.mkdtempSync(path.join(T, 'notgit-'));
+  const r2 = approveCli(attestArgs(['--workdir', notGit]), TESTAUTH);
+  assert.notEqual(r2.status, 0); assert.match(r2.stderr, /REVIEW_WORKDIR_NOT_GIT/);
+  assert.equal(evidenceCount(), 0);
+});
+
+test('ship-attest: 外部フィルターや変更を隠すインデックス設定は検査の前に拒否する', () => {
+  const before = evidenceCount();
+  assert.equal(g('config', '--local', 'filter.fixture.clean', 'true').status, 0);
+  try {
+    const r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_UNSUPPORTED/);
+  } finally { assert.equal(g('config', '--local', '--unset', 'filter.fixture.clean').status, 0); }
+  for (const flag of ['assume-unchanged', 'skip-worktree']) {
+    assert.equal(g('update-index', `--${flag}`, '--', 'lib/a.sh').status, 0);
+    try {
+      const r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+      assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_UNSUPPORTED/, flag);
+    } finally { assert.equal(g('update-index', `--no-${flag}`, '--', 'lib/a.sh').status, 0); }
+  }
+  assert.equal(evidenceCount(), before);
+});
+
+test('ship-attest 安全装置 (2): 重大な指摘の件数を入力し直させ、--important-open と違えば止める', () => {
+  setFake();
+  fs.rmSync(path.join(SHIP_HOME, 'ship-evidence'), { recursive: true, force: true });
+  // /ship が重大 2 件と報告したのに、コマンドを写して --important-open 0 で署名しようとした
+  let r = approveCli(attestArgs(['--workdir', PROJ]), { ...TESTAUTH, CLAUDEOS_SHIP_TEST_IMPORTANT: '2' });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /IMPORTANT_OPEN_MISMATCH/);
+  // 数字以外の入力も止める
+  r = approveCli(attestArgs(['--workdir', PROJ]), { ...TESTAUTH, CLAUDEOS_SHIP_TEST_IMPORTANT: 'ok' });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /IMPORTANT_OPEN_MISMATCH/);
+  assert.equal(evidenceCount(), 0);
+  // 一致すれば署名でき、監査ログに安全装置を通ったことが残る
+  r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+  assert.equal(r.status, 0, r.stderr);
+  const audit = fs.readFileSync(path.join(SHIP_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const last = audit.filter((e) => e.event === 'ship_attested').pop();
+  assert.equal(last.workdir_clean, true); assert.equal(last.important_retyped, true); assert.equal(last.workdir_head, HEAD);
+  // 不正な --reviewed は止める
+  r = approveCli(['ship-attest', '--repo', REPO, '--pr', '7', '--head', HEAD, '--workdir', PROJ, '--reviewed', 'maybe', '--important-open', '0', '--watch', 'not-started'], TESTAUTH);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEWED_MUST_BE_YES_OR_NO/);
+  r = approveCli(attestArgs(['--workdir', PROJ, '--important-open', '9007199254740992']), TESTAUTH);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /IMPORTANT_OPEN_INVALID/);
+  assert.equal(evidenceCount(), 1, '不正入力では証跡が増えない');
+});
+
+test('ship-attest: 通常の鍵設定では件数の環境変数を使わず、端末がなければ拒否する', () => {
+  const before = evidenceCount();
+  // 鍵の復号には進まない。テスト鍵束を非テスト設定として扱わせ、対話入力の経路だけを確認する。
+  const file = path.join(T, 'non-test-setting.json');
+  fs.writeFileSync(file, JSON.stringify({ ...bundle, test: false, wrapped: { ...bundle.wrapped, test: false } }), { mode: 0o600 });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ship/approve.js'), ...attestArgs(['--workdir', PROJ])], {
+    env: { ...ENV, ...TESTAUTH, CLAUDEOS_APPROVER_KEY: file }, detached: true, encoding: 'utf8', timeout: 5000,
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /NO_TTY/);
+  assert.doesNotMatch(r.stderr, /パスフレーズ/);
+  assert.equal(evidenceCount(), before);
 });
 
 test.after(() => fs.rmSync(T, { recursive: true, force: true }));
