@@ -63,6 +63,9 @@
 # ============================================================
 
 set -euo pipefail
+# 台帳の PROMOTED 省略指定は、手順 (2) だけにオーケストレータが付ける内部用の指定。
+# 外部から継承すると手順 (4) の PROMOTED まで省かれ、昇格の記録が 0 行になるため、ここで必ず消す。
+unset CCSU_PROMOTE_SKIP_PROMOTED_LEDGER
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"

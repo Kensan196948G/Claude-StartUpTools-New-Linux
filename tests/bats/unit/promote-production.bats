@@ -259,6 +259,13 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$(wc -l < "${ORDER}.ledger-env")" -eq 2 ]
 }
 
+@test "promote-production: 外部から省略指定を継承しても、手順 (4) には渡さない (台帳が 0 行にならない)" {
+  CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 1p "${ORDER}.ledger-env")" = "step2=1" ]
+  [ "$(sed -n 2p "${ORDER}.ledger-env")" = "step4=unset" ]
+}
+
 @test "promote-production: 正常系は手順順序どおり実行して exit 0" {
   run bash "$SCRIPT" --release "$SHA" --yes --json
   [ "$status" -eq 0 ]
