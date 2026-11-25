@@ -200,7 +200,8 @@ const cmds = {
     const files = github.changedFiles(o.repo, o.pr);
     const rk = risk.classify(files.ok ? files.data : [], pol.risk);
     const q = quality.latestEvidence(o.repo, pr.headRefOid);
-    const ship = hg.shipEvidenceFor(o.repo, o.pr, pr.headRefOid, pol);
+    // レビュー証跡の種類は、ここで変更ファイルから計算したリスクで選ぶ (human-diff は R0・R1 のみ。取得失敗時は R4 = ship のみ)
+    const ship = hg.shipEvidenceFor(o.repo, o.pr, pr.headRefOid, pol, rk.level);
     const riskDocs = { impactAnalysis: docExists(o['impact-doc']), rollbackPlan: docExists(o['rollback-doc']) };
     const res = gateLib.evaluate({ pr, headSha: pr.headRefOid, baseSha: pr.baseRefOid, quality: q, ship, risk: rk, riskDocs,
       requirements: { status: o.requirements || 'unknown' }, residual: [] }, pol);

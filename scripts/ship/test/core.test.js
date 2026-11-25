@@ -211,6 +211,20 @@ test('gate: Ship 必須リスクで Ship 証跡がなければ UNKNOWN、重大�
   // R0 では Ship は必須ではないが、未実施は人の判断 (CONDITIONAL)
   assert.equal(gate.evaluate(goodInputs({ ship: null, risk: risk.classify(['docs/a.md'], pol.risk) }), pol).verdict, 'CONDITIONAL');
 });
+test('gate: human-diff 証跡は R0・R1 なら PASS、R2 以上では証跡なし扱い (二重の防御)', () => {
+  const diff = { reviewed: true, importantFindingsOpen: 0, reviewKind: 'human-diff', source: 'human-diff-attestation:sa_2' };
+  const r0 = gate.evaluate(goodInputs({ ship: diff, risk: risk.classify(['docs/a.md'], pol.risk) }), pol);
+  assert.equal(r0.verdict, 'PASS', r0.reasons.join('\n'));
+  assert.equal(gate.evaluate(goodInputs({ ship: diff, risk: risk.classify(['tests/x.bats'], pol.risk) }), pol).verdict, 'PASS');
+  // R2 (指示書を含む) / R4: human-diff を認めず、Ship 必須の UNKNOWN になる
+  for (const files of [['docs/a.md', 'CLAUDE.md'], ['lib/x.sh'], ['config/ship-policy.json']]) {
+    const r = gate.evaluate(goodInputs({ ship: diff, risk: risk.classify(files, pol.risk) }), pol);
+    assert.equal(r.verdict, 'UNKNOWN', files.join(','));
+    assert.ok(r.reasons.some((x) => x.includes('ship.review_kind')), files.join(','));
+  }
+  // 重大な指摘が残っていれば human-diff でも FAIL
+  assert.equal(gate.evaluate(goodInputs({ ship: { ...diff, importantFindingsOpen: 1 }, risk: risk.classify(['docs/a.md'], pol.risk) }), pol).verdict, 'FAIL');
+});
 test('gate: PR 状態 (draft / closed / conflict / 未解決スレッド / 失敗チェック / 不許可 base)', () => {
   assert.equal(gate.evaluate(goodInputs({ pr: fakePr({ isDraft: true }) }), pol).verdict, 'FAIL');
   assert.equal(gate.evaluate(goodInputs({ pr: fakePr({ state: 'CLOSED' }) }), pol).verdict, 'FAIL');

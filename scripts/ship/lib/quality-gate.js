@@ -82,15 +82,22 @@ function evaluate(inputs, policy) {
   // --- Ship レビュー ---
   const riskLevel = risk && risk.level;
   const shipRequired = !!(policy.ship.required || (policy.ship.requiredForRisk || []).includes(riskLevel));
-  if (!ship || ship.reviewed == null) {
+  // 二重の防御: 証跡の種類がこのリスクで認められていなければ、証跡が無いものとして扱う
+  // (shipEvidenceFor でも選別するが、gate 単体で呼ばれても R2 以上で human-diff を通さない)
+  const kind = ship && ship.reviewKind ? ship.reviewKind : 'ship';
+  const kindMap = policy.humanGate && policy.humanGate.reviewKindsByRisk;
+  const kindAllowed = kindMap ? Array.isArray(kindMap[riskLevel]) && kindMap[riskLevel].includes(kind) : kind === 'ship';
+  if (ship && !kindAllowed) add('ship.review_kind', 'UNKNOWN', `${kind} のレビュー証跡は ${riskLevel || 'リスク未判定'} では認められない`);
+  const review = ship && kindAllowed ? ship : null;
+  if (!review || review.reviewed == null) {
     if (shipRequired) add('ship.reviewed', policy.ship.fallbackReviewAllowed ? 'CONDITIONAL' : 'UNKNOWN', 'Ship レビューの証跡がない (Ship 必須)');
     else add('ship.reviewed', 'CONDITIONAL', 'Ship レビュー未実施 (このリスクでは必須ではないが人が確認する)');
-  } else if (ship.reviewed === false) {
+  } else if (review.reviewed === false) {
     add('ship.reviewed', shipRequired ? 'FAIL' : 'CONDITIONAL', 'Ship レビュー未完了');
   } else {
-    add('ship.reviewed', 'PASS', `source=${ship.source || 'unknown'}`);
-    if (ship.importantFindingsOpen == null) add('ship.findings', 'UNKNOWN', '重大所見の未解決数を取得できない');
-    else add('ship.findings', ship.importantFindingsOpen === 0 ? 'PASS' : 'FAIL', `important open=${ship.importantFindingsOpen}`);
+    add('ship.reviewed', 'PASS', `source=${review.source || 'unknown'}`);
+    if (review.importantFindingsOpen == null) add('ship.findings', 'UNKNOWN', '重大所見の未解決数を取得できない');
+    else add('ship.findings', review.importantFindingsOpen === 0 ? 'PASS' : 'FAIL', `important open=${review.importantFindingsOpen}`);
   }
 
   // --- リスク ---

@@ -229,26 +229,49 @@ function revoke(approvalId, reason, actor) {
 // --- Ship レビューの証跡 (人間署名) --------------------------------------
 // Max X20 の /ship は人間が対話セッションで入力したときだけ動く (headless 不可)。その結果を AI が自己申告すると
 // 品質判定の入力を AI が書けてしまうため、/ship を実行した人間が見た結果を署名して残す。
+// v1: /ship の結果への署名 (review_kind を持たない。互換のため検証は従来どおり)。
+// v2: review_kind (ship | human-diff) と、human-diff のとき人が確認した変更ファイル数を署名対象に含める。
+//     どの種類をどのリスクで認めるかは policy.humanGate.reviewKindsByRisk が決める (gate 側で判定)。
 const ATTEST_SCHEMA = 'claudeos.ship-attestation/v1';
+const ATTEST_SCHEMA_V2 = 'claudeos.ship-attestation/v2';
 const ATTEST_FIELDS = ['schema', 'attestation_id', 'repo', 'pr', 'head_sha', 'reviewed', 'review_effort', 'important_open',
   'watch_status', 'notes', 'approver', 'key_id', 'issued_at', 'nonce'];
-function attestPayload(a) { const o = {}; for (const k of ATTEST_FIELDS) o[k] = a[k] === undefined ? null : a[k]; return store.canonical(o); }
+const ATTEST_FIELDS_V2 = [...ATTEST_FIELDS, 'review_kind', 'files_reviewed'];
+const REVIEW_KINDS = ['ship', 'human-diff'];
+function attestPayload(a) {
+  const fields = a.schema === ATTEST_SCHEMA_V2 ? ATTEST_FIELDS_V2 : ATTEST_FIELDS;
+  const o = {}; for (const k of fields) o[k] = a[k] === undefined ? null : a[k]; return store.canonical(o);
+}
+/** 証跡の種類。v1 は常に ship */
+function reviewKindOf(a) { return a && a.schema === ATTEST_SCHEMA_V2 ? a.review_kind : 'ship'; }
 
-function issueShipAttestation({ repo, pr, headSha, reviewed, importantOpen, watchStatus, reviewEffort = 'high', notes = '', bundle, privateKey, now = new Date() }) {
+function issueShipAttestation({ repo, pr, headSha, reviewed, importantOpen, watchStatus, reviewEffort = 'high', notes = '',
+  reviewKind = 'ship', filesReviewed = null, bundle, privateKey, now = new Date() }) {
   if (typeof reviewed !== 'boolean') throw new Error('REVIEWED_BOOLEAN_REQUIRED');
   const n = Number(importantOpen);
   if (!Number.isInteger(n) || n < 0) throw new Error('IMPORTANT_OPEN_INVALID');
+  if (!REVIEW_KINDS.includes(reviewKind)) throw new Error('REVIEW_KIND_INVALID');
+  let files = null;
+  if (reviewKind === 'human-diff') {
+    // 人が差分を読んだ宣言。watch は存在しないので not-started 固定、確認したファイル数を必須にする
+    if (watchStatus !== 'not-started') throw new Error('WATCH_STATUS_MUST_BE_NOT_STARTED_FOR_HUMAN_DIFF');
+    files = Number(filesReviewed);
+    if (!Number.isInteger(files) || files < 1) throw new Error('FILES_REVIEWED_REQUIRED');
+  }
   if (!['checks-pass-comments-answered', 'stopped', 'not-started', 'running'].includes(watchStatus)) throw new Error('WATCH_STATUS_INVALID');
-  const a = { schema: ATTEST_SCHEMA, attestation_id: store.newId('sa'), repo: store.assertRepo(repo), pr: store.assertPr(pr),
+  const v2 = reviewKind !== 'ship';
+  const a = { schema: v2 ? ATTEST_SCHEMA_V2 : ATTEST_SCHEMA, attestation_id: store.newId('sa'), repo: store.assertRepo(repo), pr: store.assertPr(pr),
     head_sha: store.assertSha(headSha, 'head'), reviewed, review_effort: String(reviewEffort), important_open: n,
     watch_status: watchStatus, notes: String(notes).slice(0, 500), approver: bundle.name, key_id: bundle.key_id,
     issued_at: now.toISOString(), nonce: crypto.randomBytes(16).toString('hex') };
+  if (v2) { a.review_kind = reviewKind; a.files_reviewed = files; }
   a.signature = crypto.sign(null, Buffer.from(attestPayload(a)), privateKey).toString('base64');
   return a;
 }
 
 function verifyShipAttestation(a, { policy, headSha }) {
-  if (!a || a.schema !== ATTEST_SCHEMA || typeof a.signature !== 'string') return { ok: false, reason: 'NOT_AN_ATTESTATION' };
+  if (!a || (a.schema !== ATTEST_SCHEMA && a.schema !== ATTEST_SCHEMA_V2) || typeof a.signature !== 'string') return { ok: false, reason: 'NOT_AN_ATTESTATION' };
+  if (a.schema === ATTEST_SCHEMA_V2 && !REVIEW_KINDS.includes(a.review_kind)) return { ok: false, reason: 'REVIEW_KIND_INVALID' };
   const tk = resolveTrustedKey(policy, a);
   if (!tk.ok) return tk;
   let ok = false;
@@ -260,21 +283,42 @@ function verifyShipAttestation(a, { policy, headSha }) {
 
 function shipEvidenceDir(repo, pr) { return path.join(store.shipHome(), 'ship-evidence', store.slug(repo), 'pr-' + store.assertPr(pr)); }
 
-/** shipEvidenceFor(repo, pr, head, policy) → gate の ship 入力 ({reviewed, importantFindingsOpen, source} or null) */
-function shipEvidenceFor(repo, pr, headSha, policy) {
+/**
+ * reviewKindAllowed(policy, riskLevel, kind) — そのリスクでその種類のレビュー証跡を認めるか。
+ * 未記載のリスク・種類は認めない (fail-closed)。reviewKindsByRisk 自体が無い旧ポリシーでは ship だけを認める。
+ */
+function reviewKindAllowed(policy, riskLevel, kind) {
+  const map = policy && policy.humanGate && policy.humanGate.reviewKindsByRisk;
+  if (!map) return kind === 'ship';
+  const allowed = map[riskLevel];
+  return Array.isArray(allowed) && allowed.includes(kind);
+}
+
+/**
+ * shipEvidenceFor(repo, pr, head, policy, riskLevel) → gate の ship 入力 ({reviewed, importantFindingsOpen, source, reviewKind} or null)
+ * riskLevel は gate が変更ファイルから計算した値 (署名側の申告は使わない)。そのリスクで認めない種類の証跡は無視する。
+ * riskLevel が無い呼び出しは ship 種別だけを認める (安全側)。
+ */
+function shipEvidenceFor(repo, pr, headSha, policy, riskLevel = null) {
   const valid = [];
   for (const f of store.listJson(shipEvidenceDir(repo, pr))) {
     const a = store.readRecord(f);
-    if (verifyShipAttestation(a, { policy, headSha }).ok) valid.push(a);
+    if (!verifyShipAttestation(a, { policy, headSha }).ok) continue;
+    const kind = reviewKindOf(a);
+    if (riskLevel ? !reviewKindAllowed(policy, riskLevel, kind) : kind !== 'ship') continue;
+    valid.push(a);
   }
   if (!valid.length) return null;
   valid.sort((x, y) => String(x.issued_at).localeCompare(String(y.issued_at)));
   const a = valid[valid.length - 1];
-  return { reviewed: a.reviewed === true, importantFindingsOpen: a.important_open, watchStatus: a.watch_status, source: 'human-signed-attestation:' + a.attestation_id };
+  const kind = reviewKindOf(a);
+  const prefix = kind === 'human-diff' ? 'human-diff-attestation:' : 'human-signed-attestation:';
+  return { reviewed: a.reviewed === true, importantFindingsOpen: a.important_open, watchStatus: a.watch_status, reviewKind: kind, source: prefix + a.attestation_id };
 }
 
 module.exports = {
-  issueShipAttestation, verifyShipAttestation, shipEvidenceFor, shipEvidenceDir, ATTEST_SCHEMA,
+  issueShipAttestation, verifyShipAttestation, shipEvidenceFor, shipEvidenceDir, ATTEST_SCHEMA, ATTEST_SCHEMA_V2,
+  REVIEW_KINDS, reviewKindOf, reviewKindAllowed,
   generateKey, loadPrivateKey, readPassphrase, issueApproval, verifyApproval, findValidApproval,
   consume, revoke, gateHash, signedPayload, fingerprint, wrap, unwrap, defaultKeyFile, checkPassphraseStrength,
   resolveTrustedKey, SCRYPT,

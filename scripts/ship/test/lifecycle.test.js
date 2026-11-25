@@ -188,4 +188,36 @@ test('承認 CLI: 信頼鍵に登録されていない鍵では承認できな�
   assert.match(ap.stderr, /KEY_NOT_TRUSTED/);
 });
 
+test('human-diff CLI: R0 の PR は差分確認の署名で gate PASS、R2 では署名を拒否', { skip: !ISO && 'bwrap 不可' }, () => {
+  // R0 (文書のみ)
+  setFake({ files: ['docs/a.md', 'README.md'] });
+  fs.rmSync(path.join(SHIP_HOME, 'ship-evidence'), { recursive: true, force: true });
+  const q = ship(['quality', '--repo', REPO, '--project', PROJ, '--head', HEAD, '--base', BASE, '--pr', '7', '--profile', 't']);
+  assert.equal(q.json.verdict, 'PASS', q.stdout + q.stderr);
+  let gate = ship(['gate', '--repo', REPO, '--pr', '7', '--requirements', 'met']);
+  assert.equal(gate.json.risk, 'R0');
+  assert.equal(gate.json.verdict, 'CONDITIONAL', gate.json.reasons.join('\n'));
+  const at = approveCli(['ship-attest', '--kind', 'human-diff', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
+  assert.equal(at.status, 0, at.stdout + at.stderr);
+  assert.match(at.stdout, /変更ファイル \(2\)/);
+  assert.match(at.stdout, /"review_kind":"human-diff","files_reviewed":2/);
+  gate = ship(['gate', '--repo', REPO, '--pr', '7', '--requirements', 'met']);
+  assert.equal(gate.json.verdict, 'PASS', gate.json.reasons.join('\n'));
+  assert.match(gate.json.ship_source, /^human-diff-attestation:sa_/);
+
+  // 同じ署名が残っていても、PR が R2 の変更を含むようになれば gate は認めない
+  setFake({ files: ['docs/a.md', 'CLAUDE.md'] });
+  gate = ship(['gate', '--repo', REPO, '--pr', '7', '--requirements', 'met']);
+  assert.equal(gate.json.risk, 'R2');
+  assert.notEqual(gate.json.verdict, 'PASS');
+  assert.equal(gate.json.ship_source, null);
+  // R2 では署名そのものを拒否する
+  const bad = approveCli(['ship-attest', '--kind', 'human-diff', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /HUMAN_DIFF_NOT_ALLOWED_FOR_R2/);
+  // 不明な種類は拒否
+  const unk = approveCli(['ship-attest', '--kind', 'auto', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
+  assert.match(unk.stderr, /REVIEW_KIND_INVALID/);
+});
+
 test.after(() => fs.rmSync(T, { recursive: true, force: true }));
