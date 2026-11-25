@@ -1,4 +1,4 @@
-# R0・R1 の運用を軽くする変更案（提案・未適用）
+# R0・R1 の運用を軽くする変更（案 A を実装・PR #238）
 
 状態: 2026-11-25 **案 A を採用し実装（未マージ）**。前提の修正（§5）は PR #237 として **2026-11-25 にマージ済み**（`f1517a3`）。案 A の実装は §7（PR #238）。マージには R4 の手順（`/ship` → 署名 → 承認）が必要。
 
@@ -107,9 +107,9 @@ R0・R1 でも `/ship` と署名を続ける。安全性は最も高いが、手
 該当する追跡ファイル（`.claude/*.md`・`Claude/templates/*.md`・`AGENTS.md`・`CLAUDE.md`・`**/SKILL.md`）は **582 件**。
 設定ファイルは R4 なのに、同じくエージェントの動作を決める指示書は R0 になっている。
 
-## 6. 実装する場合の作業（参考・未着手）
+## 6. 実装する場合の作業（提案時点の計画。実装は §7）
 
-1. `ship-policy.json`: R0 から指示書系を除外する規則を R2 として先に追加。`humanGate.lowRiskReviewKinds = { "R0": ["ship","human-diff"], "R1": ["ship","human-diff"] }` を追加
+1. `ship-policy.json`: R0 から指示書系を除外する規則を R2 として先に追加。`humanGate.reviewKindsByRisk`（提案時点の仮称は `lowRiskReviewKinds`）を追加
 2. `human-gate.js`: `issueShipAttestation` に `reviewKind`（`ship` 既定 / `human-diff`）を追加し、署名対象に含める
 3. `quality-gate.js`: リスクと `review_kind` の組み合わせで `ship.reviewed` を判定。許可されない組み合わせは無視
 4. `approve.js`: `ship-attest --kind human-diff` と、確認画面での差分ファイル一覧の表示
@@ -159,7 +159,7 @@ bash bin/ship-approve.sh ship-attest --kind human-diff \
 | 同じ head で、重大所見の残る `/ship` 署名の後に human-diff を付けると上書きできる | 修正。同じ head に `/ship` の署名があれば、そちらを優先する。テスト追加 |
 | 変更ファイルを 200 件で切って表示するのに「すべて読んだ」と署名させる | 修正。全件を表示する。CLI テスト追加（205 件） |
 | `--kind` の値が空だと従来の `/ship` 経路に落ちる | 修正。`--kind` を指定したら `ship` 以外はすべて human-diff の検証に回し、`REVIEW_KIND_INVALID` で拒否。CLI テスト追加 |
-| `files_reviewed` が件数だけで、読んだファイル群と結び付いていない | 未対応。署名形式の変更になるため別 PR（TODO `t-d337ebbb` とは別に記録） |
+| `files_reviewed` が件数だけで、読んだファイル群と結び付いていない | 未対応。署名形式の変更になるため別 PR（全体の TODO「Ship Native の /ship 残件」に記録） |
 | R1 の `tests/**` に、実行される補助スクリプトが含まれ得る | 未対応。案 A の設計判断（R0・R1 を対象）そのもの。運用で問題が出たら R1 を対象から外す |
 | ローカルの `origin/main` が古いと、署名画面と gate のポリシーが食い違う | 未対応。最終判定は gate が行うため抜け道にはならず、表示上のずれだけ |
 
@@ -168,3 +168,43 @@ bash bin/ship-approve.sh ship-attest --kind human-diff \
 ### 効く時期
 
 gate・承認は **main 上のポリシー**（`loadTrustedPolicy`）を使う。前提の PR #237 はマージ済み。この PR（#238）がマージされるまでは、R0・R1 でも従来どおり `/ship` 署名が必要。
+
+### `/ship 238` 2 回目（版 `d84dfd4`、指摘 7 件・すべて nit）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 題名が「提案・未適用」、§6 が「未着手」、設定名が `lowRiskReviewKinds` のまま | この版で修正（題名・§6・設定名） |
+| §7 の TODO 番号が何を指すか書かれていない | この版で修正（TODO の内容を明記） |
+| 同じ head に `/ship` の署名があると、後の human-diff は常に無視される（やり直しは push が必要） | 意図どおり。`/ship` が重大所見を記録した head は、修正して新しい版で署名し直す |
+| `project-to-db.js` が `review_kind`・`files_reviewed` を DB に投影しない | 未対応（別 PR）。DB 上は human-diff と `/ship` を区別できない |
+| `files_reviewed` がリネーム前のパスを含む件数 | 未対応（別 PR）。表示件数と同じ値なので、署名画面との食い違いは無い |
+| 検証側が v2 の `review_kind=ship` を受け付ける | 未対応（別 PR）。発行側は v2 の `ship` を出さないため現状は実害なし |
+| 鍵の有無の確認が `yes` の後 | 未対応（別 PR）。使い勝手の問題のみ |
+| R1 の `tests/**` | 設計判断として残す（上の表） |
+
+## 8. 影響分析
+
+| 対象 | 影響 |
+| --- | --- |
+| R0・R1 の PR | `/ship` の代わりに `ship-attest --kind human-diff`（差分を読んで署名）が使える。承認・ローカル品質・ruleset は変わらない |
+| R2〜R4 の PR | 変わらない。human-diff 署名は署名時に拒否され、gate でも無視される |
+| 既存の `/ship` 署名（v1） | 変わらない。どのリスクでも有効（テストで確認） |
+| 署名ファイルの形式 | human-diff だけ新形式 v2（`claudeos.ship-attestation/v2`）。v1 の形式は変えない |
+| ポリシー（`config/ship-policy.json`） | `humanGate.reviewKindsByRisk` と説明 1 項目を追加。他の項目は main と同じ |
+| マージ判定・承認の規則 | 変わらない（TLA+ `ship_gate` を再検証済み） |
+| データ・DB | 変更なし（マイグレーション無し） |
+| 効く時期 | gate は main 上のポリシーを使うため、マージ後に作られる gate から |
+
+## 9. ロールバック手順
+
+1. この PR のマージコミットを `git revert -m 1 <マージコミット>` する PR を作る（squash マージなら `git revert <コミット>`）。**PR 全体を戻す**（`ship-policy.json` の `reviewKindsByRisk` だけ、あるいはコードだけを戻すと、テストと設定が食い違う）
+2. revert PR も R4。いつもどおり品質検証 → `/ship` → 署名 → 品質判定 → 承認 → マージ
+3. 戻した後の署名の扱い（2026-11-25 に main 版の検証コードで実測）:
+   - **human-diff 署名（v2）は「署名ではない」（`NOT_AN_ATTESTATION`）と判定され、無効になる。** 戻す時点で human-diff 署名だけで gate を通している未マージの PR は、`/ship` で署名し直す
+   - `/ship` 署名（v1）はそのまま有効
+   - すでにマージ済みの PR には影響しない（承認とマージは記録済み）
+4. 戻した後は、R0・R1 の PR でも従来どおり `/ship` 署名が必要になる（gate は CONDITIONAL、承認できない）
+5. 確認: `node -e 'console.log(require("./config/ship-policy.json").humanGate.reviewKindsByRisk)'` が `undefined` になり、`node --test scripts/ship/test/*.test.js` が通ること
+
+データの移行・削除は無い。署名ファイル（`~/.claudeos/ship/ship-evidence/`）は残るが、戻した後は v2 が無視されるだけで害は無い。
+
