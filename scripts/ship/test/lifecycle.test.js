@@ -435,13 +435,53 @@ test('ship-attest 安全装置 (2): 重大な指摘の件数を入力し直さ�
   assert.equal(r.status, 0, r.stderr);
   const audit = fs.readFileSync(path.join(SHIP_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const last = audit.filter((e) => e.event === 'ship_attested').pop();
-  assert.equal(last.workdir_clean, true); assert.equal(last.important_retyped, true); assert.equal(last.workdir_head, HEAD);
+  assert.equal(last.workdir_clean, true); assert.equal(last.workdir_head, HEAD);
+  // 件数がテスト用の環境変数から来た場合は、人が端末で再入力したと記録しない
+  assert.equal(last.important_retyped, false); assert.equal(last.important_input_source, 'test');
   // 不正な --reviewed は止める
   r = approveCli(['ship-attest', '--repo', REPO, '--pr', '7', '--head', HEAD, '--workdir', PROJ, '--reviewed', 'maybe', '--important-open', '0', '--watch', 'not-started'], TESTAUTH);
   assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEWED_MUST_BE_YES_OR_NO/);
   r = approveCli(attestArgs(['--workdir', PROJ, '--important-open', '9007199254740992']), TESTAUTH);
   assert.notEqual(r.status, 0); assert.match(r.stderr, /IMPORTANT_OPEN_INVALID/);
   assert.equal(evidenceCount(), 1, '不正入力では証跡が増えない');
+});
+
+function lastAttestAudit() {
+  const lines = fs.readFileSync(path.join(SHIP_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return lines.filter((e) => e.event === 'ship_attested').pop();
+}
+
+test('ship-attest: --reviewed no は件数を再入力しないので、監査ログに人の再入力として残さない', () => {
+  const args = ['ship-attest', '--repo', REPO, '--pr', '7', '--head', HEAD, '--workdir', PROJ, '--reviewed', 'no', '--important-open', '0', '--watch', 'not-started'];
+  const r = approveCli(args, TESTAUTH);
+  assert.equal(r.status, 0, r.stderr);
+  const last = lastAttestAudit();
+  assert.equal(last.important_retyped, false);
+  assert.equal(last.important_input_source, 'skipped');
+});
+
+test('ship-attest: ignore 規則で検査から外れたファイルは拒否せず、件数を監査ログに残す', () => {
+  const exclude = path.join(PROJ, '.git', 'info', 'exclude');
+  const original = fs.existsSync(exclude) ? fs.readFileSync(exclude) : null;
+  const hidden = path.join(PROJ, 'review-note-by-ship.md');
+  try {
+    fs.mkdirSync(path.dirname(exclude), { recursive: true });
+    fs.appendFileSync(exclude, '\nreview-note-by-ship.md\n');
+    fs.writeFileSync(hidden, 'ignored\n');
+    // 未追跡の検査には現れないので署名は通るが、見落としを後から確認できるよう件数を残す
+    assert.equal(g('status', '--porcelain').stdout.toString().trim(), '');
+    let r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(lastAttestAudit().workdir_ignored_count >= 1);
+    // ignore 対象を消すと 0 件に戻る
+    fs.rmSync(hidden);
+    r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(lastAttestAudit().workdir_ignored_count, 0);
+  } finally {
+    fs.rmSync(hidden, { force: true });
+    if (original === null) fs.rmSync(exclude, { force: true }); else fs.writeFileSync(exclude, original);
+  }
 });
 
 test('ship-attest: 通常の鍵設定では件数の環境変数を使わず、端末がなければ拒否する', () => {

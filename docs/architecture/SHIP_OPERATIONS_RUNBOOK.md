@@ -60,7 +60,9 @@ gate は Ship 未実施を CONDITIONAL/UNKNOWN として扱う（承認できな
 - `REVIEW_WORKDIR_GIT_VERSION`：作業フォルダ検査には Git 2.38.0 以上が必要。`REVIEW_WORKDIR_GIT_TIMEOUT` / `REVIEW_WORKDIR_GIT_OUTPUT_LIMIT` / `REVIEW_WORKDIR_GIT_WARNING` の場合も中止する。処理名と原因（警告時は短い診断も）を確認し、原因を解消してから再実行する。
 - `IMPORTANT_INPUT_TOO_LONG` / `IMPORTANT_INPUT_INCOMPLETE` / `IMPORTANT_INPUT_TTY_MODE`：件数の再入力が長すぎる、Enter で確定していない、または通常の行入力ができない。パスフレーズ入力には進まない。通常の端末で件数だけを1行で入力する。
 
-監査ログの `ship_attested` には `workdir_clean`・`workdir_head`・`important_retyped` が残る。
+監査ログの `ship_attested` には `workdir_clean`・`workdir_head`・`workdir_ignored_count`・`important_retyped`・`important_input_source` が残る。`important_retyped` は人が端末で件数を入力した場合だけ `true` になる。`important_input_source` は `tty`（端末入力）、`test`（テスト用の環境変数）、`skipped`（`--reviewed no` で入力なし）のいずれか。
+
+`.gitignore`・`.git/info/exclude`・グローバル ignore に該当するファイルは未追跡ファイルの検査に現れない。署名は拒否しないが、確認画面に「検査対象外 (ignore 規則)」として件数と例（最大5件）を表示し、監査ログに件数を残す。`/ship` が残した変更が含まれていないか、署名前に確認する。
 
 この検査は `/ship` を実行した事実や指摘件数を自動で検証するものではない。人がレビュー結果を読み、**実際に `/ship` を実行した、自分が管理する作業フォルダ**と GitHub 上でレビューした head SHA を指定する。`--kind human-diff`（R0・R1）と最終承認の手順は変更しない。
 

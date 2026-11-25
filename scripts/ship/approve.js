@@ -56,10 +56,13 @@ function confirmTty(question) {
 }
 function readBundleSafe() { try { return readBundle(); } catch { return null; } }
 
-/** 件数は端末から 1 行読む。環境変数はテスト専用の鍵束でのみ使う。 */
+/**
+ * 件数は端末から 1 行読む。環境変数はテスト専用の鍵束でのみ使う。
+ * 戻り値の source は監査ログ用: 'tty' は人が端末で入力、'test' はテスト用の環境変数。
+ */
 function readImportantCount(bundle, question) {
   if (bundle.test === true && bundle.wrapped?.test === true && typeof process.env.CLAUDEOS_SHIP_TEST_IMPORTANT === 'string') {
-    return process.env.CLAUDEOS_SHIP_TEST_IMPORTANT;
+    return { value: process.env.CLAUDEOS_SHIP_TEST_IMPORTANT, source: 'test' };
   }
   let fd; try { fd = fs.openSync('/dev/tty', 'r+'); } catch { throw Object.assign(new Error('NO_TTY'), { exit: 1 }); }
   try {
@@ -76,7 +79,7 @@ function readImportantCount(bundle, question) {
     if (n === 0 || buf[n - 1] !== 0x0a) {
       throw Object.assign(new Error('IMPORTANT_INPUT_INCOMPLETE: 件数を入力し Enter で確定してください'), { exit: 1 });
     }
-    return buf.subarray(0, n).toString('utf8').trim();
+    return { value: buf.subarray(0, n).toString('utf8').trim(), source: 'tty' };
   } finally { fs.closeSync(fd); }
 }
 
@@ -224,11 +227,23 @@ function checkReviewWorkdir(dir, headSha) {
     }
   }
   if (git('ls-files untracked', ['ls-files', '--others', '--exclude-standard', '-z']).length) dirty();
+  // .gitignore・.git/info/exclude・グローバル ignore に該当するファイルは上の検査から見えない。
+  // 練習用 clone では生成物を意図的に除外する運用があるため拒否はせず、確認画面で署名者に見せる。
+  // --directory で完全に無視されたディレクトリは 1 件にまとめる。
+  const ignored = nulFields(git('ls-files ignored', ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']), 'ls-files ignored')
+    .map((name) => Buffer.from(name, 'latin1').toString('utf8').replace(/[\p{C}]/gu, '?'));
   verifyHead();
   if (reviewRoot() !== workdir || !listIndex().equals(index)) {
     throw new Error('REVIEW_WORKDIR_CHANGED: 確認中に作業フォルダまたはインデックスが変わりました');
   }
-  return { workdir, head: headSha };
+  return { workdir, head: headSha, ignored };
+}
+
+/** 確認画面用: Git の ignore 規則で検査対象外になったファイルの件数と例。 */
+function describeIgnored(ignored) {
+  if (!ignored.length) return '検査対象外 (ignore 規則): なし';
+  const sample = ignored.slice(0, 5).map((p) => JSON.stringify(p)).join(', ');
+  return `検査対象外 (ignore 規則): ${ignored.length} 件 (例: ${sample}${ignored.length > 5 ? ', ...' : ''})。/ship が残した変更が含まれていないか確認してください`;
 }
 
 function context(o) {
@@ -309,9 +324,11 @@ const cmds = {
     // 署名前に /ship を実行した作業フォルダ・対象 SHA・重大所見の件数を確認する。
     const wd = checkReviewWorkdir(o.workdir, o.head);
     const bundle = readBundle();
+    let inputSource = 'skipped';
     if (reviewed) {
-      const typed = readImportantCount(bundle, `対象: ${repo} #${pr} @ ${wd.head}\n作業フォルダ: ${JSON.stringify(wd.workdir)}\n/ship が報告した未解決の重大な指摘の件数を入力してください (nit は数えない): `);
-      if (typed !== String(importantOpen)) {
+      const typed = readImportantCount(bundle, `対象: ${repo} #${pr} @ ${wd.head}\n作業フォルダ: ${JSON.stringify(wd.workdir)}\n${describeIgnored(wd.ignored)}\n/ship が報告した未解決の重大な指摘の件数を入力してください (nit は数えない): `);
+      inputSource = typed.source;
+      if (typed.value !== String(importantOpen)) {
         throw Object.assign(new Error('IMPORTANT_OPEN_MISMATCH: 入力した件数が --important-open と一致しません。署名を中止しました'), { exit: 1 });
       }
     }
@@ -325,7 +342,9 @@ const cmds = {
       watchStatus: o.watch, reviewEffort: o.effort || 'high', notes: o.notes || '', bundle, privateKey: key });
     store.writeRecord(path.join(hg.shipEvidenceDir(o.repo, o.pr), a.attestation_id + '.json'), a, { exclusive: true });
     store.appendAudit('ship_attested', { repo, pr, head_sha: o.head, reviewed: a.reviewed, important_open: a.important_open, approver: a.approver,
-      workdir_clean: true, workdir_head: wd.head, important_retyped: reviewed });
+      workdir_clean: true, workdir_head: wd.head, workdir_ignored_count: wd.ignored.length,
+      // 人が端末で入力した場合だけ true。テスト用の環境変数や reviewed=no では false。
+      important_retyped: inputSource === 'tty', important_input_source: inputSource });
     say(JSON.stringify({ attestation_id: a.attestation_id, head_sha: a.head_sha }));
     return 0;
   },
