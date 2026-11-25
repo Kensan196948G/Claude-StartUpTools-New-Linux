@@ -80,6 +80,13 @@ test('changedFiles: files エンドポイントの gh 失敗はエラーとし�
   assert.equal(r.ok, false);
   assert.equal(r.error, 'GH_UNAVAILABLE');
 });
+test('changedFiles: --slurp を知らない古い gh は GH_TOO_OLD (理由を区別する)', () => {
+  fakeGh('process.stderr.write("unknown flag: --slurp\\n");process.exit(1);');
+  const r = github.changedFiles('o/r', 1);
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'GH_TOO_OLD');
+  assert.match(r.detail, /2\.48/);
+});
 test('changedFiles: 不正な引数・壊れた応答は失敗', () => {
   assert.equal(github.changedFiles('o/r;rm', 1).error, 'INVALID_ARGS');
   assert.equal(github.changedFiles('o/r', '1 2').error, 'INVALID_ARGS');

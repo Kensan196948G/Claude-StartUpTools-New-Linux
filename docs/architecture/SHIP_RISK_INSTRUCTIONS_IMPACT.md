@@ -1,6 +1,6 @@
 # 影響分析とロールバック: エージェントの指示書を R0 から R2 へ（PR #237、R4）
 
-状態: 2026-11-25。PR #237 の R4 要件（変更影響分析・ロールバック手順）を満たすための文書。`/ship 237` の指摘を 2 回分反映済み（§4）。
+状態: 2026-11-25。PR #237 の R4 要件（変更影響分析・ロールバック手順）を満たすための文書。`/ship 237` の指摘を 3 回分反映済み（§4）。
 
 ## 1. 変更内容
 
@@ -20,7 +20,7 @@ glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため�
 
 ### 1.1.1 R4 に追加（権限・フックを決める設定ファイル）
 
-`.claude/settings*.json`・`**/.claude/settings*.json`（入れ子・`settings.local.json` を含む）、`**/.codex/hooks.json`。これらは R2 の `.claude/**`・`.codex/**` より先に R4 として評価される。
+`.claude/settings*.json`・`**/.claude/settings*.json`（入れ子・`settings.local.json` を含む）、`**/.codex/hooks.json`、`**/.codex/config.toml`（`.example` を含む）、`.mcp.json`・`**/.mcp.json`（MCP サーバーの設定）、`opencode.json`・`**/opencode.json`、`Claude/templates/**/settings*.json`（配布される settings）。これらは R2 の `.claude/**`・`.codex/**`・`Claude/**` より先に R4 として評価される。いずれも、エージェントが実行できるコマンド・接続先・フックを決める設定ファイルである
 
 ### 1.2 変更ファイルの取得（`scripts/ship/lib/github.js` の `changedFiles`）
 
@@ -29,6 +29,8 @@ glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため�
 - **リネーム・コピーは変更前のパス（`previous_filename`）も返す。** 指示書（R2）を `docs/`（R0）へリネームしても、旧パスが分類されて R2 以上になる
 - ページを結合し、PR の `changed_files` と件数が合わなければ `FILES_INCOMPLETE` で失敗する（GitHub の上限 3000 件を超える場合など）。gate は失敗時に R4 として扱う（既存の安全側の挙動）
 - 引数（リポジトリ名・PR 番号）を `store.assertRepo`・`store.assertPr` で検証する
+- `gh api --slurp` は gh 2.48.0 で追加された（[cli/cli#8620](https://github.com/cli/cli/pull/8620)、v2.48.0 のリリースノートで確認）。Ship の最低要件は gh 2.63.0（`policy.ship.minGhVersion`、`bin/ship.sh capability` で検査）。古い gh では `GH_TOO_OLD` を返す
+- **取得に失敗した理由は gate の記録に残す**（`risk.classified` の詳細に `CHANGED_FILES_UNAVAILABLE: <理由>`）。変更ファイル 0 件と区別できる。どちらも安全側の R4
 
 ## 2. 影響分析
 
@@ -37,11 +39,11 @@ glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため�
 | | R0 | R1 | R2 | R3 | R4 |
 | --- | --- | --- | --- | --- | --- |
 | 変更前（main） | 662 | 117 | 284 | 16 | 73 |
-| 変更後 | 88 | 115 | 859 | 16 | 74 |
+| 変更後 | 88 | 115 | 857 | 16 | 76 |
 
 - R0→R2: 574 件（エージェントの指示書。`.claude/rules/*.md`、`Claude/CLAUDE.md`、`scripts/templates/AGENTS.md` など）
 - R1→R2: 2 件（`.claude/claudeos/tests/lib/utils.test.js`、`Claude/templates/claudeos/tests/lib/utils.test.js`。エージェントの環境に配布されるテスト。R2 の規則が R1 より先に評価されるため）
-- R2→R4: 1 件（`.codex/hooks.json`。フックの設定）
+- R2→R4: 3 件（`.codex/hooks.json`・`.codex/config.toml.example`・`.mcp.json`）
 - R3 は変化なし。上位規則（`.claude/settings.json`=R4、`**/hooks/**`=R4 など）は先に評価されるため優先されたまま
 - R0 に残るのは `docs/**`・`reports/**`、ルートの `README.md`・`CHANGELOG.md`・`TASKS.md`・`ONBOARDING.md`・`LICENSE`、`.github/ISSUE_TEMPLATE/*`・`PULL_REQUEST_TEMPLATE.md`、`config/README.md`・`formal/README.md`
 
@@ -70,7 +72,7 @@ gate は main 上のポリシー（`loadTrustedPolicy`）を使うため、新�
   - 上の表に無い独自名の指示書。見つけ次第パターンを追加する
   - **大文字小文字の表記揺れは主要なものだけを列挙**しており、すべては塞いでいない（例: `cLaUdE.md`）。完全に塞ぐには glob の照合を大文字小文字無視にする必要があり、全規則に影響するため今回は見送った
   - 変更ファイル一覧と PR の head SHA を結び付けていない（一覧を取る間に push されると、別の版の一覧になり得る）。この PR より前からある問題で、別件とする
-  - `CLAUDE-back.md`・`docs/MY_AGENTS.md` のような名前は意図的に対象外（テストで R0 を確認）
+  - ルート直下などの `CLAUDE-back.md`・`docs/MY_AGENTS.md` のような名前は意図的に対象外（テストで R0 を確認）。ただし**配布テンプレート `Claude/**` の下では名前に関わらず R2**（例: 未追跡の退避ファイル `Claude/CLAUDE-back.md`・`Claude/templates/claude/CLAUDE-back.md`。テストで確認）
 - **取得の失敗**: 変更ファイルが取れない・取り切れない場合は R4（既存の挙動）。3000 件を超える PR は常に R4 になる
 
 ## 3. ロールバック手順
@@ -109,3 +111,14 @@ gate は main 上のポリシー（`loadTrustedPolicy`）を使うため、新�
 | gh へ渡す引数を検証していない | 引数の固定と、gh 失敗時に `GH_UNAVAILABLE` を返すテストを追加 |
 | リポジトリ名・PR 番号の検証が重複 | `store.assertRepo`・`store.assertPr` に統一 |
 | ブランチ名 `config/…` が規約外 | 変更しない（PR 作成済みでブランチ名を変えると PR の作り直しが必要。内容への影響は無い） |
+
+### 3 回目（`/ship 237`、版 `dc29e88`、指摘 6 件・important 1 件）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 【important】`.mcp.json`・`.codex/config.toml`・`opencode.json` が R4 でない | §1.1.1。R4 に追加 |
+| `--slurp` は gh 2.48 以降のみ | gh v2.48.0 のリリースノートで確認。最低要件 2.63.0 を §1.2 に明記し、古い gh は `GH_TOO_OLD` で区別 |
+| 取得失敗の理由が捨てられる | gate の `risk.classified` に理由を残す。テスト追加（外すと失敗することを確認） |
+| ファイル一覧と head SHA の未結合 | 既存の課題（§2.4）。別件 |
+| `Claude/CLAUDE-back.md` は R2 になり、文書の説明と合わない | §2.4 を訂正、テスト追加 |
+| テンプレートの `settings.local.json` 等が R2 | `Claude/templates/**/settings*.json` を R4 に追加 |

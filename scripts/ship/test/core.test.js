@@ -168,9 +168,15 @@ test('risk: エージェントの指示書は Markdown でも R0 にしない (R
   // 指示書を 1 つでも含む PR は R2 以上 (最大値)
   assert.equal(risk.classify(['docs/a.md', 'CLAUDE.md'], pol.risk).level, 'R2');
   // 権限・フックを決める設定ファイルは入れ子・local でも R4 (/ship 237 の指摘)
-  for (const f of ['pkg/.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', 'pkg/.codex/hooks.json']) {
+  for (const f of ['pkg/.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', 'pkg/.codex/hooks.json',
+    // /ship 237 (3 回目): MCP サーバー・Codex/OpenCode の設定、テンプレートの settings も同じ役割なので R4
+    '.mcp.json', 'pkg/.mcp.json', '.codex/config.toml', '.codex/config.toml.example', 'opencode.json',
+    'Claude/templates/claude/settings.local.json', 'Claude/templates/x/settings.dev.json']) {
     assert.equal(risk.classifyFile(f, pol.risk).level, 'R4', f);
   }
+  // 配布テンプレート (Claude/**) 配下は名前に関わらず R2 (例: 退避ファイル Claude/CLAUDE-back.md)
+  assert.equal(risk.classifyFile('Claude/CLAUDE-back.md', pol.risk).level, 'R2');
+  assert.equal(risk.classifyFile('Claude/templates/claude/CLAUDE-back.md', pol.risk).level, 'R2');
   // 既存の上位規則は優先されたまま
   assert.equal(risk.classifyFile('.claude/settings.json', pol.risk).level, 'R4');
   assert.equal(risk.classifyFile('Claude/templates/claude/claudeos/scripts/hooks/x.js', pol.risk).level, 'R4');

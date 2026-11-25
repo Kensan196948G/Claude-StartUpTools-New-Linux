@@ -79,10 +79,13 @@ function fetchGraphqlExtra(repo, n) {
  * 低いリスクに見えてしまう (2026-11-25 /ship 237 の指摘)。旧パスも分類すれば、最大値で R2 以上になる。
  * GitHub の上限は 3000 件。changed_files と件数が合わない (取り切れない) 場合は失敗として返し、
  * 呼び出し側は安全側 (R4) で扱う。
+ * gh api --slurp は gh 2.48.0 で追加された (cli/cli#8620)。Ship の最低要件は gh 2.63.0
+ * (policy.ship.minGhVersion、capability で検査)。古い gh では GH_TOO_OLD を返す (理由が gate に残る)。
  */
 function changedFiles(repo, n) {
   try { store.assertRepo(repo); store.assertPr(n); } catch { return { ok: false, error: 'INVALID_ARGS' }; }
   const r = ghJson(['api', '--paginate', '--slurp', `repos/${repo}/pulls/${n}/files?per_page=100`]);
+  if (!r.ok && /unknown flag:? --slurp/i.test(r.detail || '')) return { ok: false, error: 'GH_TOO_OLD', detail: 'gh api --slurp requires gh >= 2.48 (Ship requires >= 2.63)' };
   if (!r.ok) return r;
   const entries = (Array.isArray(r.data) ? r.data : []).flat();
   if (!entries.every((f) => f && typeof f.filename === 'string')) return { ok: false, error: 'PARSE' };
