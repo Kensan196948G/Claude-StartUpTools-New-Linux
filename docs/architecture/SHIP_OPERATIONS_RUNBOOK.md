@@ -50,12 +50,15 @@ gate は Ship 未実施を CONDITIONAL/UNKNOWN として扱う（承認できな
 
 | # | 止まるとき | 対処 |
 | --- | --- | --- |
-| 1 | `--workdir` が指定されていない、Git の作業フォルダでない、`HEAD` が `--head` と違う、または Git が未コミットの変更・未追跡ファイルを報告する | `/ship` を実行した作業フォルダを指定し、`git status --short --untracked-files=all` で状態を確認する。レビューによる修正が残っていれば PR に取り込み、新しい版で `/ship` をやり直す。署名のためだけに修正を捨てたり除外したりしない |
+| 1 | `--workdir` が指定されていない、Git の作業フォルダでない、`HEAD` が `--head` と違う、または作業フォルダが対象コミットと一致しない | `/ship` を実行したフォルダと対象 SHA を確認する。レビューによる修正が残っていれば PR に取り込み、新しい版で `/ship` をやり直す。署名のためだけに修正を捨てたり除外したりしない |
 | 2 | `--reviewed yes` で、端末に入力し直した件数が `--important-open` と違う | `/ship` の結果を読み直し、未解決の重大な指摘（important）の実数を指定・入力する。nit は数えない |
 
 端末には Git が認識した作業フォルダのルート、PR 番号、SHA が表示される。表示先が実際にレビューしたフォルダと異なれば中止する。パスフレーズ入力後にも、版と変更の有無を再確認する。
 
-`REVIEW_WORKDIR_UNSUPPORTED` は、外部 Git フィルター（Git LFS などの clean/process 設定を含む）、サブモジュール、変更を隠し得る特殊なインデックス設定がある場合に出る。検査のために既存の Git 設定を変更したり、修正を捨てたりせず、通常の作業フォルダで再レビューするか運用担当に相談する。
+- `REVIEW_WORKDIR_FILTER_ACTIVE`：追跡ファイルの `filter` 属性が、外部 `clean` / `process` が設定されたドライバーに一致した。外部プログラムを動かさずに中止する。Git LFS の設定があっても、追跡ファイルで使われていなければそれだけでは止まらない。
+- `REVIEW_WORKDIR_UNSUPPORTED`：サブモジュールや変更を隠し得るインデックス状態を検査できない。検査を通すために Git 設定を変えたり、修正を捨てたりせず、運用担当に相談する。
+- `REVIEW_WORKDIR_GIT_VERSION`：作業フォルダ検査には Git 2.38.0 以上が必要。`REVIEW_WORKDIR_GIT_TIMEOUT` / `REVIEW_WORKDIR_GIT_OUTPUT_LIMIT` / `REVIEW_WORKDIR_GIT_WARNING` の場合も中止する。処理名と原因（警告時は短い診断も）を確認し、原因を解消してから再実行する。
+- `IMPORTANT_INPUT_TOO_LONG` / `IMPORTANT_INPUT_INCOMPLETE` / `IMPORTANT_INPUT_TTY_MODE`：件数の再入力が長すぎる、Enter で確定していない、または通常の行入力ができない。パスフレーズ入力には進まない。通常の端末で件数だけを1行で入力する。
 
 監査ログの `ship_attested` には `workdir_clean`・`workdir_head`・`important_retyped` が残る。
 

@@ -310,13 +310,106 @@ test('ship-attest 安全装置 (1): 作業フォルダの版が署名する版�
   assert.equal(evidenceCount(), 0);
 });
 
-test('ship-attest: 外部フィルターや変更を隠すインデックス設定は検査の前に拒否する', () => {
+test('ship-attest: 未使用のグローバル LFS 設定は許容し、適用されるフィルターは実行せず拒否する', () => {
+  const cfg = path.join(T, 'global-filter.gitconfig');
+  fs.writeFileSync(cfg, '[filter "lfs"]\n  clean = git-lfs clean -- %f\n  process = git-lfs filter-process\n');
+  const env = { ...TESTAUTH, GIT_CONFIG_GLOBAL: cfg };
   const before = evidenceCount();
-  assert.equal(g('config', '--local', 'filter.fixture.clean', 'true').status, 0);
+  const clean = approveCli(attestArgs(['--workdir', path.join(PROJ, 'lib')]), env);
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.equal(evidenceCount(), before + 1);
+  // 設定名だけで拒否せず、Git が解決した属性で判断する。フィルタープログラムは用意しない。
+  const untrackedAttrs = path.join(PROJ, 'lib', '.gitattributes');
+  const infoAttrs = path.join(PROJ, '.git', 'info', 'attributes');
+  for (const [file, content] of [[untrackedAttrs, '*.sh filter=lfs\n'], [infoAttrs, 'lib/a.sh filter=lfs\n']]) {
+    fs.writeFileSync(file, content);
+    try {
+      const r = approveCli(attestArgs(['--workdir', PROJ]), env);
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr, /REVIEW_WORKDIR_FILTER_ACTIVE/);
+      assert.doesNotMatch(r.stderr, /git-lfs|attestation_id/);
+    } finally { fs.unlinkSync(file); }
+  }
+  assert.equal(evidenceCount(), before + 1);
+});
+
+test('ship-attest: 改行変換や core.fileMode で見えない差も直接照合で拒否する', () => {
+  const before = evidenceCount();
+  const file = path.join(PROJ, 'lib', 'a.sh');
+  const original = fs.readFileSync(file);
+  const mode = fs.statSync(file).mode & 0o777;
+  g('config', '--local', 'core.fileMode', 'false');
   try {
-    const r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
-    assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_UNSUPPORTED/);
-  } finally { assert.equal(g('config', '--local', '--unset', 'filter.fixture.clean').status, 0); }
+    fs.chmodSync(file, mode | 0o100);
+    let r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_DIRTY/);
+    fs.chmodSync(file, mode);
+    g('config', '--local', 'core.autocrlf', 'true');
+    fs.writeFileSync(file, original.toString().replaceAll('\n', '\r\n'));
+    r = approveCli(attestArgs(['--workdir', PROJ]), TESTAUTH);
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /REVIEW_WORKDIR_DIRTY/);
+  } finally {
+    fs.chmodSync(file, mode);
+    fs.writeFileSync(file, original);
+    g('config', '--local', 'core.fileMode', 'true');
+    g('config', '--local', '--unset', 'core.autocrlf');
+  }
+  assert.equal(evidenceCount(), before);
+});
+
+test('ship-attest: 警告が出た場合は Git の処理と原因を示して署名しない', () => {
+  const before = evidenceCount();
+  const file = path.join(PROJ, '.git', 'info', 'attributes');
+  const cfg = path.join(T, 'warning-filter.gitconfig');
+  fs.writeFileSync(cfg, '[filter "lfs"]\n  clean = git-lfs clean -- %f\n');
+  fs.writeFileSync(file, 'lib/a.sh invalid/attribute\n');
+  try {
+    const r = approveCli(attestArgs(['--workdir', PROJ]), { ...TESTAUTH, GIT_CONFIG_GLOBAL: cfg });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /REVIEW_WORKDIR_GIT_WARNING: git check-attr:.*not a valid attribute/);
+    assert.equal(evidenceCount(), before);
+  } finally { fs.unlinkSync(file); }
+});
+
+test('ship-attest: 作業フォルダの照合では Git のトレース出力を無効にする', () => {
+  const cfg = path.join(T, 'trace.gitconfig');
+  const trace = path.join(T, 'git-trace.log');
+  fs.writeFileSync(cfg, `[trace2]\n  normalTarget = ${trace}\n  eventTarget = ${trace}\n  perfTarget = ${trace}\n`);
+  const before = evidenceCount();
+  const r = approveCli(attestArgs(['--workdir', PROJ]), { ...TESTAUTH, GIT_CONFIG_GLOBAL: cfg, GIT_TRACE: trace });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(evidenceCount(), before + 1);
+  assert.equal(fs.existsSync(trace), false);
+});
+
+test('ship-attest: 非対応 Git・出力上限・タイムアウトを区別し、署名しない', () => {
+  const bin = fs.mkdtempSync(path.join(T, 'git-diagnostics-'));
+  // Git の検査サブプロセスだけをスタブにする。保護のある実リポジトリや鍵には触れない。
+  const script = `#!/usr/bin/env node
+    const args = process.argv.slice(2);
+    if (args.includes('--version')) console.log(process.env.FIXTURE_GIT_MODE === 'old' ? 'git version 2.35.1' : 'git version 2.43.0');
+    else if (args.includes('--show-toplevel')) console.log(${JSON.stringify(PROJ)});
+    else if (args.includes('rev-parse')) console.log(${JSON.stringify(HEAD)});
+    else if (args.includes('ls-files') && process.env.FIXTURE_GIT_MODE === 'limit') process.stdout.write(Buffer.alloc(33 * 1024 * 1024, 120));
+    else if (args.includes('ls-files')) setTimeout(() => {}, 20000);
+    else process.exit(99);
+  `;
+  fs.writeFileSync(path.join(bin, 'git'), script, { mode: 0o755 });
+  const before = evidenceCount();
+  for (const [mode, expected] of [
+    ['old', /REVIEW_WORKDIR_GIT_VERSION/], ['limit', /REVIEW_WORKDIR_GIT_OUTPUT_LIMIT: git ls-files/],
+    ['timeout', /REVIEW_WORKDIR_GIT_TIMEOUT: git ls-files/],
+  ]) {
+    const r = approveCli(attestArgs(['--workdir', PROJ]), { ...TESTAUTH, PATH: bin + path.delimiter + ENV.PATH, FIXTURE_GIT_MODE: mode });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, expected);
+    assert.doesNotMatch(r.stdout, /attestation_id/);
+  }
+  assert.equal(evidenceCount(), before);
+});
+
+test('ship-attest: 変更を隠すインデックス設定は検査の前に拒否する', () => {
+  const before = evidenceCount();
   for (const flag of ['assume-unchanged', 'skip-worktree']) {
     assert.equal(g('update-index', `--${flag}`, '--', 'lib/a.sh').status, 0);
     try {
@@ -363,6 +456,26 @@ test('ship-attest: 通常の鍵設定では件数の環境変数を使わず、�
   assert.match(r.stderr, /NO_TTY/);
   assert.doesNotMatch(r.stderr, /パスフレーズ/);
   assert.equal(evidenceCount(), before);
+});
+
+test('ship-attest: Linux の端末で長い行を消費して拒否し、改行なし・非通常モードでも止める', () => {
+  const cmd = [process.execPath, path.join(ROOT, 'scripts/ship/approve.js'), ...attestArgs(['--workdir', PROJ])];
+  const fixture = path.join(__dirname, 'attest-tty-fixture.py');
+  const before = evidenceCount();
+  for (const mode of ['overlong', 'incomplete', 'noncanonical', 'valid']) {
+    const r = spawnSync('python3', [fixture, mode, ...cmd], { env: { ...ENV, ...TESTAUTH }, encoding: 'utf8', timeout: 12000 });
+    assert.equal(r.status, 0, `${mode}: ${r.error || r.stderr || ''}`);
+    assert.equal(evidenceCount(), before + (mode === 'valid' ? 1 : 0), mode);
+  }
+});
+
+test('ship-approve --help: 全コマンドを表示し、ヘッダの区切り行で止める', () => {
+  const r = spawnSync('bash', [path.join(ROOT, 'bin/ship-approve.sh'), '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /ship-attest .+--workdir DIR/);
+  assert.match(r.stdout, /ship-attest --kind human-diff/);
+  assert.match(r.stdout, /無効になる。\n\n$/);
+  assert.doesNotMatch(r.stdout, /set -euo pipefail|exec node/);
 });
 
 test.after(() => fs.rmSync(T, { recursive: true, force: true }));

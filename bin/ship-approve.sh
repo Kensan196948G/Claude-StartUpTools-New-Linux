@@ -21,6 +21,9 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "${1:-}" in
-  ""|-h|--help|help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  ""|-h|--help|help)
+    awk 'NR==1 {next} NR>2 && /^# =+$/ {print ""; exit} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}"
+    exit 0 ;;
+
 esac
 exec node "$SCRIPT_DIR/../scripts/ship/approve.js" "$@"
