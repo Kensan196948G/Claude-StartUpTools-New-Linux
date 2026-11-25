@@ -199,6 +199,8 @@ const cmds = {
     const pr = p.data;
     const files = github.changedFiles(o.repo, o.pr);
     const rk = risk.classify(files.ok ? files.data : [], pol.risk);
+    // 取得に失敗した理由を残す (変更ファイル 0 件と区別するため。どちらも安全側 R4)
+    if (!files.ok) rk.reason = `CHANGED_FILES_UNAVAILABLE: ${files.error}${files.detail ? ' (' + String(files.detail).slice(0, 200) + ')' : ''} — 安全側 R4`;
     const q = quality.latestEvidence(o.repo, pr.headRefOid);
     const ship = hg.shipEvidenceFor(o.repo, o.pr, pr.headRefOid, pol);
     const riskDocs = { impactAnalysis: docExists(o['impact-doc']), rollbackPlan: docExists(o['rollback-doc']) };

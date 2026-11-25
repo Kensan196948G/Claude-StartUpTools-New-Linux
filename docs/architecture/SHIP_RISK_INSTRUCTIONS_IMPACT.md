@@ -1,0 +1,124 @@
+# 影響分析とロールバック: エージェントの指示書を R0 から R2 へ（PR #237、R4）
+
+状態: 2026-11-25。PR #237 の R4 要件（変更影響分析・ロールバック手順）を満たすための文書。`/ship 237` の指摘を 3 回分反映済み（§4）。
+
+## 1. 変更内容
+
+### 1.1 リスク分類の規則（`config/ship-policy.json`）
+
+`risk.rules` の R3 と R1 の間に R2 の規則を 1 つ追加する。規則は先頭から評価されるため、R0（`**/*.md`）・R1 より先に当たる。
+glob は大文字小文字を区別する（`scripts/ship/lib/risk.js`）ため、表記揺れは列挙する。スラッシュを含まないパターンは任意の階層にも当たる。
+
+| 種類 | パターン |
+| --- | --- |
+| ファイル名（任意の階層） | `CLAUDE.md`・`Claude.md`・`claude.md`、`CLAUDE.local.md`（同 3 表記）、`AGENTS.md`・`Agents.md`・`agents.md`、`AGENTS.override.md`、`GEMINI.md`（同 3 表記）、`.cursorrules` |
+| パス | `**/SKILL.md`、`**/skill.md`、`**/copilot-instructions.md`、`**/*.instructions.md` |
+| 設定ディレクトリ（入れ子を含む） | `.claude/**`・`**/.claude/**`（`.Claude/**` も）、`.codex/**`・`**/.codex/**`、`.agents/**`・`**/.agents/**`、`.cursor/**`・`**/.cursor/**` |
+| 他ツールの指示書 | `.github/agents/**`・`.github/prompts/**`・`.github/chatmodes/**`、`**/*.prompt.md`・`**/*.chatmode.md`、`.clinerules/**`、`.windsurf/**`、`.roo/**`、`.kiro/**`、`.gemini/**` |
+| 大文字の表記揺れ（主要なもの） | `CLAUDE.MD`・`AGENTS.MD`・`Skill.md` |
+| 配布テンプレート | `Claude/**`、`Codex/**` |
+
+### 1.1.1 R4 に追加（権限・フックを決める設定ファイル）
+
+`.claude/settings*.json`・`**/.claude/settings*.json`（入れ子・`settings.local.json` を含む）、`**/.codex/hooks.json`、`**/.codex/config.toml`（`.example` を含む）、`.mcp.json`・`**/.mcp.json`（MCP サーバーの設定）、`opencode.json`・`**/opencode.json`、`Claude/templates/**/settings*.json`（配布される settings）。これらは R2 の `.claude/**`・`.codex/**`・`Claude/**` より先に R4 として評価される。いずれも、エージェントが実行できるコマンド・接続先・フックを決める設定ファイルである
+
+### 1.2 変更ファイルの取得（`scripts/ship/lib/github.js` の `changedFiles`）
+
+`gh pr view --json files`（新しいパスだけを返す）から、REST の `pulls/{n}/files` に変更した。
+
+- **リネーム・コピーは変更前のパス（`previous_filename`）も返す。** 指示書（R2）を `docs/`（R0）へリネームしても、旧パスが分類されて R2 以上になる
+- ページを結合し、PR の `changed_files` と件数が合わなければ `FILES_INCOMPLETE` で失敗する（GitHub の上限 3000 件を超える場合など）。gate は失敗時に R4 として扱う（既存の安全側の挙動）
+- 引数（リポジトリ名・PR 番号）を `store.assertRepo`・`store.assertPr` で検証する
+- `gh api --slurp` は gh 2.48.0 で追加された（[cli/cli#8620](https://github.com/cli/cli/pull/8620)、v2.48.0 のリリースノートで確認）。Ship の最低要件は gh 2.63.0（`policy.ship.minGhVersion`、`bin/ship.sh capability` で検査）。古い gh では `GH_TOO_OLD` を返す
+- **取得に失敗した理由は gate の記録に残す**（`risk.classified` の詳細に `CHANGED_FILES_UNAVAILABLE: <理由>`）。変更ファイル 0 件と区別できる。どちらも安全側の R4
+
+## 2. 影響分析
+
+### 2.1 分類の変化（追跡ファイル全件、2026-11-25 実測）
+
+| | R0 | R1 | R2 | R3 | R4 |
+| --- | --- | --- | --- | --- | --- |
+| 変更前（main） | 662 | 117 | 284 | 16 | 73 |
+| 変更後 | 88 | 115 | 857 | 16 | 76 |
+
+- R0→R2: 574 件（エージェントの指示書。`.claude/rules/*.md`、`Claude/CLAUDE.md`、`scripts/templates/AGENTS.md` など）
+- R1→R2: 2 件（`.claude/claudeos/tests/lib/utils.test.js`、`Claude/templates/claudeos/tests/lib/utils.test.js`。エージェントの環境に配布されるテスト。R2 の規則が R1 より先に評価されるため）
+- R2→R4: 3 件（`.codex/hooks.json`・`.codex/config.toml.example`・`.mcp.json`）
+- R3 は変化なし。上位規則（`.claude/settings.json`=R4、`**/hooks/**`=R4 など）は先に評価されるため優先されたまま
+- R0 に残るのは `docs/**`・`reports/**`、ルートの `README.md`・`CHANGELOG.md`・`TASKS.md`・`ONBOARDING.md`・`LICENSE`、`.github/ISSUE_TEMPLATE/*`・`PULL_REQUEST_TEMPLATE.md`、`config/README.md`・`formal/README.md`
+
+### 2.2 運用への影響
+
+| 対象 | 影響 |
+| --- | --- |
+| 指示書を変える PR | R0 から R2 になり、**Ship レビュー（`/ship` と署名）が設定上の必須になり、ロールバック手順の文書（`--rollback-doc`）も新たに必要になる**。なお現行コードでは R0 でも Ship 署名が無いと gate は CONDITIONAL で承認できないため、Ship 署名は実質的に今も必要 |
+| 通常の文書だけの PR | 変化なし（R0 のまま） |
+| リネームを含む PR | 旧パスも分類されるため、リスクが上がることがある（安全側） |
+| 後続 PR #238（R0・R1 の human-diff） | この変更が前提。指示書を含む PR では human-diff が使えなくなる（意図どおり） |
+| マージ判定・承認・ruleset | 変化なし |
+| gate の判定ロジック | 変化なし（入力のファイル一覧に旧パスが加わるだけ） |
+| GitHub API の呼び出し | gate・classify ごとに REST 2 回（ファイル一覧のページ数 + PR 本体）。従来は GraphQL 1 回 |
+
+### 2.3 効く時期
+
+gate は main 上のポリシー（`loadTrustedPolicy`）を使うため、新しい分類はこの PR のマージ後に作られる gate から使われる。
+`changedFiles` の変更は実行するコードの変更なので、マージ後に main を取り込んだ clone から効く。マージ前に作られた gate の記録は変わらない。
+
+### 2.4 リスクと既知の限界
+
+- **広く当たる（安全側）**: `Claude/**` は配布テンプレート全体（指示書以外も含む）を R2 にする。`.claude/claudeos/data/*.json`（学習データ）は以前から既定値 R2 で、この PR による変化ではない
+- **当たり漏れ（既知）**:
+  - `docs/architecture/**`・`docs/claude/**` にもエージェントが読むポリシー文書があるが、R0 のまま。人向けの設計文書と区別できないため、今回は対象外とする。エージェントが自動で読み込む場所（`CLAUDE.md` からの参照など）に移す場合はパターンを追加する
+  - 上の表に無い独自名の指示書。見つけ次第パターンを追加する
+  - **大文字小文字の表記揺れは主要なものだけを列挙**しており、すべては塞いでいない（例: `cLaUdE.md`）。完全に塞ぐには glob の照合を大文字小文字無視にする必要があり、全規則に影響するため今回は見送った
+  - 変更ファイル一覧と PR の head SHA を結び付けていない（一覧を取る間に push されると、別の版の一覧になり得る）。この PR より前からある問題で、別件とする
+  - ルート直下などの `CLAUDE-back.md`・`docs/MY_AGENTS.md` のような名前は意図的に対象外（テストで R0 を確認）。ただし**配布テンプレート `Claude/**` の下では名前に関わらず R2**（例: 未追跡の退避ファイル `Claude/CLAUDE-back.md`・`Claude/templates/claude/CLAUDE-back.md`。テストで確認）
+- **取得の失敗**: 変更ファイルが取れない・取り切れない場合は R4（既存の挙動）。3000 件を超える PR は常に R4 になる
+
+## 3. ロールバック手順
+
+1. この PR を `git revert` する PR を作る（変更は `config/ship-policy.json` の 1 ブロック、`scripts/ship/lib/github.js` の `changedFiles`、テスト、この文書）
+2. revert PR も R4 なので、いつもどおり品質検証 → `/ship` → 署名 → 品質判定 → 承認 → マージ
+3. マージ後、`node -e 'console.log(require("./scripts/ship/lib/risk").classifyFile("CLAUDE.md", require("./config/ship-policy.json").risk).level)'` で `R0` に戻ることを確認する
+4. 後続の PR #238 がマージ済みの場合は、先に #238 を戻す（#238 を残したまま戻すと、指示書が human-diff の対象になる）
+
+データの移行・削除は無い。設定値とコードを戻すだけで元の挙動に戻る。
+
+## 4. `/ship 237` の指摘への対応（2026-11-25）
+
+### 1 回目（版 `a81c761`、指摘 7 件）
+
+| # | 指摘 | 対応 |
+| --- | --- | --- |
+| 1 | リネームで R2 を回避できる（`changedFiles` が新パスのみ）【important】 | §1.2。REST で旧パスも分類。テスト追加（外すと失敗することを確認） |
+| 2 | `Codex/templates/**` に一致する実ディレクトリが無く、実在する `.codex/` が漏れている | `.codex/**`・`**/.codex/**` を追加、`Codex/**` は将来用に残す |
+| 3 | `CLAUDE.local.md`・入れ子の `.claude/`・大文字小文字違いが R0 のまま【important】 | §1.1。表記揺れと入れ子を列挙。テスト追加 |
+| 4 | 「R0 でも今から Ship レビュー必須」の記述が誤り | §2.2 を訂正（設定上は R2 で新たに必須。現行コードでは実質必須） |
+| 5 | `.claude/claudeos/data/*.json` は元から既定値 R2 | §2.4 を訂正 |
+| 6 | `docs/architecture/**` などのポリシー文書が R0 のまま | §2.4 に既知の限界として明記（今回は対象外） |
+| 7 | R1→R2 の順序依存・紛らわしい名前・リネーム・入れ子が未テスト | テスト追加（`core.test.js`・`github.test.js`） |
+
+### 2 回目（`/ship 237`、版 `0c1eefb`、指摘 9 件）
+
+| 指摘 | 対応 |
+| --- | --- |
+| `--slurp` が gh 2.45 で失敗する疑い | 対応不要。gh は 2.105.0（必須 2.63 以上）で `--slurp` を確認済み |
+| `.github/agents/`・`.clinerules` など他ツールの指示書が R0 | §1.1 に追加 |
+| 大文字小文字の表記揺れ | 主要なもの（`CLAUDE.MD`・`AGENTS.MD`・`Skill.md`・`.Claude/**`）を追加。完全な対応は見送り（§2.4） |
+| 入れ子・local の `settings*.json` と `.codex/hooks.json` が R2 | §1.1.1。R4 に追加 |
+| ファイル一覧と head SHA を結び付けていない | この PR より前からの問題。§2.4 に既知の限界として明記、別件 |
+| コピー元パスの記述が過大 | コメントを「リネームは変更前のパスも含める」に訂正 |
+| gh へ渡す引数を検証していない | 引数の固定と、gh 失敗時に `GH_UNAVAILABLE` を返すテストを追加 |
+| リポジトリ名・PR 番号の検証が重複 | `store.assertRepo`・`store.assertPr` に統一 |
+| ブランチ名 `config/…` が規約外 | 変更しない（PR 作成済みでブランチ名を変えると PR の作り直しが必要。内容への影響は無い） |
+
+### 3 回目（`/ship 237`、版 `dc29e88`、指摘 6 件・important 1 件）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 【important】`.mcp.json`・`.codex/config.toml`・`opencode.json` が R4 でない | §1.1.1。R4 に追加 |
+| `--slurp` は gh 2.48 以降のみ | gh v2.48.0 のリリースノートで確認。最低要件 2.63.0 を §1.2 に明記し、古い gh は `GH_TOO_OLD` で区別 |
+| 取得失敗の理由が捨てられる | gate の `risk.classified` に理由を残す。テスト追加（外すと失敗することを確認） |
+| ファイル一覧と head SHA の未結合 | 既存の課題（§2.4）。別件 |
+| `Claude/CLAUDE-back.md` は R2 になり、文書の説明と合わない | §2.4 を訂正、テスト追加 |
+| テンプレートの `settings.local.json` 等が R2 | `Claude/templates/**/settings*.json` を R4 に追加 |
