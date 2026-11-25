@@ -72,11 +72,31 @@ function fetchGraphqlExtra(repo, n) {
   return { ok: true, baseRefOid: pr.baseRefOid, headRefOid: pr.headRefOid || null, unresolved };
 }
 
-/** changedFiles(repo, n) — PR の変更ファイル一覧 (最大 3000 件、gh の制約) */
+/**
+ * changedFiles(repo, n) — PR の変更ファイル一覧 (リスク分類の入力)。
+ * REST の pulls/{n}/files を使い、リネーム・コピーは**変更前のパスも含める**。
+ * gh pr view --json files は新しいパスしか返さないため、指示書 (R2) を docs/ (R0) へリネームすると
+ * 低いリスクに見えてしまう (2026-11-25 /ship 237 の指摘)。旧パスも分類すれば、最大値で R2 以上になる。
+ * GitHub の上限は 3000 件。changed_files と件数が合わない (取り切れない) 場合は失敗として返し、
+ * 呼び出し側は安全側 (R4) で扱う。
+ */
 function changedFiles(repo, n) {
-  const r = ghJson(['pr', 'view', String(n), '--repo', repo, '--json', 'files']);
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo)) || !/^\d+$/.test(String(n))) return { ok: false, error: 'INVALID_ARGS' };
+  const r = ghJson(['api', '--paginate', '--slurp', `repos/${repo}/pulls/${n}/files?per_page=100`]);
   if (!r.ok) return r;
-  return { ok: true, data: (r.data.files || []).map((f) => f.path) };
+  const entries = (Array.isArray(r.data) ? r.data : []).flat();
+  if (!entries.every((f) => f && typeof f.filename === 'string')) return { ok: false, error: 'PARSE' };
+  const total = ghJson(['api', `repos/${repo}/pulls/${n}`, '--jq', '{changed_files}']);
+  if (!total.ok) return total;
+  if (Number(total.data.changed_files) !== entries.length) {
+    return { ok: false, error: 'FILES_INCOMPLETE', detail: `listed=${entries.length} changed_files=${total.data.changed_files}` };
+  }
+  const out = [];
+  for (const f of entries) {
+    out.push(f.filename);
+    if (typeof f.previous_filename === 'string' && f.previous_filename !== f.filename) out.push(f.previous_filename);
+  }
+  return { ok: true, data: [...new Set(out)] };
 }
 
 /** findPrForBranch(repo, branch) — 既存 PR の再利用 (重複作成防止) */

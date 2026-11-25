@@ -34,7 +34,8 @@ const fs=require('fs');const f=${JSON.stringify(FAKE)};const s=JSON.parse(fs.rea
 const a=process.argv.slice(2);s.calls.push(a.join(' '));
 const save=()=>fs.writeFileSync(f,JSON.stringify(s));
 const pr=s.pr;
-if(a[0]==='pr'&&a[1]==='view'&&a.includes('files')){save();console.log(JSON.stringify({files:s.files.map(p=>({path:p}))}));process.exit(0);}
+if(a[0]==='api'&&a.includes('--paginate')&&/pulls\\/\\d+\\/files/.test(a.join(' '))){save();console.log(JSON.stringify([s.files.map(p=>({filename:p,status:'modified'}))]));process.exit(0);}
+if(a[0]==='api'&&/\\/pulls\\/\\d+$/.test(a.find(x=>String(x).startsWith('repos/'))||'')){save();console.log(JSON.stringify({changed_files:s.files.length}));process.exit(0);}
 if(a[0]==='pr'&&a[1]==='view'){const want=a[a.indexOf('--json')+1].split(',');const known=['number','state','isDraft','mergeable','mergeStateStatus','headRefOid','headRefName','baseRefName','url','title','author','statusCheckRollup','mergeCommit','autoMergeRequest','files'];const bad=want.filter(f=>!known.includes(f));if(bad.length){save();console.error('Unknown JSON field: "'+bad[0]+'"');process.exit(1);}save();console.log(JSON.stringify({number:7,state:pr.state,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',headRefOid:pr.head,headRefName:'feat/x',baseRefName:'main',url:'u',title:'t',author:{login:'k'},statusCheckRollup:pr.checks,mergeCommit:pr.mergeCommit?{oid:pr.mergeCommit}:null,autoMergeRequest:pr.auto?{}:null}));process.exit(0);}
 if(a[0]==='api'&&a[1]==='graphql'){save();console.log(JSON.stringify({data:{repository:{pullRequest:{baseRefOid:pr.base,headRefOid:pr.head,reviewThreads:{totalCount:0,nodes:[]}}}}}));process.exit(0);}
 if(a[0]==='api'&&String(a[1]).includes('/rules/branches/')){save();console.log(JSON.stringify(s.rules));process.exit(0);}

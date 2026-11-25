@@ -45,6 +45,33 @@ test('fetchPr: レビュースレッドが 100 件を超えると未解決数は
   assert.equal(github.fetchPr('o/r', 1).data.reviewThreadsUnresolved, null);
 });
 
+// changedFiles: REST pulls/{n}/files (--paginate --slurp) と pulls/{n} の changed_files を使う
+function filesGh(pages, changed) {
+  fakeGh(`if(a[0]==='api'&&a.includes('--paginate')&&/pulls\\/\\d+\\/files/.test(a.join(' '))){console.log(JSON.stringify(${JSON.stringify(pages)}));process.exit(0);}
+if(a[0]==='api'&&/pulls\\/\\d+$/.test(a.find(x=>x.startsWith('repos/'))||'')){console.log(JSON.stringify({changed_files:${changed}}));process.exit(0);}
+process.exit(1);`);
+}
+test('changedFiles: リネームは変更前のパスも返す (指示書を docs/ へ移してもリスクを下げられない)', () => {
+  filesGh([[{ filename: 'docs/notes.md', status: 'renamed', previous_filename: 'CLAUDE.md' }, { filename: 'README.md', status: 'modified' }]], 2);
+  const r = github.changedFiles('o/r', 1);
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.data.sort(), ['CLAUDE.md', 'README.md', 'docs/notes.md']);
+});
+test('changedFiles: 複数ページを結合し、件数が changed_files と合わなければ失敗 (取り切れない)', () => {
+  filesGh([[{ filename: 'a.md', status: 'added' }], [{ filename: 'b.md', status: 'added' }]], 2);
+  assert.deepEqual(github.changedFiles('o/r', 1).data, ['a.md', 'b.md']);
+  filesGh([[{ filename: 'a.md', status: 'added' }]], 3001);
+  const r = github.changedFiles('o/r', 1);
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'FILES_INCOMPLETE');
+});
+test('changedFiles: 不正な引数・壊れた応答は失敗', () => {
+  assert.equal(github.changedFiles('o/r;rm', 1).error, 'INVALID_ARGS');
+  assert.equal(github.changedFiles('o/r', '1 2').error, 'INVALID_ARGS');
+  filesGh([[{ name: 'x' }]], 1);
+  assert.equal(github.changedFiles('o/r', 1).error, 'PARSE');
+});
+
 test('classifyError: 認証・レート制限・障害を区別する', () => {
   assert.equal(github.classifyError({ stderr: 'HTTP 401: Bad credentials' }), 'GH_AUTH');
   assert.equal(github.classifyError({ stderr: 'API rate limit exceeded' }), 'GH_RATE_LIMIT');
