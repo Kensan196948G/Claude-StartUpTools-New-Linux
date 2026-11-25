@@ -58,6 +58,10 @@ gate は Ship 未実施を CONDITIONAL/UNKNOWN として扱う（承認できな
 - `REVIEW_WORKDIR_FILTER_ACTIVE`：追跡ファイルの `filter` 属性が、外部 `clean` / `process` が設定されたドライバーに一致した。外部プログラムを動かさずに中止する。Git LFS の設定があっても、追跡ファイルで使われていなければそれだけでは止まらない。
 - `REVIEW_WORKDIR_UNSUPPORTED`：サブモジュールや変更を隠し得るインデックス状態を検査できない。検査を通すために Git 設定を変えたり、修正を捨てたりせず、運用担当に相談する。
 - `REVIEW_WORKDIR_GIT_VERSION`：作業フォルダ検査には Git 2.38.0 以上が必要。`REVIEW_WORKDIR_GIT_TIMEOUT` / `REVIEW_WORKDIR_GIT_OUTPUT_LIMIT` / `REVIEW_WORKDIR_GIT_WARNING` の場合も中止する。処理名と原因（警告時は短い診断も）を確認し、原因を解消してから再実行する。
+- `REVIEW_WORKDIR_NOT_FOUND`：`--workdir` が存在しない、またはフォルダでない。パスの打ち間違いを確認する（Git を起動する前に判定するため、`REVIEW_WORKDIR_GIT_FAILED` にはならない）。
+- `REVIEW_WORKDIR_TIMEOUT`：追跡ファイルの照合が制限時間（120 秒）を超えた。署名はしない。不要な大きなファイルが追跡されていないか確認して再実行する。追跡ファイルが 2000 件以上のときは、照合の開始を端末へ表示する。
+- `IMPORTANT_INPUT_STTY_UNAVAILABLE`：端末の設定を確認する `stty` を実行できない（コマンドが無い、時間切れなど）。端末モードの問題ではない。`stty` が使える環境でやり直す。
+- 確認画面に表示する作業フォルダ名・検査対象外のファイル名の制御文字・bidi 文字・ゼロ幅文字は `\u{XXXX}` の形で表示する。見慣れない `\u{...}` があるときは、指定したフォルダが意図したものか確認してから署名する。
 - `IMPORTANT_INPUT_TOO_LONG` / `IMPORTANT_INPUT_INCOMPLETE` / `IMPORTANT_INPUT_TTY_MODE`：件数の再入力が長すぎる、Enter で確定していない、または通常の行入力ができない。パスフレーズ入力には進まない。通常の端末で件数だけを1行で入力する。
 
 監査ログの `ship_attested` には `workdir_clean`・`workdir_head`・`workdir_ignored_count`・`important_retyped`・`important_input_source` が残る。`important_retyped` は人が端末で件数を入力した場合だけ `true` になる。`important_input_source` は `tty`（端末入力）、`test`（テスト用の環境変数）、`skipped`（`--reviewed no` で入力なし）のいずれか。
