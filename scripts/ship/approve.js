@@ -10,8 +10,13 @@
  *   approve --repo O/R --pr N --head SHA   署名して承認。--head は人が画面で確認した SHA (現在の head と一致必須)
  *   reject  --repo O/R --pr N --head SHA --reason R   差し戻し (署名付き記録)
  *   revoke  --id APPROVAL_ID --reason R    承認取り消し (安全側の操作なので署名不要)
- *   ship-attest --repo O/R --pr N --head SHA --reviewed yes|no --important-open N --watch STATUS [--effort E] [--notes T]
- *                                          対話セッションで /ship を実行した人が、見た結果を署名して残す
+ *   ship-attest --repo O/R --pr N --head SHA --workdir DIR --reviewed yes|no --important-open N --watch STATUS [--effort E] [--notes T]
+ *                                          対話セッションで /ship を実行した人が、見た結果を署名して残す。
+ *                                          署名の前に 2 つの安全装置が働く (パスフレーズより前):
+ *                                          (1) --workdir (/ship を実行した作業フォルダ) が --head の版で、未コミットの変更が無いこと。
+ *                                              /ship が修正を作業フォルダに残したまま署名するのを止める
+ *                                          (2) --reviewed yes のとき、/ship の結果にあった重大な指摘 (important) の件数を
+ *                                              端末で入力し直させ、--important-open と一致しなければ止める
  *   ship-attest --kind human-diff --repo O/R --pr N --head SHA --important-open N [--notes T]
  *                                          R0・R1 の PR で、人が gh pr diff で差分を読んだことを署名して残す。
  *                                          変更ファイルの一覧とリスク分類を表示し、確認してから署名する。
@@ -23,6 +28,8 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const store = require('./lib/store');
 const hg = require('./lib/human-gate');
 const policyLib = require('./lib/policy');
@@ -48,6 +55,196 @@ function confirmTty(question) {
   } finally { fs.closeSync(fd); }
 }
 function readBundleSafe() { try { return readBundle(); } catch { return null; } }
+
+/**
+ * 件数は端末から 1 行読む。環境変数はテスト専用の鍵束でのみ使う。
+ * 戻り値の source は監査ログ用: 'tty' は人が端末で入力、'test' はテスト用の環境変数。
+ */
+function readImportantCount(bundle, question) {
+  if (bundle.test === true && bundle.wrapped?.test === true && typeof process.env.CLAUDEOS_SHIP_TEST_IMPORTANT === 'string') {
+    return { value: process.env.CLAUDEOS_SHIP_TEST_IMPORTANT, source: 'test' };
+  }
+  let fd; try { fd = fs.openSync('/dev/tty', 'r+'); } catch { throw Object.assign(new Error('NO_TTY'), { exit: 1 }); }
+  try {
+    // Linux の canonical TTY は read 1 回につき 1 行 (LF を含め最大 4096 バイト)。
+    // 非 canonical 端末では途中まで読んで残りを残す可能性があるため、入力前に拒否する。
+    const tty = spawnSync('stty', ['-a'], { stdio: [fd, 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C' }, encoding: 'utf8', timeout: 2000 });
+    if (tty.status !== 0 || !/(^|[\s;])icanon(?=[\s;]|$)/.test(tty.stdout)) {
+      throw Object.assign(new Error('IMPORTANT_INPUT_TTY_MODE: 通常の行入力が可能な端末でやり直してください'), { exit: 1 });
+    }
+    fs.writeSync(fd, question);
+    const buf = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buf, 0, buf.length, null);
+    if (n > 64) throw Object.assign(new Error('IMPORTANT_INPUT_TOO_LONG: 件数だけを1行で入力してやり直してください'), { exit: 1 });
+    if (n === 0 || buf[n - 1] !== 0x0a) {
+      throw Object.assign(new Error('IMPORTANT_INPUT_INCOMPLETE: 件数を入力し Enter で確定してください'), { exit: 1 });
+    }
+    return { value: buf.subarray(0, n).toString('utf8').trim(), source: 'tty' };
+  } finally { fs.closeSync(fd); }
+}
+
+/**
+ * checkReviewWorkdir — /ship を実行した作業フォルダの版と状態を確かめる。
+ * レビュー中の修正が PR に取り込まれていない状態で署名する事故を防ぐ。
+ * Git が報告する未追跡ファイルも変更として扱う。
+ */
+function checkReviewWorkdir(dir, headSha) {
+  const abs = path.resolve(dir);
+  // 呼び出し元の git hook などが設定した別のリポジトリ・index を参照しない。
+  const env = { ...process.env, LC_ALL: 'C', GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' };
+  for (const name of Object.keys(env)) if (name.startsWith('GIT_TRACE')) delete env[name];
+  // Trace2 は global/system 設定も読む。環境変数の明示的な無効値が優先される。
+  Object.assign(env, { GIT_TRACE2: '0', GIT_TRACE2_EVENT: '0', GIT_TRACE2_PERF: '0' });
+  for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_IMPLICIT_WORK_TREE', 'GIT_PREFIX', 'GIT_ATTR_SOURCE', 'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS']) delete env[name];
+  let workdir = abs;
+  const git = (step, args, { allowMissing = false, input } = {}) => {
+    const r = spawnSync('git', ['--no-optional-locks', '--no-replace-objects', '-c', 'core.fsmonitor=false', '-C', workdir, ...args],
+      { env, input, timeout: 10000, killSignal: 'SIGKILL', maxBuffer: 32 * 1024 * 1024 });
+    const fail = (code, detail) => { throw Object.assign(new Error(`${code}: git ${step}: ${detail}`), { exit: 1 }); };
+    if (r.error?.code === 'ETIMEDOUT') fail('REVIEW_WORKDIR_GIT_TIMEOUT', '10 秒で処理を打ち切りました');
+    if (r.error?.code === 'ENOBUFS') fail('REVIEW_WORKDIR_GIT_OUTPUT_LIMIT', '出力が 32 MiB の上限を超えました');
+    if (r.error) fail('REVIEW_WORKDIR_GIT_FAILED', r.error.code || '起動または入出力エラー');
+    if (r.signal) fail('REVIEW_WORKDIR_GIT_FAILED', `中断 (${r.signal})`);
+    if (r.stderr.length) {
+      // 生の stderr をログに書かない。端末制御文字を無効化し、機密らしい文字列をマスクして短く表示する。
+      const diagnostic = store.redact(r.stderr.toString('utf8')).trim().slice(0, 240).replace(/[\p{C}]/gu, ' ');
+      const code = r.status === 0 ? 'REVIEW_WORKDIR_GIT_WARNING' : step === 'rev-parse root' ? 'REVIEW_WORKDIR_NOT_GIT' : 'REVIEW_WORKDIR_GIT_FAILED';
+      fail(code, `${diagnostic || '詳細なし'} (exit ${r.status})`);
+    }
+    if (allowMissing && r.status === 1 && !r.stdout.length) return r.stdout;
+    if (r.status !== 0) fail('REVIEW_WORKDIR_GIT_FAILED', `exit ${r.status}`);
+    return r.stdout;
+  };
+  // 古い Git は core.fsmonitor=false を無効値でなくフック名として扱う。
+  // 既存の Ship 推奨版を、このインデックス検査の最低版として強制する。
+  const version = /^git version (\d+)\.(\d+)\.\d+(?:[. -].*)?\s*$/.exec(git('--version', ['--version']).toString('ascii'));
+  if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 38)) {
+    throw new Error('REVIEW_WORKDIR_GIT_VERSION: 作業フォルダの検査には Git 2.38.0 以上が必要です');
+  }
+  const badOutput = (step) => { throw new Error(`REVIEW_WORKDIR_GIT_OUTPUT_INVALID: git ${step} の結果を照合できません`); };
+  const nulFields = (buf, step) => {
+    if (!buf.length) return [];
+    if (buf[buf.length - 1] !== 0) badOutput(step);
+    // Latin-1 をバイト列の可逆な表現として使用。非 UTF-8 のファイル名も Git にそのまま渡す。
+    return buf.toString('latin1').slice(0, -1).split('\0');
+  };
+  function reviewRoot() {
+    const root = git('rev-parse root', ['rev-parse', '--path-format=absolute', '--show-toplevel']);
+    const dir = root.toString('utf8').replace(/\n$/, '');
+    if (!path.isAbsolute(dir) || !Buffer.from(dir + '\n').equals(root)) badOutput('rev-parse root');
+    return fs.realpathSync(dir);
+  }
+  workdir = reviewRoot();
+  function verifyHead() {
+    const head = git('rev-parse HEAD', ['rev-parse', '--verify', 'HEAD^{commit}']).toString('ascii').trim();
+    if (!/^[0-9a-f]{40}$/.test(head)) badOutput('rev-parse HEAD');
+    if (head !== headSha) throw new Error(`REVIEW_WORKDIR_HEAD_MISMATCH: 作業フォルダの版 ${head} が署名する版 ${headSha} と違います。`);
+  }
+  verifyHead();
+  const dirty = () => { throw new Error('REVIEW_WORKDIR_DIRTY: 作業フォルダのファイルまたはインデックスがコミットと一致しません。レビューの修正を PR に反映して、新しい版を確認してください'); };
+  const listIndex = () => git('ls-files index', ['ls-files', '-v', '--stage', '-z']);
+  const index = listIndex();
+  const tracked = new Map();
+  for (const row of nulFields(index, 'ls-files index')) {
+    const tab = row.indexOf('\t');
+    if (tab < 0 || tab === row.length - 1) badOutput('ls-files index');
+    const meta = /^H (100644|100755|120000) ([0-9a-f]{40}) 0$/.exec(row.slice(0, tab));
+    if (!meta) throw new Error('REVIEW_WORKDIR_UNSUPPORTED: サブモジュールまたは特殊なインデックス状態を検査できません');
+    const file = row.slice(tab + 1);
+    if (tracked.has(file) || file.split('/').some((p) => ['', '.', '..'].includes(p))) badOutput('ls-files index');
+    tracked.set(file, { mode: meta[1], oid: meta[2] });
+  }
+  const tree = nulFields(git('ls-tree', ['ls-tree', '-r', '-z', headSha]), 'ls-tree');
+  if (tree.length !== tracked.size) dirty();
+  for (const row of tree) {
+    const tab = row.indexOf('\t');
+    const entry = tracked.get(row.slice(tab + 1));
+    if (!entry || row.slice(0, tab) !== `${entry.mode} blob ${entry.oid}`) dirty();
+  }
+  const paths = [...tracked.keys()];
+  const keys = nulFields(git('config filters', ['config', '--includes', '--null', '--name-only', '--get-regexp', '^filter\\..*\\.(clean|process)$'],
+    { allowMissing: true }), 'config filters');
+  const drivers = new Set();
+  for (const raw of keys) {
+    const m = /^filter\.(.+)\.(clean|process)$/.exec(raw);
+    if (!m) badOutput('config filters');
+    drivers.add(m[1]);
+  }
+  if (drivers.size) {
+    // --cached を指定せず、作業ツリーと Git 設定から有効な属性を解決する。
+    for (let i = 0; i < paths.length; i += 1024) {
+      const batch = paths.slice(i, i + 1024);
+      const input = Buffer.from(batch.join('\0') + '\0', 'latin1');
+      const attrs = nulFields(git('check-attr', ['check-attr', '-z', '--stdin', 'filter'], { input }), 'check-attr');
+      if (attrs.length !== batch.length * 3) badOutput('check-attr');
+      for (let j = 0; j < batch.length; j++) {
+        const [file, name, value] = attrs.slice(j * 3, j * 3 + 3);
+        if (file !== batch[j] || name !== 'filter') badOutput('check-attr');
+        // set/unset/unspecified も同名の文字列値と区別できないため、一致時は安全側に倒す。
+        if (drivers.has(value)) throw new Error('REVIEW_WORKDIR_FILTER_ACTIVE: 追跡ファイルに外部 Git フィルターが適用されるため署名を中止しました');
+      }
+    }
+  }
+  // status/diff は使わず、外部フィルターを経由しない生のバイト列を比較する。
+  // Git の内部変換でのみ一致するチェックアウトも、安全に確認できないため拒否する。
+  const prefix = Buffer.from(workdir.endsWith('/') ? workdir : workdir + '/');
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  for (const [file, { mode, oid }] of tracked) {
+    const filename = Buffer.concat([prefix, Buffer.from(file, 'latin1')]);
+    const parent = filename.subarray(0, filename.lastIndexOf(0x2f) || 1);
+    const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.mode === b.mode &&
+      a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+    try {
+      if (!fs.realpathSync.native(parent, { encoding: 'buffer' }).equals(parent)) dirty();
+      const before = fs.lstatSync(filename, { bigint: true });
+      let digest;
+      if (mode === '120000') {
+        if (!before.isSymbolicLink()) dirty();
+        const target = fs.readlinkSync(filename, { encoding: 'buffer' });
+        digest = createHash('sha1').update(`blob ${target.length}\0`).update(target).digest('hex');
+      } else {
+        if (!before.isFile() || Boolean(before.mode & 0o100n) !== (mode === '100755')) dirty();
+        const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        try {
+          if (!sameFile(before, fs.fstatSync(fd, { bigint: true }))) dirty();
+          const hash = createHash('sha1').update(`blob ${before.size}\0`);
+          let read = 0n;
+          for (let n; (n = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0;) {
+            read += BigInt(n);
+            if (read > before.size) dirty();
+            hash.update(chunk.subarray(0, n));
+          }
+          if (read !== before.size) dirty();
+          digest = hash.digest('hex');
+        } finally { fs.closeSync(fd); }
+      }
+      if (digest !== oid || !sameFile(before, fs.lstatSync(filename, { bigint: true }))) dirty();
+    } catch (e) {
+      if (e.code === 'ENOENT' || e.code === 'ENOTDIR' || e.code === 'ELOOP') dirty();
+      if (!e.code) throw e;
+      throw new Error(`REVIEW_WORKDIR_READ_FAILED: 追跡ファイルを確認できません (${e.code})`);
+    }
+  }
+  if (git('ls-files untracked', ['ls-files', '--others', '--exclude-standard', '-z']).length) dirty();
+  // .gitignore・.git/info/exclude・グローバル ignore に該当するファイルは上の検査から見えない。
+  // 練習用 clone では生成物を意図的に除外する運用があるため拒否はせず、確認画面で署名者に見せる。
+  // --directory で完全に無視されたディレクトリは 1 件にまとめる。
+  const ignored = nulFields(git('ls-files ignored', ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']), 'ls-files ignored')
+    .map((name) => Buffer.from(name, 'latin1').toString('utf8').replace(/[\p{C}]/gu, '?'));
+  verifyHead();
+  if (reviewRoot() !== workdir || !listIndex().equals(index)) {
+    throw new Error('REVIEW_WORKDIR_CHANGED: 確認中に作業フォルダまたはインデックスが変わりました');
+  }
+  return { workdir, head: headSha, ignored };
+}
+
+/** 確認画面用: Git の ignore 規則で検査対象外になったファイルの件数と例。 */
+function describeIgnored(ignored) {
+  if (!ignored.length) return '検査対象外 (ignore 規則): なし';
+  const sample = ignored.slice(0, 5).map((p) => JSON.stringify(p)).join(', ');
+  return `検査対象外 (ignore 規則): ${ignored.length} 件 (例: ${sample}${ignored.length > 5 ? ', ...' : ''})。/ship が残した変更が含まれていないか確認してください`;
+}
 
 function context(o) {
   const pol = policyLib.loadTrustedPolicy(o.project ? path.resolve(o.project) : policyLib.REPO_ROOT, o['base-ref'] || 'origin/main');
@@ -114,14 +311,40 @@ const cmds = {
   'ship-attest'(o) {
     // --kind が指定されたら (値なし・空も含む) ship 以外は humanDiffAttest で検証する
     if (o.kind != null && o.kind !== 'ship') return humanDiffAttest(o);
-    for (const k of ['repo', 'pr', 'head', 'reviewed', 'important-open', 'watch']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
+    for (const k of ['repo', 'pr', 'head', 'workdir', 'reviewed', 'important-open', 'watch']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
+    store.assertSha(o.head, 'head');
+    const repo = store.assertRepo(o.repo);
+    const pr = store.assertPr(o.pr);
+    const reviewed = o.reviewed === 'yes';
+    if (!reviewed && o.reviewed !== 'no') throw Object.assign(new Error('REVIEWED_MUST_BE_YES_OR_NO'), { exit: 2 });
+    const importantOpen = Number(o['important-open']);
+    if (!/^(0|[1-9]\d*)$/.test(o['important-open']) || !Number.isSafeInteger(importantOpen)) {
+      throw Object.assign(new Error('IMPORTANT_OPEN_INVALID: 重大な指摘の件数は 0 以上の整数で指定してください'), { exit: 2 });
+    }
+    // 署名前に /ship を実行した作業フォルダ・対象 SHA・重大所見の件数を確認する。
+    const wd = checkReviewWorkdir(o.workdir, o.head);
     const bundle = readBundle();
-    const pass = hg.readPassphrase(bundle, `Ship 結果の証明 (PR #${o.pr}) パスフレーズ: `);
+    let inputSource = 'skipped';
+    if (reviewed) {
+      const typed = readImportantCount(bundle, `対象: ${repo} #${pr} @ ${wd.head}\n作業フォルダ: ${JSON.stringify(wd.workdir)}\n${describeIgnored(wd.ignored)}\n/ship が報告した未解決の重大な指摘の件数を入力してください (nit は数えない): `);
+      inputSource = typed.source;
+      if (typed.value !== String(importantOpen)) {
+        throw Object.assign(new Error('IMPORTANT_OPEN_MISMATCH: 入力した件数が --important-open と一致しません。署名を中止しました'), { exit: 1 });
+      }
+    }
+    const pass = hg.readPassphrase(bundle, `Ship 結果の証明 (PR #${pr}) パスフレーズ: `);
     const key = hg.loadPrivateKey(bundle, pass);
-    const a = hg.issueShipAttestation({ repo: o.repo, pr: o.pr, headSha: o.head, reviewed: o.reviewed === 'yes', importantOpen: o['important-open'],
+    // 端末での入力待ちの間にファイルや HEAD が変わっていないか再確認する。
+    if (checkReviewWorkdir(wd.workdir, o.head).workdir !== wd.workdir) {
+      throw Object.assign(new Error('REVIEW_WORKDIR_CHANGED: 確認した作業フォルダが変わりました'), { exit: 1 });
+    }
+    const a = hg.issueShipAttestation({ repo, pr, headSha: o.head, reviewed, importantOpen,
       watchStatus: o.watch, reviewEffort: o.effort || 'high', notes: o.notes || '', bundle, privateKey: key });
     store.writeRecord(path.join(hg.shipEvidenceDir(o.repo, o.pr), a.attestation_id + '.json'), a, { exclusive: true });
-    store.appendAudit('ship_attested', { repo: o.repo, pr: Number(o.pr), head_sha: o.head, reviewed: a.reviewed, important_open: a.important_open, approver: a.approver });
+    store.appendAudit('ship_attested', { repo, pr, head_sha: o.head, reviewed: a.reviewed, important_open: a.important_open, approver: a.approver,
+      workdir_clean: true, workdir_head: wd.head, workdir_ignored_count: wd.ignored.length,
+      // 人が端末で入力した場合だけ true。テスト用の環境変数や reviewed=no では false。
+      important_retyped: inputSource === 'tty', important_input_source: inputSource });
     say(JSON.stringify({ attestation_id: a.attestation_id, head_sha: a.head_sha }));
     return 0;
   },
@@ -211,7 +434,11 @@ function decide(o, decision) {
 function main(argv = process.argv.slice(2)) {
   const o = parse(argv);
   const cmd = o._[0];
-  if (!cmd || !cmds[cmd]) { process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(3, 20).map((l) => l.replace(/^ \* ?/, '')).join('\n') + '\n'); return cmd ? 2 : 0; }
+  if (!cmd || !cmds[cmd]) {
+    const lines = fs.readFileSync(__filename, 'utf8').split('\n');
+    process.stdout.write(lines.slice(3, lines.indexOf(' */')).map((l) => l.replace(/^ \* ?/, '')).join('\n') + '\n');
+    return o.help === true || !cmd ? 0 : 2;
+  }
   try { return cmds[cmd](o); } catch (e) { process.stderr.write(`ship-approve: ${e.message}\n`); return e.exit || 1; }
 }
 

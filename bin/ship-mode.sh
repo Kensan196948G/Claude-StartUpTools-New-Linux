@@ -68,7 +68,7 @@ print_ship_steps() {
     printf '  2. プロンプトで次を入力:  %s/ship%s\n' "$C_GREEN" "$C_RESET"
   fi
   printf '  3. 停止するときはそのセッションで  %s/ship stop%s  (状況確認は /tasks)\n' "$C_YELLOW" "$C_RESET"
-  printf '  4. 完了後、見た結果を署名して残す:\n     bin/ship-approve.sh ship-attest --repo <owner/repo> --pr <N> --head <SHA> --reviewed yes --important-open 0 --watch checks-pass-comments-answered\n'
+  printf '  4. 完了後、見た結果を署名して残す:\n     bin/ship-approve.sh ship-attest --repo <owner/repo> --pr <N> --head <SHA> --workdir <この作業フォルダ> --reviewed yes --important-open <重大な指摘の件数> --watch checks-pass-comments-answered\n     (作業フォルダに /ship の修正が残っていると署名できない。重大な指摘の件数は端末で入力し直す)\n'
   printf '  5. ClaudeOS 側:  bin/ship.sh quality ... → bin/ship.sh gate ... → (人) bin/ship-approve.sh approve ... → bin/ship.sh merge ...\n'
   printf '  ⚠ watch 中は Claude が gh/git をあなたの権限で使います。auto-merge を有効にした PR では watch の push がマージに至り得ます。\n\n'
 }
