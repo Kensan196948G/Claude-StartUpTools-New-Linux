@@ -1,6 +1,6 @@
 # R0・R1 の運用を軽くする変更案（提案・未適用）
 
-状態: 2026-11-25 **案 A を採用し実装（未マージ）**。前提の修正（§5）は別 PR、案 A の実装は §7。マージには R4 の手順（`/ship` → 署名 → 承認）が必要。
+状態: 2026-11-25 **案 A を採用し実装（未マージ）**。前提の修正（§5）は PR #237 として **2026-11-25 にマージ済み**（`f1517a3`）。案 A の実装は §7（PR #238）。マージには R4 の手順（`/ship` → 署名 → 承認）が必要。
 
 ## 1. 問題
 
@@ -83,7 +83,9 @@ R0・R1 でも `/ship` と署名を続ける。安全性は最も高いが、手
 | 差分を読まずに署名する | 技術的には防げない（`/ship` 署名と同じ限界）。署名は人の宣言として残り、監査ログに記録される |
 | ポリシーを AI が書き換えて R0 を広げる | `ship-policy.json` は R4。変更には Ship 署名と承認が必要（今と同じ） |
 
-## 5. 前提の修正（案 A・案 B 共通で推奨）
+## 5. 前提の修正（案 A・案 B 共通で推奨）— PR #237 でマージ済み
+
+> 2026-11-25 追記: PR #237 で実施済み。`/ship 237` を 4 回通した結果、対象は下の表より広がった（表記揺れ・入れ子の設定ディレクトリ・他ツールの指示書、MCP・Codex・OpenCode の設定を R4、リネームの変更前パスも分類）。詳細は `docs/architecture/SHIP_RISK_INSTRUCTIONS_IMPACT.md`。以下は提案時点の記述。
 
 現行の R0 パターン `**/*.md` は、エージェントの指示書（`.claude/**`、`Claude/templates/**`、`AGENTS.md`、`CLAUDE.md`）にも当たる。
 これらは**プロンプト注入の経路**になり得るため、R0 として軽く扱うべきではない。案の適用前に、少なくとも次を R2 以上にする:
@@ -122,7 +124,7 @@ R0・R1 でも `/ship` と署名を続ける。安全性は最も高いが、手
 
 | ファイル | 内容 |
 | --- | --- |
-| `config/ship-policy.json` | 指示書を R2 にする規則（別 PR）と、`humanGate.reviewKindsByRisk`（R0・R1 は `ship` と `human-diff`、R2〜R4 は `ship` のみ） |
+| `config/ship-policy.json` | 指示書を R2 にする規則（PR #237 でマージ済み）と、`humanGate.reviewKindsByRisk`（R0・R1 は `ship` と `human-diff`、R2〜R4 は `ship` のみ） |
 | `scripts/ship/lib/human-gate.js` | 署名の新形式 `claudeos.ship-attestation/v2`（`review_kind`・`files_reviewed` を署名対象に含める）。v1（従来の `/ship` 署名）はそのまま有効。`shipEvidenceFor` は gate が計算したリスクで種類を選別 |
 | `scripts/ship/lib/quality-gate.js` | 二重の防御: 証跡の種類がそのリスクで認められなければ `ship.review_kind=UNKNOWN` とし、証跡なしとして扱う |
 | `scripts/ship/ship.js` | `gate` が変更ファイルから計算したリスクを証跡の選別に渡す（取得できなければ R4 = `ship` のみ） |
@@ -151,4 +153,4 @@ bash bin/ship-approve.sh ship-attest --kind human-diff \
 
 ### 効く時期
 
-gate・承認は **main 上のポリシー**（`loadTrustedPolicy`）を使う。この PR と前提の PR がマージされるまでは、R0・R1 でも従来どおり `/ship` 署名が必要。
+gate・承認は **main 上のポリシー**（`loadTrustedPolicy`）を使う。前提の PR #237 はマージ済み。この PR（#238）がマージされるまでは、R0・R1 でも従来どおり `/ship` 署名が必要。

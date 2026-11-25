@@ -148,15 +148,35 @@ test('risk: エージェントの指示書は Markdown でも R0 にしない (R
   // プロンプト注入の経路になり得るため、**/*.md (R0) より先に R2 として評価する
   for (const f of ['CLAUDE.md', 'AGENTS.md', '.claude/CLAUDE.md', '.claude/rules/hooks.md', '.claude/commands/x.md',
     'Claude/templates/claude/CLAUDE.md', '.claude/skills/verify-startuptools/SKILL.md', 'Codex/templates/x/AGENTS.md',
-    '.agents/skills/a/SKILL.md', 'sub/dir/CLAUDE.md']) {
+    '.agents/skills/a/SKILL.md', 'sub/dir/CLAUDE.md',
+    // /ship 237 の指摘: ローカル版・表記揺れ・入れ子の設定ディレクトリ・別ツールの指示書
+    'CLAUDE.local.md', 'sub/claude.local.md', 'Agents.md', 'agents.md', '.claude/claudeos/rules/common/agents.md',
+    'scripts/web/.claude/rules/x.md', 'GEMINI.md', '.github/agents/r.md', '.github/prompts/p.prompt.md', '.clinerules/x.md', '.kiro/steering/x.md', 'Skill.md',
+    '.github/copilot-instructions.md', '.github/instructions/a.instructions.md', 'x/.cursorrules']) {
     assert.equal(risk.classifyFile(f, pol.risk).level, 'R2', f);
   }
-  // 通常の文書は R0 のまま
-  for (const f of ['README.md', 'CHANGELOG.md', 'docs/architecture/X.md', 'reports/ship-native/COMPLETION_REPORT.md']) {
+  // 通常の文書は R0 のまま (紛らわしい名前も含む)
+  for (const f of ['README.md', 'CHANGELOG.md', 'docs/architecture/X.md', 'reports/ship-native/COMPLETION_REPORT.md',
+    'CLAUDE-back.md', 'docs/architecture/CLAUDE_CODE_COMPATIBILITY.md', 'docs/agents-skills-inventory-2026Q2.md', 'docs/MY_AGENTS.md']) {
     assert.equal(risk.classifyFile(f, pol.risk).level, 'R0', f);
   }
+  // 規則の順序: 配布される指示書ディレクトリ内のテストは R1 ではなく R2 (R2 が R1 より先)
+  assert.equal(risk.classifyFile('.claude/claudeos/tests/lib/utils.test.js', pol.risk).level, 'R2');
+  assert.equal(risk.classifyFile('tests/bats/unit/x.bats', pol.risk).level, 'R1');
+  // リネーム: changedFiles は変更前のパスも返すので、指示書を docs/ へ移しても R2
+  assert.equal(risk.classify(['docs/notes.md', 'CLAUDE.md'], pol.risk).level, 'R2');
   // 指示書を 1 つでも含む PR は R2 以上 (最大値)
   assert.equal(risk.classify(['docs/a.md', 'CLAUDE.md'], pol.risk).level, 'R2');
+  // 権限・フックを決める設定ファイルは入れ子・local でも R4 (/ship 237 の指摘)
+  for (const f of ['pkg/.claude/settings.json', '.claude/settings.local.json', '.codex/hooks.json', 'pkg/.codex/hooks.json',
+    // /ship 237 (3 回目): MCP サーバー・Codex/OpenCode の設定、テンプレートの settings も同じ役割なので R4
+    '.mcp.json', 'pkg/.mcp.json', '.codex/config.toml', '.codex/config.toml.example', 'opencode.json',
+    'Claude/templates/claude/settings.local.json', 'Claude/templates/x/settings.dev.json']) {
+    assert.equal(risk.classifyFile(f, pol.risk).level, 'R4', f);
+  }
+  // 配布テンプレート (Claude/**) 配下は名前に関わらず R2 (例: 退避ファイル Claude/CLAUDE-back.md)
+  assert.equal(risk.classifyFile('Claude/CLAUDE-back.md', pol.risk).level, 'R2');
+  assert.equal(risk.classifyFile('Claude/templates/claude/CLAUDE-back.md', pol.risk).level, 'R2');
   // 既存の上位規則は優先されたまま
   assert.equal(risk.classifyFile('.claude/settings.json', pol.risk).level, 'R4');
   assert.equal(risk.classifyFile('Claude/templates/claude/claudeos/scripts/hooks/x.js', pol.risk).level, 'R4');

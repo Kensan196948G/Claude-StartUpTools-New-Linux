@@ -34,7 +34,8 @@ const fs=require('fs');const f=${JSON.stringify(FAKE)};const s=JSON.parse(fs.rea
 const a=process.argv.slice(2);s.calls.push(a.join(' '));
 const save=()=>fs.writeFileSync(f,JSON.stringify(s));
 const pr=s.pr;
-if(a[0]==='pr'&&a[1]==='view'&&a.includes('files')){save();console.log(JSON.stringify({files:s.files.map(p=>({path:p}))}));process.exit(0);}
+if(a[0]==='api'&&a.includes('--paginate')&&/pulls\\/\\d+\\/files/.test(a.join(' '))){save();console.log(JSON.stringify([s.filesOverride||s.files.map(p=>({filename:p,status:'modified'}))]));process.exit(0);}
+if(a[0]==='api'&&/\\/pulls\\/\\d+$/.test(a.find(x=>String(x).startsWith('repos/'))||'')){save();console.log(JSON.stringify({changed_files:s.files.length}));process.exit(0);}
 if(a[0]==='pr'&&a[1]==='view'){const want=a[a.indexOf('--json')+1].split(',');const known=['number','state','isDraft','mergeable','mergeStateStatus','headRefOid','headRefName','baseRefName','url','title','author','statusCheckRollup','mergeCommit','autoMergeRequest','files'];const bad=want.filter(f=>!known.includes(f));if(bad.length){save();console.error('Unknown JSON field: "'+bad[0]+'"');process.exit(1);}save();console.log(JSON.stringify({number:7,state:pr.state,isDraft:false,mergeable:'MERGEABLE',mergeStateStatus:'CLEAN',headRefOid:pr.head,headRefName:'feat/x',baseRefName:'main',url:'u',title:'t',author:{login:'k'},statusCheckRollup:pr.checks,mergeCommit:pr.mergeCommit?{oid:pr.mergeCommit}:null,autoMergeRequest:pr.auto?{}:null}));process.exit(0);}
 if(a[0]==='api'&&a[1]==='graphql'){save();console.log(JSON.stringify({data:{repository:{pullRequest:{baseRefOid:pr.base,headRefOid:pr.head,reviewThreads:{totalCount:0,nodes:[]}}}}}));process.exit(0);}
 if(a[0]==='api'&&String(a[1]).includes('/rules/branches/')){save();console.log(JSON.stringify(s.rules));process.exit(0);}
@@ -218,6 +219,17 @@ test('human-diff CLI: R0 の PR は差分確認の署名で gate PASS、R2 で�
   // 不明な種類は拒否
   const unk = approveCli(['ship-attest', '--kind', 'auto', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
   assert.match(unk.stderr, /REVIEW_KIND_INVALID/);
+});
+
+test('gate: 変更ファイルが取り切れないときは R4 にし、理由を gate の記録に残す', { skip: !ISO && 'bwrap 不可' }, () => {
+  // 偽 gh は changed_files = files.length を返す。一覧だけ減らして件数不一致を作る
+  setFake({ files: ['docs/a.md', 'docs/b.md'] });
+  const s = fake(); s.filesOverride = [{ filename: 'docs/a.md', status: 'modified' }]; fs.writeFileSync(FAKE, JSON.stringify(s));
+  const gate = ship(['gate', '--repo', REPO, '--pr', '7', '--requirements', 'met']);
+  assert.equal(gate.json.risk, 'R4');
+  const rec = JSON.parse(fs.readFileSync(path.join(SHIP_HOME, 'gates', 'acme__widget', 'pr-7', HEAD + '.json'), 'utf8'));
+  assert.ok(gate.json.checks.some((c) => c.id === 'risk.classified' && /CHANGED_FILES_UNAVAILABLE: FILES_INCOMPLETE/.test(c.detail)), JSON.stringify(gate.json.checks));
+  assert.ok(rec.checks.some((c) => c.id === 'risk.classified' && /FILES_INCOMPLETE/.test(c.detail)));
 });
 
 test.after(() => fs.rmSync(T, { recursive: true, force: true }));
