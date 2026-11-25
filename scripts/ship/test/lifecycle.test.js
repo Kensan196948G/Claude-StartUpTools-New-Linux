@@ -13,10 +13,20 @@ const SHIP_HOME = path.join(T, 'ship');
 const FAKE = path.join(T, 'fakegh.json'); // 偽 gh の状態
 const REPO = 'acme/widget';
 
+// テスト用 Git のみ、CI/ホストのフィルター・署名設定などを引き継がない。
+// 外部フィルターを拒否するテストは fixture のローカル設定で個別に再現する。
+const GIT_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+GIT_ENV.GIT_CONFIG_NOSYSTEM = '1';
+GIT_ENV.GIT_CONFIG_GLOBAL = '/dev/null';
+
 // ---- 一時プロジェクト ----
 const PROJ = path.join(T, 'proj');
 fs.mkdirSync(PROJ);
-const g = (...a) => spawnSync('git', a, { cwd: PROJ, encoding: 'utf8' });
+function g(...args) {
+  const r = spawnSync('git', args, { cwd: PROJ, env: GIT_ENV, encoding: 'utf8' });
+  assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr || r.error || ''}`);
+  return r;
+}
 g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
 fs.writeFileSync(path.join(PROJ, 'test.sh'), 'echo "ok 1 - works"\n');
 fs.writeFileSync(path.join(PROJ, 'README.md'), 'hello\n');
@@ -68,7 +78,7 @@ pol.quality.profiles = { t: { checks: [{ id: 'unit', category: 'unit', cmd: ['ba
 const POL = path.join(T, 'policy.json');
 fs.writeFileSync(POL, JSON.stringify(pol));
 
-const ENV = { ...process.env, CLAUDEOS_SHIP_HOME: SHIP_HOME, CLAUDEOS_SHIP_GH_BIN: ghScript, CLAUDEOS_SHIP_POLICY: POL,
+const ENV = { ...GIT_ENV, CLAUDEOS_SHIP_HOME: SHIP_HOME, CLAUDEOS_SHIP_GH_BIN: ghScript, CLAUDEOS_SHIP_POLICY: POL,
   CLAUDEOS_SHIP_TRUSTED_POLICY: POL, CLAUDEOS_APPROVER_KEY: KEYFILE };
 function ship(args, env = {}) {
   const r = spawnSync('node', [path.join(ROOT, 'scripts/ship/ship.js'), ...args, '--json'], { env: { ...ENV, ...env }, encoding: 'utf8', timeout: 300000 });
