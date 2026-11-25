@@ -446,6 +446,57 @@ test('ship-attest 安全装置 (2): 重大な指摘の件数を入力し直さ�
   assert.equal(evidenceCount(), 1, '不正入力では証跡が増えない');
 });
 
+test('ship-attest: 存在しない・フォルダでない --workdir は Git の失敗ではなく、指定の誤りとして伝える', () => {
+  const before = evidenceCount();
+  const file = path.join(T, 'not-a-directory.txt');
+  fs.writeFileSync(file, 'x\n');
+  for (const target of [path.join(T, 'no-such-workdir'), file]) {
+    const r = approveCli(attestArgs(['--workdir', target]), TESTAUTH);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /REVIEW_WORKDIR_NOT_FOUND/);
+    assert.doesNotMatch(r.stderr, /REVIEW_WORKDIR_GIT_FAILED/);
+  }
+  assert.equal(evidenceCount(), before);
+});
+
+test('escapeDisplay: 端末を乱す制御文字・bidi 文字・C1 制御を見える形にし、通常の日本語はそのまま残す', () => {
+  const { escapeDisplay } = require('../approve');
+  assert.equal(escapeDisplay('/home/kensan/作業 folder'), '/home/kensan/作業 folder');
+  assert.equal(escapeDisplay('a‮b'), 'a\\u{202e}b');     // 右から左への上書き
+  assert.equal(escapeDisplay('a\u009bb'), 'a\\u{9b}b');       // C1 の CSI
+  assert.equal(escapeDisplay('a\u001b[2Jb'), 'a\\u{1b}[2Jb'); // ESC
+  assert.equal(escapeDisplay('a​b'), 'a\\u{200b}b');     // ゼロ幅スペース
+  assert.equal(escapeDisplay('a b'), 'a\\u{a0}b');       // NBSP (半角スペースと見分けがつかない)
+  assert.equal(escapeDisplay('a　b'), 'a\\u{3000}b');     // 全角スペース
+  assert.equal(escapeDisplay('a b'), 'a\\u{2028}b');     // 行区切り
+  assert.doesNotMatch(escapeDisplay('‮⁦\u009b\u0007'), /\p{C}/u);
+});
+
+test('ship-attest: 照合が制限時間を超えたら、署名せずに専用のエラーで止める', () => {
+  const before = evidenceCount();
+  const r = approveCli(attestArgs(['--workdir', PROJ]), { ...TESTAUTH, CLAUDEOS_SHIP_WORKDIR_BUDGET_MS: '1' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /REVIEW_WORKDIR_TIMEOUT/);
+  assert.doesNotMatch(r.stdout, /attestation_id/);
+  assert.equal(evidenceCount(), before);
+  assert.match(r.stderr, /制限時間 \(1 秒\)/, '500 ミリ秒未満でも 0 秒と表示しない');
+});
+
+test('時間上限の環境変数は、短くする指定だけを受け付ける', () => {
+  const { reviewWorkdirBudgetMs, REVIEW_WORKDIR_BUDGET_MS } = require('../approve');
+  const withEnv = (v) => {
+    const old = process.env.CLAUDEOS_SHIP_WORKDIR_BUDGET_MS;
+    if (v === undefined) delete process.env.CLAUDEOS_SHIP_WORKDIR_BUDGET_MS; else process.env.CLAUDEOS_SHIP_WORKDIR_BUDGET_MS = v;
+    try { return reviewWorkdirBudgetMs(); } finally { if (old === undefined) delete process.env.CLAUDEOS_SHIP_WORKDIR_BUDGET_MS; else process.env.CLAUDEOS_SHIP_WORKDIR_BUDGET_MS = old; }
+  };
+  assert.equal(REVIEW_WORKDIR_BUDGET_MS, 120000);
+  assert.equal(withEnv(undefined), 120000);
+  assert.equal(withEnv('5000'), 5000);                       // 短くする指定は有効
+  for (const bad of ['99999999', '120000', '0', '-1', '', '1e3', '0x10', ' 5', 'abc']) {
+    assert.equal(withEnv(bad), 120000, `延ばす・不正な指定 ${JSON.stringify(bad)} は既定値`);
+  }
+});
+
 function lastAttestAudit() {
   const lines = fs.readFileSync(path.join(SHIP_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   return lines.filter((e) => e.event === 'ship_attested').pop();
@@ -498,11 +549,15 @@ test('ship-attest: 通常の鍵設定では件数の環境変数を使わず、�
   assert.equal(evidenceCount(), before);
 });
 
-test('ship-attest: Linux の端末で長い行を消費して拒否し、改行なし・非通常モードでも止める', () => {
+// PTY を使う試験は python3 の pty/termios が前提。無い環境では失敗ではなく NOT RUN として飛ばす。
+const PTY_AVAILABLE = spawnSync('python3', ['-c', 'import pty, termios, fcntl'], { encoding: 'utf8' }).status === 0;
+
+test('ship-attest: Linux の端末で長い行を消費して拒否し、改行なし・非通常モード・stty なしでも止める',
+  { skip: !PTY_AVAILABLE && 'python3 の pty/termios が使えないため NOT RUN' }, () => {
   const cmd = [process.execPath, path.join(ROOT, 'scripts/ship/approve.js'), ...attestArgs(['--workdir', PROJ])];
   const fixture = path.join(__dirname, 'attest-tty-fixture.py');
   const before = evidenceCount();
-  for (const mode of ['overlong', 'incomplete', 'noncanonical', 'valid']) {
+  for (const mode of ['overlong', 'incomplete', 'noncanonical', 'nostty', 'valid']) {
     const r = spawnSync('python3', [fixture, mode, ...cmd], { env: { ...ENV, ...TESTAUTH }, encoding: 'utf8', timeout: 12000 });
     assert.equal(r.status, 0, `${mode}: ${r.error || r.stderr || ''}`);
     assert.equal(evidenceCount(), before + (mode === 'valid' ? 1 : 0), mode);

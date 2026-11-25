@@ -24,6 +24,13 @@ def controlling_tty():
 
 env = os.environ.copy()
 env.pop('CLAUDEOS_SHIP_TEST_IMPORTANT', None)
+if mode == 'nostty':
+    # git だけを置いた PATH で起動し、stty を実行できない環境を再現する。
+    import shutil
+    import tempfile
+    bin_dir = tempfile.mkdtemp(prefix='attest-nostty-')
+    os.symlink(shutil.which('git'), os.path.join(bin_dir, 'git'))
+    env['PATH'] = bin_dir
 if mode != 'valid':
     env.pop('CLAUDEOS_SHIP_TEST_PASSPHRASE', None)
 with subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave,
@@ -51,7 +58,8 @@ with subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave,
         else:
             expected = {'incomplete': b'IMPORTANT_INPUT_INCOMPLETE',
                         'overlong': b'IMPORTANT_INPUT_TOO_LONG',
-                        'noncanonical': b'IMPORTANT_INPUT_TTY_MODE'}[mode]
+                        'noncanonical': b'IMPORTANT_INPUT_TTY_MODE',
+                        'nostty': b'IMPORTANT_INPUT_STTY_UNAVAILABLE'}[mode]
             assert status != 0 and expected in buf and b'attestation_id' not in buf
             assert 'パスフレーズ:'.encode() not in buf
     except (AssertionError, OSError):

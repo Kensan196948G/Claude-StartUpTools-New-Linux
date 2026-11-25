@@ -69,6 +69,10 @@ function readImportantCount(bundle, question) {
     // Linux の canonical TTY は read 1 回につき 1 行 (LF を含め最大 4096 バイト)。
     // 非 canonical 端末では途中まで読んで残りを残す可能性があるため、入力前に拒否する。
     const tty = spawnSync('stty', ['-a'], { stdio: [fd, 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C' }, encoding: 'utf8', timeout: 2000 });
+    // 端末の設定を確認できない原因 (stty が無い・時間切れ) は、端末モードの問題と区別して伝える。
+    if (tty.error) {
+      throw Object.assign(new Error(`IMPORTANT_INPUT_STTY_UNAVAILABLE: 端末の設定を確認する stty を実行できません (${tty.error.code || '起動エラー'})。coreutils の stty が使える環境でやり直してください`), { exit: 1 });
+    }
     if (tty.status !== 0 || !/(^|[\s;])icanon(?=[\s;]|$)/.test(tty.stdout)) {
       throw Object.assign(new Error('IMPORTANT_INPUT_TTY_MODE: 通常の行入力が可能な端末でやり直してください'), { exit: 1 });
     }
@@ -84,12 +88,44 @@ function readImportantCount(bundle, question) {
 }
 
 /**
+ * 端末へ表示する文字列から制御文字・書式文字 (C0/C1 制御、bidi 制御、ゼロ幅文字など) を除く。
+ * 該当文字は \u{XXXX} の形に置き換え、見えない文字があることが署名者に分かるようにする。
+ * JSON.stringify は C0 制御しか escape しないため、表示の前にこちらを通す。
+ */
+function escapeDisplay(text) {
+  // 制御・書式文字 (\p{C}) に加え、行区切り・段落区切りと、ASCII の半角スペース以外の空白 (NBSP、全角スペースなど) も
+  // 見た目で区別できないため \u{XXXX} にする。
+  return String(text).replace(/[\p{C}\p{Zl}\p{Zp}]|(?! )\p{Zs}/gu, (c) => `\\u{${c.codePointAt(0).toString(16)}}`);
+}
+
+/** 作業フォルダの検査 (全ファイルのハッシュ照合を含む) に使える時間の上限。 */
+const REVIEW_WORKDIR_BUDGET_MS = 120_000;
+/** 追跡ファイルがこの件数以上なら、照合の開始を端末へ知らせる。 */
+const REVIEW_WORKDIR_PROGRESS_FILES = 2000;
+
+/** 表示用の秒数。500 ミリ秒未満でも 0 秒と表示しない。 */
+const budgetSeconds = (ms) => Math.max(1, Math.round(ms / 1000));
+
+function reviewWorkdirBudgetMs() {
+  const raw = process.env.CLAUDEOS_SHIP_WORKDIR_BUDGET_MS;
+  // 上限を延ばして検査を弱めることはできない。短くする指定 (試験用) だけを受け付ける。
+  if (raw !== undefined && /^[1-9]\d{0,8}$/.test(raw) && Number(raw) < REVIEW_WORKDIR_BUDGET_MS) return Number(raw);
+  return REVIEW_WORKDIR_BUDGET_MS;
+}
+
+/**
  * checkReviewWorkdir — /ship を実行した作業フォルダの版と状態を確かめる。
  * レビュー中の修正が PR に取り込まれていない状態で署名する事故を防ぐ。
  * Git が報告する未追跡ファイルも変更として扱う。
  */
 function checkReviewWorkdir(dir, headSha) {
   const abs = path.resolve(dir);
+  const deadline = Date.now() + reviewWorkdirBudgetMs();
+  // 存在しない・フォルダでない指定は、Git を起動する前に区別して伝える。
+  let stat; try { stat = fs.statSync(abs); } catch { stat = null; }
+  if (!stat?.isDirectory()) {
+    throw Object.assign(new Error(`REVIEW_WORKDIR_NOT_FOUND: --workdir が存在するフォルダではありません (${escapeDisplay(JSON.stringify(abs))})`), { exit: 1 });
+  }
   // 呼び出し元の git hook などが設定した別のリポジトリ・index を参照しない。
   const env = { ...process.env, LC_ALL: 'C', GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' };
   for (const name of Object.keys(env)) if (name.startsWith('GIT_TRACE')) delete env[name];
@@ -190,7 +226,13 @@ function checkReviewWorkdir(dir, headSha) {
   // Git の内部変換でのみ一致するチェックアウトも、安全に確認できないため拒否する。
   const prefix = Buffer.from(workdir.endsWith('/') ? workdir : workdir + '/');
   const chunk = Buffer.allocUnsafe(64 * 1024);
+  if (tracked.size >= REVIEW_WORKDIR_PROGRESS_FILES) {
+    process.stderr.write(`追跡ファイル ${tracked.size} 件を照合しています (最大 ${budgetSeconds(reviewWorkdirBudgetMs())} 秒)...\n`);
+  }
   for (const [file, { mode, oid }] of tracked) {
+    if (Date.now() >= deadline) {
+      throw Object.assign(new Error(`REVIEW_WORKDIR_TIMEOUT: 追跡ファイルの照合が制限時間 (${budgetSeconds(reviewWorkdirBudgetMs())} 秒) を超えました。署名を中止しました`), { exit: 1 });
+    }
     const filename = Buffer.concat([prefix, Buffer.from(file, 'latin1')]);
     const parent = filename.subarray(0, filename.lastIndexOf(0x2f) || 1);
     const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.mode === b.mode &&
@@ -231,7 +273,7 @@ function checkReviewWorkdir(dir, headSha) {
   // 練習用 clone では生成物を意図的に除外する運用があるため拒否はせず、確認画面で署名者に見せる。
   // --directory で完全に無視されたディレクトリは 1 件にまとめる。
   const ignored = nulFields(git('ls-files ignored', ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']), 'ls-files ignored')
-    .map((name) => Buffer.from(name, 'latin1').toString('utf8').replace(/[\p{C}]/gu, '?'));
+    .map((name) => Buffer.from(name, 'latin1').toString('utf8'));
   verifyHead();
   if (reviewRoot() !== workdir || !listIndex().equals(index)) {
     throw new Error('REVIEW_WORKDIR_CHANGED: 確認中に作業フォルダまたはインデックスが変わりました');
@@ -242,7 +284,7 @@ function checkReviewWorkdir(dir, headSha) {
 /** 確認画面用: Git の ignore 規則で検査対象外になったファイルの件数と例。 */
 function describeIgnored(ignored) {
   if (!ignored.length) return '検査対象外 (ignore 規則): なし';
-  const sample = ignored.slice(0, 5).map((p) => JSON.stringify(p)).join(', ');
+  const sample = ignored.slice(0, 5).map((p) => escapeDisplay(JSON.stringify(p))).join(', ');
   return `検査対象外 (ignore 規則): ${ignored.length} 件 (例: ${sample}${ignored.length > 5 ? ', ...' : ''})。/ship が残した変更が含まれていないか確認してください`;
 }
 
@@ -326,7 +368,7 @@ const cmds = {
     const bundle = readBundle();
     let inputSource = 'skipped';
     if (reviewed) {
-      const typed = readImportantCount(bundle, `対象: ${repo} #${pr} @ ${wd.head}\n作業フォルダ: ${JSON.stringify(wd.workdir)}\n${describeIgnored(wd.ignored)}\n/ship が報告した未解決の重大な指摘の件数を入力してください (nit は数えない): `);
+      const typed = readImportantCount(bundle, `対象: ${repo} #${pr} @ ${wd.head}\n作業フォルダ: ${escapeDisplay(JSON.stringify(wd.workdir))}\n${describeIgnored(wd.ignored)}\n/ship が報告した未解決の重大な指摘の件数を入力してください (nit は数えない): `);
       inputSource = typed.source;
       if (typed.value !== String(importantOpen)) {
         throw Object.assign(new Error('IMPORTANT_OPEN_MISMATCH: 入力した件数が --important-open と一致しません。署名を中止しました'), { exit: 1 });
@@ -442,5 +484,5 @@ function main(argv = process.argv.slice(2)) {
   try { return cmds[cmd](o); } catch (e) { process.stderr.write(`ship-approve: ${e.message}\n`); return e.exit || 1; }
 }
 
-module.exports = { main, cmds };
+module.exports = { main, cmds, escapeDisplay, reviewWorkdirBudgetMs, REVIEW_WORKDIR_BUDGET_MS };
 if (require.main === module) process.exitCode = main();
