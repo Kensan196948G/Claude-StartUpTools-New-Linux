@@ -112,7 +112,8 @@ const cmds = {
     return 0;
   },
   'ship-attest'(o) {
-    if (o.kind && o.kind !== true && o.kind !== 'ship') return humanDiffAttest(o);
+    // --kind が指定されたら (値なし・空も含む) ship 以外は humanDiffAttest で検証する
+    if (o.kind != null && o.kind !== 'ship') return humanDiffAttest(o);
     for (const k of ['repo', 'pr', 'head', 'reviewed', 'important-open', 'watch']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
     const bundle = readBundle();
     const pass = hg.readPassphrase(bundle, `Ship 結果の証明 (PR #${o.pr}) パスフレーズ: `);
@@ -146,7 +147,8 @@ function humanDiffAttest(o) {
   say(`head     : ${ctx.pr.headRefOid}`);
   say(`リスク   : ${rk.level} (${rk.reason})`);
   say(`変更ファイル (${files.data.length}):`);
-  for (const d of rk.files.slice(0, 200)) say(`  ${d.level}  ${d.file}`);
+  // 「すべて読んだ」と署名させるので、省略せず全件を表示する
+  for (const d of rk.files) say(`  ${d.level}  ${d.file}`);
   if (!hg.reviewKindAllowed(ctx.pol, rk.level, 'human-diff')) {
     throw Object.assign(new Error(`HUMAN_DIFF_NOT_ALLOWED_FOR_${rk.level}: このリスクでは /ship のレビューと署名 (--kind ship) が必要`), { exit: 1 });
   }

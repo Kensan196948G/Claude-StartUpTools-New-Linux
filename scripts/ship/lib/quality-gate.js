@@ -86,7 +86,8 @@ function evaluate(inputs, policy) {
   // (shipEvidenceFor でも選別するが、gate 単体で呼ばれても R2 以上で human-diff を通さない)
   const kind = ship && ship.reviewKind ? ship.reviewKind : 'ship';
   const kindMap = policy.humanGate && policy.humanGate.reviewKindsByRisk;
-  const kindAllowed = kindMap ? Array.isArray(kindMap[riskLevel]) && kindMap[riskLevel].includes(kind) : kind === 'ship';
+  // /ship (v1 を含む) はどのリスクでも従来どおり有効。reviewKindsByRisk で絞るのは ship 以外の種類だけ
+  const kindAllowed = kind === 'ship' || (kindMap ? Array.isArray(kindMap[riskLevel]) && kindMap[riskLevel].includes(kind) : false);
   if (ship && !kindAllowed) add('ship.review_kind', 'UNKNOWN', `${kind} のレビュー証跡は ${riskLevel || 'リスク未判定'} では認められない`);
   const review = ship && kindAllowed ? ship : null;
   if (!review || review.reviewed == null) {

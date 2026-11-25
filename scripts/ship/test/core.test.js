@@ -231,6 +231,12 @@ test('gate: Ship 必須リスクで Ship 証跡がなければ UNKNOWN、重大�
   // R0 では Ship は必須ではないが、未実施は人の判断 (CONDITIONAL)
   assert.equal(gate.evaluate(goodInputs({ ship: null, risk: risk.classify(['docs/a.md'], pol.risk) }), pol).verdict, 'CONDITIONAL');
 });
+test('gate: /ship 証跡 (v1・種類なし) はリスク未判定でも従来どおり有効 (#238 で退行させない)', () => {
+  const ship = { reviewed: true, importantFindingsOpen: 0, source: 'human-signed-attestation:sa_1' };
+  const r = gate.evaluate(goodInputs({ ship, risk: { level: 'R9', reason: 'unknown', files: [], requirements: {} } }), pol);
+  assert.ok(!r.reasons.some((x) => x.includes('ship.review_kind')), r.reasons.join('\n'));
+  assert.ok(r.checks.some((c) => c.id === 'ship.reviewed' && c.result === 'PASS'), JSON.stringify(r.checks));
+});
 test('gate: human-diff 証跡は R0・R1 なら PASS、R2 以上では証跡なし扱い (二重の防御)', () => {
   const diff = { reviewed: true, importantFindingsOpen: 0, reviewKind: 'human-diff', source: 'human-diff-attestation:sa_2' };
   const r0 = gate.evaluate(goodInputs({ ship: diff, risk: risk.classify(['docs/a.md'], pol.risk) }), pol);

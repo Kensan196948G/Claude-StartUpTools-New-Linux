@@ -285,11 +285,13 @@ function shipEvidenceDir(repo, pr) { return path.join(store.shipHome(), 'ship-ev
 
 /**
  * reviewKindAllowed(policy, riskLevel, kind) — そのリスクでその種類のレビュー証跡を認めるか。
- * 未記載のリスク・種類は認めない (fail-closed)。reviewKindsByRisk 自体が無い旧ポリシーでは ship だけを認める。
+ * /ship は従来どおりどのリスクでも認める。ship 以外の種類は、未記載のリスク・種類を認めない (fail-closed)。
+ * reviewKindsByRisk 自体が無い旧ポリシーでは ship だけを認める。
  */
 function reviewKindAllowed(policy, riskLevel, kind) {
+  if (kind === 'ship') return true;
   const map = policy && policy.humanGate && policy.humanGate.reviewKindsByRisk;
-  if (!map) return kind === 'ship';
+  if (!map) return false;
   const allowed = map[riskLevel];
   return Array.isArray(allowed) && allowed.includes(kind);
 }
@@ -309,8 +311,12 @@ function shipEvidenceFor(repo, pr, headSha, policy, riskLevel = null) {
     valid.push(a);
   }
   if (!valid.length) return null;
-  valid.sort((x, y) => String(x.issued_at).localeCompare(String(y.issued_at)));
-  const a = valid[valid.length - 1];
+  // /ship の証跡があれば、より軽い human-diff の署名では置き換えさせない
+  // (同じ head で /ship が未解決の重大所見を記録した後に、human-diff で上書きして通す抜け道を塞ぐ)
+  const ships = valid.filter((x) => reviewKindOf(x) === 'ship');
+  const pool = ships.length ? ships : valid;
+  pool.sort((x, y) => String(x.issued_at).localeCompare(String(y.issued_at)));
+  const a = pool[pool.length - 1];
   const kind = reviewKindOf(a);
   const prefix = kind === 'human-diff' ? 'human-diff-attestation:' : 'human-signed-attestation:';
   return { reviewed: a.reviewed === true, importantFindingsOpen: a.important_open, watchStatus: a.watch_status, reviewKind: kind, source: prefix + a.attestation_id };

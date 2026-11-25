@@ -219,6 +219,19 @@ test('human-diff CLI: R0 の PR は差分確認の署名で gate PASS、R2 で�
   // 不明な種類は拒否
   const unk = approveCli(['ship-attest', '--kind', 'auto', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
   assert.match(unk.stderr, /REVIEW_KIND_INVALID/);
+  // --kind に値が無い (空) ときも、従来の /ship 経路に落ちずに拒否する (/ship 238 の指摘)
+  const empty = approveCli(['ship-attest', '--kind', '', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
+  assert.notEqual(empty.status, 0);
+  assert.match(empty.stderr, /REVIEW_KIND_INVALID/);
+  // 「すべて読んだ」と署名させるので、変更ファイルは省略せず全件を表示する (以前は 200 件で切っていた)
+  const many = Array.from({ length: 205 }, (_, i) => `docs/f${String(i).padStart(3, '0')}.md`);
+  setFake({ files: many });
+  fs.rmSync(path.join(SHIP_HOME, 'ship-evidence'), { recursive: true, force: true });
+  const all = approveCli(['ship-attest', '--kind', 'human-diff', '--repo', REPO, '--pr', '7', '--head', HEAD, '--important-open', '0'], TESTAUTH);
+  assert.equal(all.status, 0, all.stdout + all.stderr);
+  assert.match(all.stdout, /変更ファイル \(205\)/);
+  assert.match(all.stdout, /docs\/f204\.md/);
+  assert.match(all.stdout, /"files_reviewed":205/);
 });
 
 test('gate: 変更ファイルが取り切れないときは R4 にし、理由を gate の記録に残す', { skip: !ISO && 'bwrap 不可' }, () => {
