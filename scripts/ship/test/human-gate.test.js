@@ -193,6 +193,90 @@ test('Ship 証跡: 署名済みは gate 入力になり、head 違い・未署�
   assert.equal(hg.shipEvidenceFor(REPO, 7, H1, policy()), null);
 });
 
+// ---------------- 人の差分確認 (human-diff, R0・R1 のみ) ----------------
+function diffAttest(over = {}) {
+  return hg.issueShipAttestation({ repo: REPO, pr: 7, headSha: H1, reviewed: true, importantOpen: 0, watchStatus: 'not-started',
+    reviewKind: 'human-diff', filesReviewed: 3, bundle, privateKey: priv, ...over });
+}
+function putAttest(a) { store.writeRecord(path.join(hg.shipEvidenceDir(REPO, 7), a.attestation_id + '.json'), a); }
+
+test('human-diff: R0・R1 では証跡として認め、R2 以上では無視する (リスクは呼び出し側の計算値)', () => {
+  resetStore();
+  const a = diffAttest();
+  assert.equal(a.schema, hg.ATTEST_SCHEMA_V2);
+  assert.equal(a.review_kind, 'human-diff'); assert.equal(a.files_reviewed, 3);
+  putAttest(a);
+  for (const lv of ['R0', 'R1']) {
+    const ev = hg.shipEvidenceFor(REPO, 7, H1, policy(), lv);
+    assert.equal(ev.reviewKind, 'human-diff', lv);
+    assert.match(ev.source, /^human-diff-attestation:sa_/);
+  }
+  for (const lv of ['R2', 'R3', 'R4']) assert.equal(hg.shipEvidenceFor(REPO, 7, H1, policy(), lv), null, lv);
+  // リスクを渡さない呼び出しは ship 種別だけ (安全側)
+  assert.equal(hg.shipEvidenceFor(REPO, 7, H1, policy()), null);
+});
+
+test('human-diff: 署名対象の改ざん (種類・ファイル数・head) は検証で弾く', () => {
+  resetStore();
+  const a = diffAttest();
+  assert.equal(hg.verifyShipAttestation(a, { policy: policy(), headSha: H1 }).ok, true);
+  // v2 を v1 に見せかけて review_kind を消す → 署名対象が変わるので不正
+  const downgraded = { ...a, schema: hg.ATTEST_SCHEMA };
+  assert.equal(hg.verifyShipAttestation(downgraded, { policy: policy(), headSha: H1 }).reason, 'BAD_SIGNATURE');
+  assert.equal(hg.verifyShipAttestation({ ...a, files_reviewed: 30 }, { policy: policy(), headSha: H1 }).reason, 'BAD_SIGNATURE');
+  assert.equal(hg.verifyShipAttestation({ ...a, review_kind: 'ship' }, { policy: policy(), headSha: H1 }).reason, 'BAD_SIGNATURE');
+  assert.equal(hg.verifyShipAttestation({ ...a, review_kind: 'auto' }, { policy: policy(), headSha: H1 }).reason, 'REVIEW_KIND_INVALID');
+  assert.equal(hg.verifyShipAttestation(a, { policy: policy(), headSha: H2 }).reason, 'STALE_HEAD');
+});
+
+test('human-diff: 発行時の入力検証 (ファイル数必須・watch は not-started・種類は既知のみ)', () => {
+  assert.throws(() => diffAttest({ filesReviewed: null }), /FILES_REVIEWED_REQUIRED/);
+  assert.throws(() => diffAttest({ filesReviewed: 0 }), /FILES_REVIEWED_REQUIRED/);
+  assert.throws(() => diffAttest({ watchStatus: 'checks-pass-comments-answered' }), /WATCH_STATUS_MUST_BE_NOT_STARTED/);
+  assert.throws(() => diffAttest({ reviewKind: 'auto' }), /REVIEW_KIND_INVALID/);
+});
+
+test('human-diff: 従来 (v1) の /ship 署名はすべてのリスクで引き続き有効', () => {
+  resetStore();
+  const a = hg.issueShipAttestation({ repo: REPO, pr: 7, headSha: H1, reviewed: true, importantOpen: 0, watchStatus: 'not-started', bundle, privateKey: priv });
+  assert.equal(a.schema, hg.ATTEST_SCHEMA);
+  assert.equal(a.review_kind, undefined);
+  putAttest(a);
+  for (const lv of ['R0', 'R1', 'R2', 'R3', 'R4']) assert.equal(hg.shipEvidenceFor(REPO, 7, H1, policy(), lv).reviewKind, 'ship', lv);
+  assert.equal(hg.shipEvidenceFor(REPO, 7, H1, policy()).reviewKind, 'ship');
+});
+
+test('human-diff: reviewKindsByRisk が無い旧ポリシーでは ship だけを認める (fail-closed)', () => {
+  const old = policy(); old.humanGate = { ...old.humanGate }; delete old.humanGate.reviewKindsByRisk;
+  assert.equal(hg.reviewKindAllowed(old, 'R0', 'human-diff'), false);
+  assert.equal(hg.reviewKindAllowed(old, 'R0', 'ship'), true);
+  const p = policy();
+  // /ship は #238 以前と同じく、どのリスクでも有効 (reviewKindsByRisk で絞るのは ship 以外の種類だけ)。
+  // 未知・未判定のリスクで正規の /ship 署名を拒否すると、従来の経路を壊す (/ship 238 の指摘)
+  assert.equal(hg.reviewKindAllowed(p, 'R5', 'ship'), true);
+  assert.equal(hg.reviewKindAllowed(p, undefined, 'ship'), true);
+  // ship 以外は未知・未判定のリスクで認めない (fail-closed のまま)
+  assert.equal(hg.reviewKindAllowed(p, 'R5', 'human-diff'), false);
+  assert.equal(hg.reviewKindAllowed(p, undefined, 'human-diff'), false);
+});
+
+test('human-diff: 同じ head に /ship の署名があれば、後から付けた human-diff ではその結果を上書きできない', () => {
+  // /ship が未解決の重大所見 (important_open=2) を記録した後に、より軽い human-diff (0 件) を付けて通す抜け道を塞ぐ
+  resetStore();
+  const t0 = new Date('2026-11-25T00:00:00Z'); const t1 = new Date('2026-11-25T01:00:00Z');
+  const shipA = hg.issueShipAttestation({ repo: REPO, pr: 7, headSha: H1, reviewed: true, importantOpen: 2, watchStatus: 'not-started', bundle, privateKey: priv, now: t0 });
+  putAttest(shipA);
+  putAttest(diffAttest({ importantOpen: 0, now: t1 }));
+  const ev = hg.shipEvidenceFor(REPO, 7, H1, policy(), 'R0');
+  assert.equal(ev.reviewKind, 'ship');
+  assert.equal(ev.importantFindingsOpen, 2);
+  assert.equal(ev.source, 'human-signed-attestation:' + shipA.attestation_id);
+  // /ship の署名が無ければ human-diff が使われる (R0)
+  resetStore();
+  putAttest(diffAttest({ now: t1 }));
+  assert.equal(hg.shipEvidenceFor(REPO, 7, H1, policy(), 'R0').reviewKind, 'human-diff');
+});
+
 // ---------------- Merge Executor ----------------
 function readyState() {
   resetStore();

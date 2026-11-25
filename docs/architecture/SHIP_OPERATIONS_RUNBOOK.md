@@ -28,8 +28,21 @@ bash bin/ship-approve.sh keygen --name Kensan  # パスフレーズを 2 回入�
 | 8 | AI | `bin/ship.sh merge --repo O/R --pr N --dry-run` → `bin/ship.sh merge --repo O/R --pr N` |
 | 9 | AI | `bin/ship.sh monitor --once` で MERGED 確認 → run COMPLETED |
 
-`/ship` が使えない環境（gh < 2.63、project hook あり、Ship 必須でない R0/R1）では手順 3・4 を省略でき、
-gate は Ship 未実施を CONDITIONAL/UNKNOWN として扱う（自動マージ不可）。
+`/ship` が使えない環境（gh < 2.63、project hook あり）では手順 3・4 を省略できるが、
+gate は Ship 未実施を CONDITIONAL/UNKNOWN として扱う（承認できない・マージ不可）。
+
+### R0・R1 の PR（文書・テストのみ）: 手順 3・4 を「人の差分確認」に置き換えられる
+
+`humanGate.reviewKindsByRisk` で R0・R1 に `human-diff` が許可されている場合（main 上のポリシーで判定）:
+
+| # | 誰が | 操作 |
+| --- | --- | --- |
+| 3' | 人 | `gh pr diff N --repo O/R` で差分を読む |
+| 4' | 人 | `bin/ship-approve.sh ship-attest --kind human-diff --repo O/R --pr N --head <SHA> --important-open 0`（変更ファイルとリスクが表示される。`yes` とパスフレーズで署名） |
+
+- リスクは gate が変更ファイルから計算する。1 ファイルでも R2 以上（エージェントの指示書 `CLAUDE.md`・`.claude/**` などを含む）なら、署名自体が拒否され、gate も認めない。
+- 署名後に push して head が変わると、署名は無効になる（再署名が必要）。
+- 承認（手順 7）は省略できない。
 
 ## 2. 承認の取り消し・差し戻し
 

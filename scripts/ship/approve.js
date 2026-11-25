@@ -12,6 +12,10 @@
  *   revoke  --id APPROVAL_ID --reason R    承認取り消し (安全側の操作なので署名不要)
  *   ship-attest --repo O/R --pr N --head SHA --reviewed yes|no --important-open N --watch STATUS [--effort E] [--notes T]
  *                                          対話セッションで /ship を実行した人が、見た結果を署名して残す
+ *   ship-attest --kind human-diff --repo O/R --pr N --head SHA --important-open N [--notes T]
+ *                                          R0・R1 の PR で、人が gh pr diff で差分を読んだことを署名して残す。
+ *                                          変更ファイルの一覧とリスク分類を表示し、確認してから署名する。
+ *                                          R2 以上では gate が認めない (policy.humanGate.reviewKindsByRisk)
  *
  * パスフレーズは /dev/tty からのみ読む。AI エージェント (Bash tool) には TTY が無いため承認できない。
  * それでも AI が人間の端末を乗っ取る脅威は残る — docs/architecture/SHIP_SECURITY_MODEL.md。
@@ -108,6 +112,8 @@ const cmds = {
     return 0;
   },
   'ship-attest'(o) {
+    // --kind が指定されたら (値なし・空も含む) ship 以外は humanDiffAttest で検証する
+    if (o.kind != null && o.kind !== 'ship') return humanDiffAttest(o);
     for (const k of ['repo', 'pr', 'head', 'reviewed', 'important-open', 'watch']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
     const bundle = readBundle();
     const pass = hg.readPassphrase(bundle, `Ship 結果の証明 (PR #${o.pr}) パスフレーズ: `);
@@ -120,6 +126,46 @@ const cmds = {
     return 0;
   },
 };
+
+/**
+ * humanDiffAttest — R0・R1 向け「人の差分確認」の署名。
+ * - リスクは表示用にここでも計算するが、認めるかどうかは gate が変更ファイルから計算したリスクで決める
+ * - R2 以上の PR では署名自体を拒否する (誤操作の防止。gate 側でも無視される)
+ * - 変更ファイル数を署名対象に含める (読んだ範囲の宣言)
+ */
+function humanDiffAttest(o) {
+  if (o.kind !== 'human-diff') throw Object.assign(new Error('REVIEW_KIND_INVALID: ' + o.kind), { exit: 2 });
+  for (const k of ['repo', 'pr', 'head', 'important-open']) if (o[k] == null || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });
+  store.assertSha(o.head, 'head');
+  const ctx = context(o);
+  if (ctx.pr.headRefOid !== o.head) throw Object.assign(new Error(`HEAD_MISMATCH: 指定 ${o.head} / 現在 ${ctx.pr.headRefOid}`), { exit: 1 });
+  const files = github.changedFiles(o.repo, o.pr);
+  if (!files.ok) throw Object.assign(new Error('CHANGED_FILES_UNAVAILABLE ' + (files.error || '')), { exit: 3 });
+  const rk = require('./lib/risk').classify(files.data, ctx.pol.risk);
+  say('━━━ ClaudeOS — 差分確認の署名 (human-diff) ━━━');
+  say(`PR       : #${o.pr} ${ctx.pr.title || ''}`);
+  say(`head     : ${ctx.pr.headRefOid}`);
+  say(`リスク   : ${rk.level} (${rk.reason})`);
+  say(`変更ファイル (${files.data.length}):`);
+  // 「すべて読んだ」と署名させるので、省略せず全件を表示する
+  for (const d of rk.files) say(`  ${d.level}  ${d.file}`);
+  if (!hg.reviewKindAllowed(ctx.pol, rk.level, 'human-diff')) {
+    throw Object.assign(new Error(`HUMAN_DIFF_NOT_ALLOWED_FOR_${rk.level}: このリスクでは /ship のレビューと署名 (--kind ship) が必要`), { exit: 1 });
+  }
+  say('');
+  say(`差分の確認: gh pr diff ${o.pr} --repo ${o.repo}`);
+  if (!confirmTty(`上の ${files.data.length} ファイルの差分をすべて読み、問題が無いことを確認しましたか`)) { say('中止しました'); return 1; }
+  const bundle = readBundle();
+  const pass = hg.readPassphrase(bundle, `差分確認の署名 (PR #${o.pr}) パスフレーズ: `);
+  const key = hg.loadPrivateKey(bundle, pass);
+  const a = hg.issueShipAttestation({ repo: o.repo, pr: o.pr, headSha: o.head, reviewed: true, importantOpen: o['important-open'],
+    watchStatus: 'not-started', reviewEffort: 'human', notes: o.notes || '', reviewKind: 'human-diff', filesReviewed: files.data.length, bundle, privateKey: key });
+  store.writeRecord(path.join(hg.shipEvidenceDir(o.repo, o.pr), a.attestation_id + '.json'), a, { exclusive: true });
+  store.appendAudit('ship_attested', { repo: o.repo, pr: Number(o.pr), head_sha: o.head, reviewed: true, important_open: a.important_open,
+    review_kind: 'human-diff', files_reviewed: a.files_reviewed, risk: rk.level, approver: a.approver });
+  say(JSON.stringify({ attestation_id: a.attestation_id, head_sha: a.head_sha, review_kind: 'human-diff', files_reviewed: a.files_reviewed }));
+  return 0;
+}
 
 function decide(o, decision) {
   for (const k of ['repo', 'pr', 'head']) if (!o[k] || o[k] === true) throw Object.assign(new Error('MISSING --' + k), { exit: 2 });

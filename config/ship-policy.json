@@ -255,6 +255,14 @@
       { "name": "Kensan", "key_id": "sha256:3c577661d95f0fd1223705c42a6b67672e63f98fb2937b61ecb74dff0b850bed", "public_key": "MCowBQYDK2VwAyEAy0PG9UjzhMsEDtUWRFspbCSzWXftMYJcPQiTKkPBT+U=" }
     ],
     "statusContext": "claudeos/human-approval",
+    "reviewKindsByRisk": {
+      "R0": ["ship", "human-diff"],
+      "R1": ["ship", "human-diff"],
+      "R2": ["ship"],
+      "R3": ["ship"],
+      "R4": ["ship"]
+    },
+    "_reviewKindsNote": "ship-attest の review_kind ごとに、どのリスクでレビュー証跡として認めるか。ship = /ship を人が実行した結果への署名。human-diff = 人が gh pr diff で差分を読んだことへの署名 (R0・R1 のみ)。リスクは gate が変更ファイルから計算した値で判定し、署名側の申告は使わない。未記載のリスク・種類は認めない (fail-closed)。",
     "_notes": "approverKeys は承認者公開鍵の fingerprint (sha256:<hex>) と名前。検証は base ブランチ版のこのファイルで行う。空なら fail-closed (承認は常に無効)。鍵の秘密部分はパスフレーズ (scrypt) で暗号化され、パスフレーズは人間だけが知る。AI エージェントは同じ OS ユーザーで sudo も持つため、OS 権限やファイル所有では人間を証明できない — 証明はパスフレーズの知識だけに依存する。最初の鍵の登録は人間が通常のレビューでマージする (bootstrap)。"
   },
   "merge": {

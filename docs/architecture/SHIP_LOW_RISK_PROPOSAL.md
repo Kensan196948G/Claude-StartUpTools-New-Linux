@@ -1,0 +1,210 @@
+# R0・R1 の運用を軽くする変更（案 A を実装・PR #238）
+
+状態: 2026-11-25 **案 A を採用し実装（未マージ）**。前提の修正（§5）は PR #237 として **2026-11-25 にマージ済み**（`f1517a3`）。案 A の実装は §7（PR #238）。マージには R4 の手順（`/ship` → 署名 → 承認）が必要。
+
+## 1. 問題
+
+ruleset 第 1 段階（2026-11-24 20:30 適用）以降、すべての PR は次の手順を通らないとマージできない。
+
+1. ローカル品質の検証（AI、実測で約 12 分）
+2. `/ship` によるレビュー（人。対話セッションで入力が必要）
+3. `ship-attest` で結果に署名（人）
+4. 品質判定 PASS（AI）
+5. `approve` で承認（人）
+
+R0（文書のみ）の PR でも 2・3 が省けない。現行コードの動き（`scripts/ship/lib/quality-gate.js`）:
+
+| リスク | Ship 署名なし | 承認できるか |
+| --- | --- | --- |
+| R0・R1 | `ship.reviewed = CONDITIONAL`（「必須ではないが人が確認する」） | **できない**（`issueApproval` は PASS 以外を拒否） |
+| R2〜R4 | `ship.reviewed = UNKNOWN`（「Ship 必須」） | できない |
+
+つまり `ship.requiredForRisk = ["R2","R3","R4"]` という設定は、実際には R0・R1 にも Ship 署名を求めている。設定の意図と挙動が一致していない。
+
+### 実測（PR #235、R0・文書 5 ファイル）
+
+- 人の手順: `/ship` の起動と待ち（約 15 分。指摘 7 件の確認を含む）、署名、承認
+- `/ship` の指摘 7 件はすべて文書の古い記述で、内容としては有用だった
+
+### 頻度（直近 60 件のマージ済み PR、2026-11-23〜24、現行の規則で分類）
+
+| R0 | R1 | R2 | R3 | R4 |
+| --- | --- | --- | --- | --- |
+| 12 | 1 | 24 | 11 | 12 |
+
+R0・R1 は 13 件（約 22%）。**案の効果はこの範囲に限られる。** R2 以上（約 78%）は今と変わらない。
+
+## 2. 案
+
+### 案 A（推奨）: R0・R1 に限り「人の差分確認」の署名を Ship レビューの代わりに認める
+
+`ship-attest` に新しい種類 `review_kind: "human-diff"` を加える。人が `gh pr diff` で差分を読み、問題が無いことを署名する。
+
+| 項目 | 内容 |
+| --- | --- |
+| 対象 | **R0・R1 のみ**。gate が分類したリスクで判定し、R2 以上では `human-diff` 署名を無視する（Ship 署名が必要なまま） |
+| 署名の中身 | head SHA 固定、`reviewed=true`、`important_open=0`、`review_kind="human-diff"`、確認した変更ファイル数 |
+| 判定 | R0・R1 で有効な `human-diff` 署名があれば `ship.reviewed = PASS`（`source=human-diff-attestation:…`） |
+| 承認 | 今と同じ。PASS の gate にだけ、人が `approve` する |
+| 変わらないもの | ローカル品質（12 分）、承認、ruleset、SHA 固定、承認後の push で無効化 |
+
+人の手間: `/ship` の起動・待ち（約 15 分）→ 差分を読んで署名（文書 PR なら数分）。**承認は残る。**
+
+### 案 B: R0・R1 は Ship 署名を不要にし、承認だけにする
+
+`ship.reviewed` を R0・R1 では評価しない（PASS 扱い）。
+
+- 手順は最も短い（品質検証 → 承認）
+- ただし「人が中身を見た」ことの記録が承認だけになる。承認は「判定結果を見て OK を出す」もので、差分を読んだことの証明ではない
+
+### 案 C: 現状維持
+
+R0・R1 でも `/ship` と署名を続ける。安全性は最も高いが、手間は今のまま。
+
+## 3. 比較
+
+| | 案 A | 案 B | 案 C |
+| --- | --- | --- | --- |
+| R0・R1 の人の手間 | 中（差分確認 + 署名 + 承認） | 小（承認のみ） | 大（`/ship` + 署名 + 承認） |
+| 「人が中身を見た」証跡 | あり（署名） | 弱い（承認のみ） | あり（`/ship` + 署名） |
+| AI 自身の判断で通る経路 | 増えない | 増えない | 増えない |
+| R2 以上への影響 | なし | なし | なし |
+| 変更範囲（R4） | `quality-gate.js`・`human-gate.js`・`approve.js`・`ship-policy.json`・テスト | `quality-gate.js`・`ship-policy.json`・テスト | なし |
+
+どの案でも **AI だけで PR が通ることは無い**（承認には人のパスフレーズが必要なまま）。
+
+## 4. リスクと対策（案 A）
+
+| リスク | 対策 |
+| --- | --- |
+| R0 に見えて実は危ないファイルが混ざる | 判定は**変更ファイル全体の最大値**（現行どおり）。1 ファイルでも R2 以上なら案 A は効かない。R0 のパターンは `docs/**`・`**/*.md`・`LICENSE`・`reports/**` だけ |
+| `**/*.md` に手順書（実行される内容を含む文書）が入る | `.claude/**/*.md`・`Claude/templates/**/*.md`（エージェントへの指示になる文書）を R0 から外し、R2 以上にする。**案 A の前提として同時に行う** |
+| 分類の取り違え（R0 と判定されるべきでないものが R0） | `risk.classified` の詳細（ファイル別の判定）を承認の確認画面に表示する（現行で表示済み） |
+| 差分を読まずに署名する | 技術的には防げない（`/ship` 署名と同じ限界）。署名は人の宣言として残り、監査ログに記録される |
+| ポリシーを AI が書き換えて R0 を広げる | `ship-policy.json` は R4。変更には Ship 署名と承認が必要（今と同じ） |
+
+## 5. 前提の修正（案 A・案 B 共通で推奨）— PR #237 でマージ済み
+
+> 2026-11-25 追記: PR #237 で実施済み。`/ship 237` を 4 回通した結果、対象は下の表より広がった（表記揺れ・入れ子の設定ディレクトリ・他ツールの指示書、MCP・Codex・OpenCode の設定を R4、リネームの変更前パスも分類）。詳細は `docs/architecture/SHIP_RISK_INSTRUCTIONS_IMPACT.md`。以下は提案時点の記述。
+
+現行の R0 パターン `**/*.md` は、エージェントの指示書（`.claude/**`、`Claude/templates/**`、`AGENTS.md`、`CLAUDE.md`）にも当たる。
+これらは**プロンプト注入の経路**になり得るため、R0 として軽く扱うべきではない。案の適用前に、少なくとも次を R2 以上にする:
+
+- `.claude/**`、`Claude/templates/**`、`AGENTS.md`、`CLAUDE.md`、`**/SKILL.md`
+
+この修正は単独でも価値がある（今は R0 の判定でも Ship 署名が実質必須のため問題が表に出ていないだけ）。
+
+実測（2026-11-25、`scripts/ship/lib/risk.js` の `classifyFile` を現行の `config/ship-policy.json` で実行）:
+
+| ファイル | 判定 | 当たったパターン |
+| --- | --- | --- |
+| `CLAUDE.md`・`AGENTS.md`・`.claude/CLAUDE.md` | R0 | `**/*.md` |
+| `.claude/rules/hooks.md` | R0 | `**/*.md` |
+| `Claude/templates/claude/CLAUDE.md` | R0 | `**/*.md` |
+| `.claude/skills/verify-startuptools/SKILL.md` | R0 | `**/*.md` |
+| （比較）`.claude/settings.json` | R4 | `.claude/settings.json` |
+
+該当する追跡ファイル（`.claude/*.md`・`Claude/templates/*.md`・`AGENTS.md`・`CLAUDE.md`・`**/SKILL.md`）は **582 件**。
+設定ファイルは R4 なのに、同じくエージェントの動作を決める指示書は R0 になっている。
+
+## 6. 実装する場合の作業（提案時点の計画。実装は §7）
+
+1. `ship-policy.json`: R0 から指示書系を除外する規則を R2 として先に追加。`humanGate.reviewKindsByRisk`（提案時点の仮称は `lowRiskReviewKinds`）を追加
+2. `human-gate.js`: `issueShipAttestation` に `reviewKind`（`ship` 既定 / `human-diff`）を追加し、署名対象に含める
+3. `quality-gate.js`: リスクと `review_kind` の組み合わせで `ship.reviewed` を判定。許可されない組み合わせは無視
+4. `approve.js`: `ship-attest --kind human-diff` と、確認画面での差分ファイル一覧の表示
+5. テスト: R0 で PASS、R2 で無視、署名の改ざん、head 変更で無効、指示書系が R2 になること
+6. TLA+ モデル（`formal/specs/ship_gate.tla`）: 承認なしでマージできない性質が変わらないことを再検証
+
+これらはすべて R4 の変更で、**Ship 署名と承認の手順を通して入れる**。
+
+## 7. 実装（2026-11-25、案 A・未マージ）
+
+### 変更点
+
+| ファイル | 内容 |
+| --- | --- |
+| `config/ship-policy.json` | 指示書を R2 にする規則（PR #237 でマージ済み）と、`humanGate.reviewKindsByRisk`（R0・R1 は `ship` と `human-diff`、R2〜R4 は `ship` のみ） |
+| `scripts/ship/lib/human-gate.js` | 署名の新形式 `claudeos.ship-attestation/v2`（`review_kind`・`files_reviewed` を署名対象に含める）。v1（従来の `/ship` 署名）はそのまま有効。`shipEvidenceFor` は gate が計算したリスクで種類を選別 |
+| `scripts/ship/lib/quality-gate.js` | 二重の防御: 証跡の種類がそのリスクで認められなければ `ship.review_kind=UNKNOWN` とし、証跡なしとして扱う |
+| `scripts/ship/ship.js` | `gate` が変更ファイルから計算したリスクを証跡の選別に渡す（取得できなければ R4 = `ship` のみ） |
+| `scripts/ship/approve.js` | `ship-attest --kind human-diff`: 変更ファイルとリスクを表示し、R2 以上なら拒否、確認の `yes` とパスフレーズで署名 |
+
+### 使い方（R0・R1 の PR）
+
+```bash
+gh pr diff <番号>                       # 差分を読む
+bash bin/ship-approve.sh ship-attest --kind human-diff \
+  --repo Kensan196948G/Claude-StartUpTools-New-Linux --pr <番号> --head <SHA> --important-open 0
+```
+
+### 守り（テストで確認）
+
+| 性質 | 確認方法 |
+| --- | --- |
+| R0・R1 では human-diff 署名で gate PASS | 単体・CLI 通しテスト |
+| R2 以上では human-diff 署名を無視（証跡の選別と gate の両方で） | 単体テスト。**それぞれの防御を外すとテストが失敗する**ことを確認 |
+| 同じ署名が残っていても、PR が R2 以上の変更を含むようになれば認めない | CLI 通しテスト |
+| R2 以上の PR では署名そのものを拒否 | CLI 通しテスト（`HUMAN_DIFF_NOT_ALLOWED_FOR_R2`） |
+| `review_kind`・`files_reviewed`・head の改ざん、v2→v1 の偽装は検証で弾く | 単体テスト。**署名対象から外すとテストが失敗する**ことを確認 |
+| 従来の `/ship` 署名（v1）は全リスクで有効 | 単体テスト |
+| `reviewKindsByRisk` が無い旧ポリシーでは `ship` のみ | 単体テスト |
+| 承認なしでマージできない（TLA+） | `ship_gate.tla` を再検証（verified、25,352 状態）。今回の変更はレビュー証跡の種類だけで、承認・マージの規則は変えていないためモデルの変更は不要 |
+
+### `/ship 238` の指摘への対応（2026-11-25、版 `0291b06`、指摘 7 件）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 未知・未判定のリスクで、正規の `/ship` 署名まで拒否される（#238 以前の挙動からの退行） | 修正。`/ship` はどのリスクでも有効、`reviewKindsByRisk` で絞るのは `ship` 以外の種類だけ（`human-gate.js`・`quality-gate.js` の両方）。テスト追加 |
+| 同じ head で、重大所見の残る `/ship` 署名の後に human-diff を付けると上書きできる | 修正。同じ head に `/ship` の署名があれば、そちらを優先する。テスト追加 |
+| 変更ファイルを 200 件で切って表示するのに「すべて読んだ」と署名させる | 修正。全件を表示する。CLI テスト追加（205 件） |
+| `--kind` の値が空だと従来の `/ship` 経路に落ちる | 修正。`--kind` を指定したら `ship` 以外はすべて human-diff の検証に回し、`REVIEW_KIND_INVALID` で拒否。CLI テスト追加 |
+| `files_reviewed` が件数だけで、読んだファイル群と結び付いていない | 未対応。署名形式の変更になるため別 PR（全体の TODO「Ship Native の /ship 残件」に記録） |
+| R1 の `tests/**` に、実行される補助スクリプトが含まれ得る | 未対応。案 A の設計判断（R0・R1 を対象）そのもの。運用で問題が出たら R1 を対象から外す |
+| ローカルの `origin/main` が古いと、署名画面と gate のポリシーが食い違う | 未対応。最終判定は gate が行うため抜け道にはならず、表示上のずれだけ |
+
+上の 4 件の修正は、それぞれ修正を外すと対応するテストが失敗することを確認した。
+
+### 効く時期
+
+gate・承認は **main 上のポリシー**（`loadTrustedPolicy`）を使う。前提の PR #237 はマージ済み。この PR（#238）がマージされるまでは、R0・R1 でも従来どおり `/ship` 署名が必要。
+
+### `/ship 238` 2 回目（版 `d84dfd4`、指摘 7 件・すべて nit）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 題名が「提案・未適用」、§6 が「未着手」、設定名が `lowRiskReviewKinds` のまま | この版で修正（題名・§6・設定名） |
+| §7 の TODO 番号が何を指すか書かれていない | この版で修正（TODO の内容を明記） |
+| 同じ head に `/ship` の署名があると、後の human-diff は常に無視される（やり直しは push が必要） | 意図どおり。`/ship` が重大所見を記録した head は、修正して新しい版で署名し直す |
+| `project-to-db.js` が `review_kind`・`files_reviewed` を DB に投影しない | 未対応（別 PR）。DB 上は human-diff と `/ship` を区別できない |
+| `files_reviewed` がリネーム前のパスを含む件数 | 未対応（別 PR）。表示件数と同じ値なので、署名画面との食い違いは無い |
+| 検証側が v2 の `review_kind=ship` を受け付ける | 未対応（別 PR）。発行側は v2 の `ship` を出さないため現状は実害なし |
+| 鍵の有無の確認が `yes` の後 | 未対応（別 PR）。使い勝手の問題のみ |
+| R1 の `tests/**` | 設計判断として残す（上の表） |
+
+## 8. 影響分析
+
+| 対象 | 影響 |
+| --- | --- |
+| R0・R1 の PR | `/ship` の代わりに `ship-attest --kind human-diff`（差分を読んで署名）が使える。承認・ローカル品質・ruleset は変わらない |
+| R2〜R4 の PR | 変わらない。human-diff 署名は署名時に拒否され、gate でも無視される |
+| 既存の `/ship` 署名（v1） | 変わらない。どのリスクでも有効（テストで確認） |
+| 署名ファイルの形式 | human-diff だけ新形式 v2（`claudeos.ship-attestation/v2`）。v1 の形式は変えない |
+| ポリシー（`config/ship-policy.json`） | `humanGate.reviewKindsByRisk` と説明 1 項目を追加。他の項目は main と同じ |
+| マージ判定・承認の規則 | 変わらない（TLA+ `ship_gate` を再検証済み） |
+| データ・DB | 変更なし（マイグレーション無し） |
+| 効く時期 | gate は main 上のポリシーを使うため、マージ後に作られる gate から |
+
+## 9. ロールバック手順
+
+1. この PR のマージコミットを `git revert -m 1 <マージコミット>` する PR を作る（squash マージなら `git revert <コミット>`）。**PR 全体を戻す**（`ship-policy.json` の `reviewKindsByRisk` だけ、あるいはコードだけを戻すと、テストと設定が食い違う）
+2. revert PR も R4。いつもどおり品質検証 → `/ship` → 署名 → 品質判定 → 承認 → マージ
+3. 戻した後の署名の扱い（2026-11-25 に main 版の検証コードで実測）:
+   - **human-diff 署名（v2）は「署名ではない」（`NOT_AN_ATTESTATION`）と判定され、無効になる。** 戻す時点で human-diff 署名だけで gate を通している未マージの PR は、`/ship` で署名し直す
+   - `/ship` 署名（v1）はそのまま有効
+   - すでにマージ済みの PR には影響しない（承認とマージは記録済み）
+4. 戻した後は、R0・R1 の PR でも従来どおり `/ship` 署名が必要になる（gate は CONDITIONAL、承認できない）
+5. 確認: `node -e 'console.log(require("./config/ship-policy.json").humanGate.reviewKindsByRisk)'` が `undefined` になり、`node --test scripts/ship/test/*.test.js` が通ること
+
+データの移行・削除は無い。署名ファイル（`~/.claudeos/ship/ship-evidence/`）は残るが、戻した後は v2 が無視されるだけで害は無い。
+
