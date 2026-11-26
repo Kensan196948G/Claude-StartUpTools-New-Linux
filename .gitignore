@@ -171,3 +171,8 @@ Claude/templates/claude/Claude/
 
 # E2E の生成物 (スクリーンショット・result.json)
 reports/e2e/
+
+# ClaudeOS 実行時データ（セッション終了フックが毎回書き換える。Git 管理しない。欠落時は既定値で動作する）
+.claude/claudeos/data/reasoning-bank.json
+.claude/claudeos/data/trust-score.json
+.claude/claudeos/data/.heavy-sync.stamp
