@@ -17,7 +17,7 @@
 | 稼働中の本番 | なし。コード変更のみで、既存の unit ファイルは書き換えない | 次回の `--register` から新形式になる |
 | 次回の本番昇格 | 台帳の `PROMOTED` が 2 行から 1 行になる。`Documentation=` の警告が出なくなる | `release-promote.bats`・`promote-production.bats` |
 | 手順 (3)・(3d) の失敗・中断 | 手順 (2) の `PROMOTED` は残らず、`ROLLED_BACK` が記録される（`release-promote --rollback` とオーケストレータの 2 経路のため複数行になり得る） | コードの読解 |
-| 手順 (4) の失敗 | 切り戻し先が同じ版の場合、手順 (4) は台帳へ書かない（#249）。外側の復旧が 1 行追記する | `release-promote.bats` |
+| 手順 (4) の失敗 | 切り戻し先が同じ版の health 失敗では、手順 (4) は台帳へ書かない（#249）。restart 失敗では従来どおり `ROLLED_BACK` を書く。外側の復旧が 1 行追記する | `release-promote.bats` |
 | 手順 (5) の失敗 | 手順 (4) が書いた `PROMOTED` は残り、その後に `ROLLED_BACK` が追記される | コードの読解 |
 | 自動復旧も失敗 | `ROLLBACK_FAILED` を 1 行追記し、試行が台帳から消えないようにする（本 PR で追加） | `promote-production.bats` |
 | 台帳の読み手 | `post-deploy-smoke.sh` は最終行の時刻のみ、`deploy-status.sh` は末尾 5 件の表示のみで影響なし | 両スクリプトの参照箇所を確認済み |

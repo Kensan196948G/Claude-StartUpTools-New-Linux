@@ -486,7 +486,8 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   cmp "$DROPIN" "$TEST_TEMP/dropin.before"
   run grep -c "restart claudeos-web-startup.service" "$ORDER"
   [ "$output" = "0" ]
-  grep -q "systemctl --user restart $DASHBOARD_UNIT" "$ORDER"
+  run grep -c "systemctl --user restart $DASHBOARD_UNIT" "$ORDER"
+  [ "$output" = "2" ]
 }
 
 @test "promote-production: 復旧の失敗はすべて rollback_errors に残る" {
@@ -546,6 +547,27 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$status" -eq 4 ]
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r '.rollback_errors | length')" -eq 1 ]
   [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r '.rollback_errors | length')" -eq 1 ]
+}
+
+@test "promote-production: 初回昇格で unit を戻せなければ production-current を削除しない" {
+  export PP_STUB_SMOKE_RC=1 PP_STUB_REMOVE_BACKUP="$BACKUP"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  local last; last="$(_last_json "$output")"
+  # 残る unit が参照する symlink を消さない
+  [ "$(_current)" = "$SHA" ]
+  [ "$(printf '%s' "$last" | jq -r .artifact_rollback)" = "KEPT" ]
+  [[ "$(printf '%s' "$last" | jq -r '.rollback_errors | join(" / ")')" == *"production-current を残しました"* ]]
+}
+
+@test "promote-production: 昇格前の状態を symlink 変更の前にファイルへ残す" {
+  _seed_current "$OLD" "$OLDER"
+  export PP_STUB_SMOKE_RC=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  local snap="$CLAUDEOS_HOME/releases/production-pre-promotion.json"
+  [ "$(jq -r .release "$snap")" = "$SHA" ]
+  [ "$(jq -r .pre_link "$snap")" = "$OLD" ]
+  [ "$(jq -r .pre_previous "$snap")" = "$OLDER" ]
 }
 
 @test "promote-production: 手順 (2) の失敗でも previous を昇格前へ戻す" {

@@ -344,7 +344,24 @@ pp__snapshot_artifact() {
     cp -p -- "$dropin" "$dropin.bak-$PP_TS" || return 1
     PP_PRE_DROPIN_BACKUP="$dropin.bak-$PP_TS"
   fi
-  return 0
+  pp__write_snapshot_file
+}
+
+# pp__write_snapshot_file — 控えを releases/production-pre-promotion.json へ書く (次の昇格まで残す)
+pp__write_snapshot_file() {
+  local releases file tmp
+  releases="$(pp__home)/releases"
+  file="$releases/production-pre-promotion.json"
+  tmp="${file}.tmp.$$"
+  mkdir -p -- "$releases" || return 1
+  if jq -n --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg release "$PP_RELEASE" \
+      --arg link "$PP_PRE_LINK" --arg previous "$PP_PRE_PREVIOUS" --arg backup "$PP_BACKUP" \
+      '{at:$at,release:$release,pre_link:$link,pre_previous:$previous,unit_backup:$backup}' > "$tmp" \
+      && mv -Tf -- "$tmp" "$file"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  return 1
 }
 
 # pp__restore_previous_file — production-previous を控えた内容へ戻す
@@ -387,6 +404,11 @@ pp__artifact_rollback() {
       rm -f -- "${link}.tmp.$$"
       ok=0
     fi
+  elif [[ -L "$link" ]] && (( ! ${PP_UNIT_RESTORED:-1} )); then
+    # 初回昇格で unit を戻せない: 残る unit がこの symlink を参照するため、削除すると次の起動ができない
+    PP_ARTIFACT_ROLLBACK="KEPT"
+    pp__record_step "artifact-rollback" "false"
+    return 1
   elif [[ -L "$link" ]]; then
     # 初回昇格: 戻し先が無い。新 artifact を指したままにせず symlink を削除する
     if rm -f -- "$link"; then
@@ -547,8 +569,13 @@ pp__rollback() {
   fi
 
   # 2) 成果物 symlink を昇格前へ戻す。昇格前に symlink が無い初回昇格では削除する (H1)
+  PP_UNIT_RESTORED="$unit_restored"
   if ! pp__artifact_rollback; then
-    PP_ROLLBACK_ERRORS+=("成果物 (production-current / previous) を昇格前の状態へ戻せませんでした")
+    if [[ "$PP_ARTIFACT_ROLLBACK" == "KEPT" ]]; then
+      PP_ROLLBACK_ERRORS+=("unit を戻せないため production-current を残しました。unit を戻してから削除してください")
+    else
+      PP_ROLLBACK_ERRORS+=("成果物 (production-current / previous) を昇格前の状態へ戻せませんでした")
+    fi
   fi
 
   # 2.5) dashboard の drop-in を昇格前の状態へ（昇格前からあれば内容を戻し、無ければ削除）

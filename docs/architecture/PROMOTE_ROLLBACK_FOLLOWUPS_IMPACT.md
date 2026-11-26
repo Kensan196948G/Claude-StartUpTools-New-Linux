@@ -6,6 +6,8 @@
 
 | 場面 | 変更前 | 変更後 |
 | --- | --- | --- |
+| 昇格前の状態の記録 | 台帳から人が推測 | 手順 (2) の前に `releases/production-pre-promotion.json` へ残す（次の昇格まで保持。書けなければ何も変えずに中止） |
+| 初回昇格で unit を戻せない | symlink を削除 | `production-current` を残す（`artifact_rollback=KEPT`）。残る unit が参照するため |
 | unit を戻せない | そこで復旧を終了し、成果物・drop-in も戻らない | 成果物・previous・drop-in・dashboard は戻す。コンソールは restart も health 確認もしない（定義が不明、または削除した成果物を指す unit を起動して停止させないため）。`ROLLBACK_FAILED`・exit 4 |
 | 復旧の daemon-reload の失敗 | そこで終了 | コンソールも dashboard も restart しない（読み込み済みの定義が昇格後のままのため）。`ROLLBACK_FAILED` |
 | 復旧中の他の失敗（restart・health） | そこで終了、または後の失敗が理由を上書き | 残りを続け、すべて `rollback_errors` に残す。`reason` は最初の失敗 |

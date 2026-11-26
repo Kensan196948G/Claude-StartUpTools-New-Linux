@@ -254,12 +254,13 @@ tail -1 "$HOME/.claudeos/releases/promotions.jsonl"
 以下の `<sha>` は昇格しようとした版。**末尾の行が今回の復旧行であること**（`commit` が `<sha>`、`at` が今回の実行時刻（UTC）、`artifact_rollback` がある）を確認してから読む。
 
 - 今回の復旧行の `artifact_rollback` が `ROLLED_BACK` / `UNCHANGED` / `NO_PREVIOUS_REMOVED`: 成果物は戻っている。**下表の「成果物」は実行しない**。復旧行の `rollback_errors` にある項目（unit・dashboard・health）だけを直す。
-- `artifact_rollback` が `FAILED`: `production-current` が `pre_promotion_target` を指すように直す。`pre_promotion_target` が空なら初回昇格なので symlink を削除する。`production-current` が正しい場合は `production-previous` の書き戻しだけが失敗している。
-- 今回の復旧行が無い（SIGKILL・再起動など）: 次の順に確認する。**判断できない場合は symlink を変えない。**
-  1. `production-current` が `<sha>` 以外を指す: それが昇格前の版。symlink は直さない。
-  2. 直前の production の `PROMOTED` 行の `commit` が `<sha>`: 同じ版の再昇格。`production-current` が昇格前の版そのものなので直さない。
-  3. それ以外で `production-previous` がある: その内容が昇格前の版。
-  4. `production-previous` が無い: 初回昇格。symlink を削除する。
+- `artifact_rollback` が `FAILED`: `production-current` が `pre_promotion_target` を指すように直す。`pre_promotion_target` が空なら初回昇格なので、unit を戻した後に symlink を削除する。`production-current` が正しい場合は `production-previous` の書き戻しだけが失敗している。
+- `artifact_rollback` が `KEPT`: 初回昇格で unit を戻せていない。**先に unit をバックアップから戻し**、`daemon-reload` の後に `production-current` を削除する。
+- 今回の復旧行が無い（SIGKILL・再起動など）: 台帳からは推測せず、`promote-production.sh` が symlink を変える前に残した控えを読む。
+  ```bash
+  cat "$HOME/.claudeos/releases/production-pre-promotion.json"
+  ```
+  `release` が `<sha>`、`at` が今回の実行時刻であることを確認する。昇格前の版は `pre_link`（空なら初回昇格。`unit_backup` から unit を戻した後に symlink を削除する）。**控えが今回のものでない場合（手動の 4-2 / 4-4 など）は symlink を変えず**、稼働中の版を確認してから判断する。
 - 自動復旧ではなく、昇格後に手動で前の版へ戻す場合: 下表の「成果物」を使う。
 
 | 層 | 操作 |
