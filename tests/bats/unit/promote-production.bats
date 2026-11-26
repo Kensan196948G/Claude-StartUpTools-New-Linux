@@ -91,6 +91,16 @@ _stub_systemctl() {
   cat > "$CCSU_SYSTEMCTL_BIN" <<'EOF'
 #!/usr/bin/env bash
 echo "systemctl $*" >> "${ORDER:?}"
+if [[ -n "${PP_STUB_SIGNAL_ON_CONSOLE_RESTART:-}" && "$*" == *"restart claudeos-web-startup.service"* ]]; then
+  # 祖先のうち promote-production.sh を実行している最上位のプロセスへ送る (bats には送らない)
+  p="$PPID"; target=""
+  while [[ -n "$p" && "$p" -gt 1 ]]; do
+    tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q 'promote-production.sh --release' && target="$p"
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+  done
+  [[ -n "$target" ]] && kill "-${PP_STUB_SIGNAL_ON_CONSOLE_RESTART}" "$target" && echo "signalled" >> "${ORDER}.signal"
+  sleep 0.5
+fi
 if [[ -n "${DASHBOARD_RESTART_FAIL_TIMES:-}" && -f "$DASHBOARD_RESTART_FAIL_TIMES" ]]; then
   case "$*" in
     *"restart ${DASHBOARD_UNIT:-__none__}"*)
@@ -147,6 +157,10 @@ case " $* " in
       [[ -L "$link" ]] && printf '%s' "$(readlink "$link")" > "$CLAUDEOS_HOME/releases/production-previous"
       exit 1
     fi
+    if [[ "${PP_STUB_SYMLINK_READONLY:-0}" == "1" ]]; then
+      chmod 555 "$CLAUDEOS_HOME/releases"
+      exit 1
+    fi
     (( ${PP_STUB_SYMLINK_RC:-0} == 0 )) && _swap
     exit "${PP_STUB_SYMLINK_RC:-0}" ;;
   *)
@@ -169,6 +183,7 @@ EOF
   cat > "$CCSU_PROMOTE_BIN_DIR/post-deploy-smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "post-deploy-smoke $*" >> "${ORDER:?}"
+[[ -n "${PP_STUB_REMOVE_BACKUP:-}" ]] && rm -f "$PP_STUB_REMOVE_BACKUP"
 [[ -n "${PP_STUB_LOCK_DROPIN:-}" ]] && chmod 400 "$PP_STUB_LOCK_DROPIN"
 if [[ -n "${PP_STUB_SMOKE_SIGNAL:-}" ]]; then
   # このスタブは pp__run_step のコマンド置換 (サブシェル) から呼ばれるため、
@@ -449,6 +464,57 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r '.steps[] | select(.name=="health") | .ok')" = "true" ]
   [ "$(_current)" = "$OLD" ]
   [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLBACK_FAILED" ]
+}
+
+@test "promote-production: unit を戻せなくても成果物と drop-in は戻し、console は restart しない" {
+  _seed_current "$OLD" "$OLDER"
+  mkdir -p "$(dirname "$DROPIN")"
+  printf '# previous promotion\n' > "$DROPIN"
+  cp "$DROPIN" "$TEST_TEMP/dropin.before"
+  export PP_STUB_SMOKE_RC=1 PP_STUB_REMOVE_BACKUP="$BACKUP"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(_previous)" = "$OLDER" ]
+  cmp "$DROPIN" "$TEST_TEMP/dropin.before"
+  run grep -c "restart claudeos-web-startup.service" "$ORDER"
+  [ "$output" = "0" ]
+  grep -q "systemctl --user restart $DASHBOARD_UNIT" "$ORDER"
+}
+
+@test "promote-production: 復旧の失敗はすべて rollback_errors に残る" {
+  _seed_current "$OLD"
+  export PP_STUB_PROMOTE_RC=1 PP_STUB_BREAK_LINK=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  local last; last="$(_last_json "$output")"
+  [ "$(printf '%s' "$last" | jq -r '.rollback_errors | length')" -eq 1 ]
+  [[ "$(printf '%s' "$last" | jq -r '.rollback_errors[0]')" == *"成果物"* ]]
+  [ "$(printf '%s' "$last" | jq -r .pre_promotion_target)" = "$OLD" ]
+  local row; row="$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl")"
+  [ "$(printf '%s' "$row" | jq -r .pre_promotion_target)" = "$OLD" ]
+  [ "$(printf '%s' "$row" | jq -r .restored_target)" = "" ]
+}
+
+@test "promote-production: previous を変える必要がなければ書き込めなくても ABORTED" {
+  [[ "$(id -u)" -eq 0 ]] && skip "root は読み取り専用ディレクトリへ書ける"
+  _seed_current "$OLD" "$OLDER"
+  : > "$CLAUDEOS_HOME/releases/.promote-production.lock"
+  export PP_STUB_SYMLINK_READONLY=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  chmod 755 "$CLAUDEOS_HOME/releases"
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ABORTED" ]
+}
+
+@test "promote-production: 復旧中のシグナルは無視して復旧を完了する" {
+  _seed_current "$OLD"
+  export PP_STUB_SMOKE_RC=1 PP_STUB_SIGNAL_ON_CONSOLE_RESTART=TERM
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ -s "${ORDER}.signal" ]
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ROLLED_BACK" ]
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLED_BACK" ]
 }
 
 @test "promote-production: 手順 (2) の失敗でも previous を昇格前へ戻す" {

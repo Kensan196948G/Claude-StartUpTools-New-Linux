@@ -776,6 +776,12 @@ rp__promote() {
 
   # (6) /api/health が ok:true になるまで最大 RP_HEALTH_TIMEOUT 秒
   if ! rp__wait_health "$RP_PORT"; then
+    if [[ -n "$RP_CURRENT_REL" && "$RP_CURRENT_REL" == "$rel_target" ]]; then
+      # 切り戻し先が昇格対象と同じ版: 戻すものが無いので、戻したとは記録しない
+      rp__fail HEALTH_CHECK_FAILED \
+        "health (http://127.0.0.1:$RP_PORT/api/health) が ok:true になりませんでした。昇格前と同じ版のため切り戻しはしていません"
+      return 1
+    fi
     # (7) 自動ロールバック: symlink を戻して再 restart
     RP_RESULT="ROLLED_BACK"
     rp__rollback_after_failure "$link" "$RP_CURRENT_REL"

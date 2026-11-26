@@ -1,0 +1,25 @@
+# 影響分析とロールバック: 昇格の自動復旧の残り（Issue #249、R3）
+
+状態: 2026-11-26。
+
+## 1. 変更と影響
+
+| 場面 | 変更前 | 変更後 |
+| --- | --- | --- |
+| unit を戻せない | そこで復旧を終了し、成果物・drop-in も戻らない | 成果物・previous・drop-in・dashboard は戻す。コンソールは restart も health 確認もしない（定義が不明、または削除した成果物を指す unit を起動して停止させないため）。`ROLLBACK_FAILED`・exit 4 |
+| 復旧中の他の失敗（daemon-reload・restart・health） | そこで終了、または後の失敗が理由を上書き | 残りを続け、すべて `rollback_errors` に残す。`reason` は最初の失敗 |
+| `restored_target` | 戻せなくても昇格前の版が入る | 実際に戻っている場合だけ。昇格前の版は常に `pre_promotion_target` |
+| previous が変わっていない | 必ず書き直し、書けないと `ROLLBACK_FAILED` | 変化がある場合だけ書く |
+| 復旧中の INT/TERM/HUP | 復旧が中断される | 無視して完了する（子プロセスも引き継ぐ）。止めるには SIGKILL |
+| `release-promote` の昇格で、切り戻し先が同じ版の health 失敗 | 「切り戻しました」と表示し、restart して `ROLLED_BACK` を記録 | 何も戻さず `HEALTH_CHECK_FAILED`。台帳へ書かず、restart しない |
+
+- `failed_step` の意味は変えない。`rollback_errors`・`pre_promotion_target` は追加の項目で、他に利用しているスクリプトはない（`scripts`・`bin`・`lib` を検索）。
+- 手動の Runbook 手順で同じ版の health が失敗した場合も、上の最終行の動作になる。
+- 成功する昇格の経路は変わらない。secret・DB・migration・公開範囲の変更はない。
+- 確認はテストのスタブ上で行った。実機の systemd では未確認。
+
+残る限界: SIGKILL・再起動では復旧が走らない。health や systemctl が長く応答しない場合、Ctrl-C では止まらない。RUNBOOK §6 の順方向の health の制約は本変更の対象外。
+
+## 2. ロールバック手順
+
+`git revert <マージコミット>` の PR を作り、通常の手順でマージする。台帳は項目が増えるだけなので移行は不要。

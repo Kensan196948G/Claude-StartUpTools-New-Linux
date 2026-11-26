@@ -26,7 +26,7 @@
 | drop-in を戻せない | 残りの復旧（daemon-reload・restart・health）は続け、`ROLLBACK_FAILED`・exit 4 | — |
 | symlink を戻せない | unit・dashboard の復旧は続け、`ROLLBACK_FAILED`・exit 4（従来は警告のみで `ROLLED_BACK` 扱い） | `FAILED` |
 
-- 台帳の復旧行に、戻し先の `restored_target`（昇格前の `production-current`）を追加する。
+- 台帳の復旧行に `pre_promotion_target`（昇格前の `production-current`）と、実際に戻っている場合だけ値が入る `restored_target` を記録する（#249）。
 - drop-in の控え（`50-release.conf.bak-<時刻>`）は残る。`.conf` で終わらないため systemd は読まない。
 - 台帳: 復旧で `release-promote --rollback` を呼ばないため、その経路の `ROLLED_BACK` 行は増えない。オーケストレータの 1 行は従来どおり残る。
 - 判定は「どの手順まで進んだか」ではなく実際の symlink と控えの比較で行う（中断は手順の途中で起こり得る）。
@@ -34,7 +34,7 @@
 - 通常の昇格（成功経路）は、控えを取る読み取り以外に変化がない。
 - secret・DB・migration・公開範囲の変更はない。
 
-残る限界: SIGKILL・再起動・復旧中の 2 回目の中断では復旧が走らない（従来と同じ）。昇格の順方向（`--release ... --no-restart`）の health 確認は変えていない。
+残る限界: SIGKILL・再起動では復旧が走らない（復旧中の INT/TERM/HUP は #249 の対応で無視する）。昇格の順方向（`--release ... --no-restart`）の health 確認は変えていないため、本番が不健全だと修正版を昇格できない（RUNBOOK §6）。
 
 ## 3. ロールバック手順
 

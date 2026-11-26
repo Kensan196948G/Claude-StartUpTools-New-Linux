@@ -17,7 +17,7 @@
 | 稼働中の本番 | なし。コード変更のみで、既存の unit ファイルは書き換えない | 次回の `--register` から新形式になる |
 | 次回の本番昇格 | 台帳の `PROMOTED` が 2 行から 1 行になる。`Documentation=` の警告が出なくなる | `release-promote.bats`・`promote-production.bats` |
 | 手順 (3)・(3d) の失敗・中断 | 手順 (2) の `PROMOTED` は残らず、`ROLLED_BACK` が記録される（`release-promote --rollback` とオーケストレータの 2 経路のため複数行になり得る） | コードの読解 |
-| 手順 (4) の失敗 | 手順 (4) は `ROLLED_BACK` を記録し、外側の復旧もさらに追記する（複数行になり得る） | コードの読解 |
+| 手順 (4) の失敗 | 切り戻し先が同じ版の場合、手順 (4) は台帳へ書かない（#249）。外側の復旧が 1 行追記する | `release-promote.bats` |
 | 手順 (5) の失敗 | 手順 (4) が書いた `PROMOTED` は残り、その後に `ROLLED_BACK` が追記される | コードの読解 |
 | 自動復旧も失敗 | `ROLLBACK_FAILED` を 1 行追記し、試行が台帳から消えないようにする（本 PR で追加） | `promote-production.bats` |
 | 台帳の読み手 | `post-deploy-smoke.sh` は最終行の時刻のみ、`deploy-status.sh` は末尾 5 件の表示のみで影響なし | 両スクリプトの参照箇所を確認済み |
@@ -36,6 +36,6 @@
 
 ## 4. 残る限界
 
-- SIGKILL・ホスト再起動・復旧中の 2 回目の中断では、symlink が新版のまま台帳に行が残らないことがある（手順 (2) の `PROMOTED` を省いたため）。実状態は `production-current` の指す先で確認する。
+- SIGKILL・ホスト再起動では、symlink が新版のまま台帳に行が残らないことがある（手順 (2) の `PROMOTED` を省いたため）。実状態は `production-current` の指す先で確認する。
 - `post-deploy-smoke.sh` の `promotions` 項目は最終行の `at` だけを見るため、`ROLLBACK_FAILED` の直後でも PASS になる（判定ロジックは本 PR 以前から）。
 - 復旧経路の既存の不具合は Issue #244 などで扱う。

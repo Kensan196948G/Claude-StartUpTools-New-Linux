@@ -175,7 +175,7 @@ exit: 0 成功 / 1 失敗（復旧済み）/ 2 引数 / 3 確認待ち（`--yes`
 （別の場所を使う場合は `CCSU_PROMOTE_STATE_FILE` で上書き。置き場所が無ければ (0b) で中止）。
 安全弁: 二重実行は lock で拒否（exit 2）、(1)〜(5) 中の INT/TERM/HUP は自動復旧する。自動復旧は、手順 (2) の前に控えた
 `production-current` と `production-previous` の状態へ戻す（symlink を変える前の中断や同じ版の再昇格では版は変わらない。
-昇格前に symlink が無い初回昇格では削除する）。dashboard の drop-in も昇格前の状態へ戻す。戻せない場合も unit と dashboard の復旧は続け、`ROLLBACK_FAILED`（exit 4）にする。
+昇格前に symlink が無い初回昇格では削除する）。dashboard の drop-in も昇格前の状態へ戻す。復旧中の INT/TERM/HUP は無視する。unit を戻せない場合はコンソールを restart しない。戻せない場合も unit と dashboard の復旧は続け、`ROLLBACK_FAILED`（exit 4）にする。
 手動の `release-promote.sh --rollback --no-restart` は health を確認しないため、restart と health 確認を続けて行う。
 
 ### 4-B. 手動手順（4-A が使えない場合）
@@ -251,8 +251,11 @@ readlink "$HOME/.claudeos/releases/production-current"
 tail -1 "$HOME/.claudeos/releases/promotions.jsonl"
 ```
 
-- 台帳の復旧行の `artifact_rollback` が `ROLLED_BACK` / `UNCHANGED` / `NO_PREVIOUS_REMOVED`: 成果物は戻っている。**下表の「成果物」は実行しない**。失敗した unit・dashboard・health だけを直す。
-- `artifact_rollback` が `FAILED`、または復旧行が無い: `production-current` の指す先が昇格前の版（復旧行の `restored_target`）か確認し、違う場合だけ直す。
+- 台帳の復旧行の `artifact_rollback` が `ROLLED_BACK` / `UNCHANGED` / `NO_PREVIOUS_REMOVED`: 成果物は戻っている。**下表の「成果物」は実行しない**。復旧行の `rollback_errors` にある項目（unit・dashboard・health）だけを直す。
+- `artifact_rollback` が `FAILED`: `production-current` が復旧行の `pre_promotion_target`（昇格前の版）を指すように直す。
+- 復旧行が無い（SIGKILL・再起動など）: 昇格しようとした版を `<sha>` として、ファイルの状態から判断する。
+  - `production-current` が `<sha>` 以外を指す: それが昇格前の版。symlink は直さない。
+  - `production-current` が `<sha>` を指す: 昇格前の版は `production-previous` の内容。ただし同じ版の再昇格だった場合は `production-current` が昇格前の版そのもの。
 - 自動復旧ではなく、昇格後に手動で前の版へ戻す場合: 下表の「成果物」を使う。
 
 | 層 | 操作 |

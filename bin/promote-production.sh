@@ -37,7 +37,8 @@
 #   → dashboard の drop-in を昇格前の状態へ戻し restart → 3737 health status=ok を確認
 #   → promotions.jsonl に result=ROLLED_BACK を追記（復旧も失敗した場合は result=ROLLBACK_FAILED）
 # 中断: (1) 完了〜(5) 完了までの INT/TERM/HUP は自動復旧を実行して exit 1（復旧失敗は 4）。
-#       正常終了・中止時はトラップを解除する。
+#       正常終了・中止時はトラップを解除する。復旧中の INT/TERM/HUP は無視する。
+#       unit を戻せない場合はコンソールを restart しない。失敗は rollback_errors にすべて残す。
 # 二重実行防止: <home>/releases/.promote-production.lock を flock で排他取得できない場合は
 #       exit 2 で中止する（何も変更しない）。
 
@@ -107,6 +108,7 @@ PP_PRE_LINK=""            # 昇格前の production-current の target (無け�
 PP_PRE_PREVIOUS=""        # 昇格前の production-previous の内容
 PP_PRE_PREVIOUS_EXISTS=0
 PP_PRE_DROPIN_BACKUP=""   # 昇格前からある dashboard drop-in の控え (無ければ空)
+PP_ROLLBACK_ERRORS=()    # 自動復旧中に失敗した項目 (後の失敗で上書きせず、すべて残す)
 PP_FIRST_FAILED_STEP=""   # 復旧前の最初の失敗手順 (復旧中の失敗で上書きされるため台帳用に退避)
 PP_REASON=""
 PP_ROLLED_BACK="false"
@@ -286,10 +288,17 @@ pp__disarm_trap() {
   trap - INT TERM HUP
 }
 
+# pp__shield_trap — 復旧中の INT/TERM/HUP を無視する (途中で終了すると版と設定が中途半端に残る)
+#   子プロセスも無視を引き継ぐ。止める必要がある場合は SIGKILL を使う。
+pp__shield_trap() {
+  PP_TRAP_ARMED=0
+  trap '' INT TERM HUP
+}
+
 # pp__on_signal <SIG> — (1) 完了〜(5) 完了までの INT/TERM/HUP で自動復旧 (H2)
 pp__on_signal() {
   local sig="$1"
-  pp__disarm_trap
+  pp__shield_trap
   PP_FAILED_STEP="signal-$sig"
   PP_REASON="シグナル $sig により中断されました"
   pp__log ""
@@ -342,8 +351,12 @@ pp__restore_previous_file() {
   local previous tmp
   previous="$(pp__home)/releases/production-previous"
   if (( ! PP_PRE_PREVIOUS_EXISTS )); then
+    [[ -e "$previous" ]] || return 0
     rm -f -- "$previous"
     return
+  fi
+  if [[ -f "$previous" && "$(cat -- "$previous" 2>/dev/null)" == "$PP_PRE_PREVIOUS" ]]; then
+    return 0
   fi
   tmp="${previous}.tmp.$$"
   if printf '%s' "$PP_PRE_PREVIOUS" > "$tmp" && mv -Tf -- "$tmp" "$previous"; then
@@ -440,6 +453,22 @@ pp__health_ok() {
   return 1
 }
 
+# pp__restored_target — 実際に昇格前の版へ戻っている場合だけ、その target を返す
+pp__restored_target() {
+  case "$PP_ARTIFACT_ROLLBACK" in
+    ROLLED_BACK|UNCHANGED) printf '%s' "$PP_PRE_LINK" ;;
+  esac
+}
+
+# pp__errors_json — 復旧中の失敗の一覧 (JSON 配列)
+pp__errors_json() {
+  if (( ${#PP_ROLLBACK_ERRORS[@]} == 0 )); then
+    printf '[]'
+    return 0
+  fi
+  jq -cn '$ARGS.positional' --args "${PP_ROLLBACK_ERRORS[@]}"
+}
+
 # pp__record_rollback [result] — 台帳に復旧結果を追記（既定 ROLLED_BACK。失敗は警告のみ）
 #   復旧も失敗した場合は ROLLBACK_FAILED を残し、この昇格の試行が台帳から消えないようにする。
 pp__record_rollback() {
@@ -462,7 +491,9 @@ pp__record_rollback() {
     --arg unit "$PP_UNIT_NAME" \
     --arg note "promote-production: ${PP_FIRST_FAILED_STEP:-unknown} が失敗。artifact=${PP_ARTIFACT_ROLLBACK}; dashboard=${dashboard_note}" \
     --arg artifact "$PP_ARTIFACT_ROLLBACK" \
-    --arg restored "$PP_PRE_LINK" \
+    --arg pre "$PP_PRE_LINK" \
+    --arg restored "$(pp__restored_target)" \
+    --argjson errors "$(pp__errors_json)" \
     --arg dashboard_unit "$PP_DASHBOARD_UNIT" \
     --arg dropin "$PP_DROPIN" \
     --argjson dashboard_enabled "$(if (( PP_DASHBOARD )); then printf true; else printf false; fi)" \
@@ -470,7 +501,8 @@ pp__record_rollback() {
     --argjson dashboard_health_ok "$(if [[ "$PP_DASHBOARD_HEALTH_OK" == "true" ]]; then printf true; else printf false; fi)" \
     --argjson port "$PP_PRODUCTION_PORT" \
     '{at:$at,env:"production",commit:$commit,result:$result,unit:$unit,port:$port,note:$note,
-      artifact_rollback:$artifact,restored_target:$restored,
+      artifact_rollback:$artifact,pre_promotion_target:$pre,restored_target:$restored,
+      rollback_errors:$errors,
       dashboard:{enabled:$dashboard_enabled,unit:$dashboard_unit,dropin:$dropin,
                  dropin_removed:$dashboard_dropin_removed,health_ok:$dashboard_health_ok}}' 2>/dev/null)" \
     || { log_warn "台帳の行を作成できません"; return 0; }
@@ -483,57 +515,54 @@ pp__record_rollback() {
 
 # pp__rollback — (3)〜(5) 失敗時の自動復旧。成功で 0、失敗（要人手）で 1
 pp__rollback() {
-  pp__disarm_trap
-  local rc=0 sysctl
+  pp__shield_trap
+  local sysctl
   sysctl="$(pp__systemctl)"
   pp__log ""
   pp__log "== 自動復旧を開始 =="
   PP_FIRST_FAILED_STEP="$PP_FAILED_STEP"
+  PP_ROLLBACK_ERRORS=()
+  # 1 つ戻せなくても残りを続け、失敗は最後にまとめて返す
 
-  # 1) unit をバックアップから戻す
+  # 1) unit をバックアップから戻す。戻せない場合、コンソールは restart しない
+  #    (定義が不明な unit や、削除した成果物を指す unit を起動すると、稼働中のサービスが止まる)
+  local unit_restored=0
   if [[ -n "$PP_BACKUP" && -f "$PP_BACKUP" ]]; then
     if pp__run_step "unit-restore" cp -p -- "$PP_BACKUP" "$PP_UNIT_PATH"; then
       PP_BACKUP_SHA_AFTER="$(sha256sum -- "$PP_UNIT_PATH" | awk '{print $1}')"
       if [[ "$PP_BACKUP_SHA_AFTER" == "$PP_BACKUP_SHA" ]]; then
+        unit_restored=1
         pp__log "  unit をバックアップから復元しました (sha256=${PP_BACKUP_SHA:0:12}…)"
       else
         # 失敗 step の記録を上書きしないよう、検証結果だけを記録する
         pp__record_step "unit-restore-verify" "false"
-        PP_RESULT="ROLLBACK_FAILED"
-        PP_REASON="復元後の unit の sha256 がバックアップと一致しません"
-        return 1
+        PP_ROLLBACK_ERRORS+=("復元後の unit の sha256 がバックアップと一致しません")
       fi
     else
-      PP_RESULT="ROLLBACK_FAILED"
-      PP_REASON="unit をバックアップから復元できませんでした"
-      return 1
+      PP_ROLLBACK_ERRORS+=("unit をバックアップから復元できませんでした")
     fi
   else
-    PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="unit のバックアップがありません"
-    return 1
+    PP_ROLLBACK_ERRORS+=("unit のバックアップがありません")
   fi
 
   # 2) 成果物 symlink を昇格前へ戻す。昇格前に symlink が無い初回昇格では削除する (H1)
-  # 戻せなくても unit / dashboard の復旧は続け、最後に失敗として返す
-  local artifact_failed=0
-  pp__artifact_rollback || artifact_failed=1
+  if ! pp__artifact_rollback; then
+    PP_ROLLBACK_ERRORS+=("成果物 (production-current / previous) を昇格前の状態へ戻せませんでした")
+  fi
 
   # 2.5) dashboard の drop-in を昇格前の状態へ（昇格前からあれば内容を戻し、無ければ削除）
-  # 戻せなくても daemon-reload / restart / health は続ける (失敗した版を動かしたままにしない)
-  local dropin_failed=""
   if (( PP_DASHBOARD )); then
     local dropin
     dropin="$(pp__dropin_path)"
     if [[ -n "$PP_PRE_DROPIN_BACKUP" ]]; then
       if ! pp__run_step "dashboard-dropin-restore" cp -p -- "$PP_PRE_DROPIN_BACKUP" "$dropin"; then
-        dropin_failed="dashboard の drop-in を昇格前の内容へ戻せませんでした: $dropin"
+        PP_ROLLBACK_ERRORS+=("dashboard の drop-in を昇格前の内容へ戻せませんでした: $dropin")
       fi
     elif [[ -e "$dropin" ]]; then
-      if ! pp__run_step "dashboard-dropin-remove" rm -f -- "$dropin"; then
-        dropin_failed="dashboard の drop-in を削除できませんでした: $dropin"
-      else
+      if pp__run_step "dashboard-dropin-remove" rm -f -- "$dropin"; then
         PP_DASHBOARD_DROPIN_REMOVED="true"
+      else
+        PP_ROLLBACK_ERRORS+=("dashboard の drop-in を削除できませんでした: $dropin")
       fi
     else
       pp__record_step "dashboard-dropin-remove" "true"
@@ -541,58 +570,46 @@ pp__rollback() {
     fi
   fi
 
-  # 3) daemon-reload + restart
+  # 3) daemon-reload (何も restart しない。drop-in の反映にも必要)
   if ! pp__run_step "daemon-reload" "$sysctl" --user daemon-reload; then
-    PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="daemon-reload に失敗しました"
-    return 1
-  fi
-  if ! pp__run_step "restart" "$sysctl" --user restart "$PP_UNIT_NAME"; then
-    PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="unit の restart に失敗しました"
-    return 1
+    PP_ROLLBACK_ERRORS+=("daemon-reload に失敗しました")
   fi
 
-  # 4) health 確認
-  local body=""
-  if pp__health_ok; then
-    pp__record_step "health" "true"
-    pp__log "  health: OK (127.0.0.1:${PP_PRODUCTION_PORT}/api/health ok:true)"
-  else
-    pp__record_step "health" "false"
-    PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="復旧後の health が ok:true になりませんでした"
-    return 1
-  fi
-
-  # 5) dashboard を元の unit 定義で restart し、3737 の health を確認
-  if (( PP_DASHBOARD )); then
-    if ! pp__run_step "dashboard-restart" "$(pp__systemctl)" --user restart "$PP_DASHBOARD_UNIT"; then
-      PP_RESULT="ROLLBACK_FAILED"
-      PP_REASON="dashboard の restart に失敗しました"
-      return 1
+  # 4) コンソールの restart と health 確認
+  if (( unit_restored )); then
+    if ! pp__run_step "restart" "$sysctl" --user restart "$PP_UNIT_NAME"; then
+      PP_ROLLBACK_ERRORS+=("unit の restart に失敗しました")
     fi
-    if pp__dashboard_health_ok; then
+    if pp__health_ok; then
+      pp__record_step "health" "true"
+      pp__log "  health: OK (127.0.0.1:${PP_PRODUCTION_PORT}/api/health ok:true)"
+    else
+      pp__record_step "health" "false"
+      PP_ROLLBACK_ERRORS+=("復旧後の health が ok:true になりませんでした")
+    fi
+  else
+    pp__log "  unit を戻せないため、コンソールは restart しません (稼働中のプロセスを残します)"
+  fi
+
+  # 5) dashboard を restart し、3737 の health を確認
+  if (( PP_DASHBOARD )); then
+    if ! pp__run_step "dashboard-restart" "$sysctl" --user restart "$PP_DASHBOARD_UNIT"; then
+      PP_ROLLBACK_ERRORS+=("dashboard の restart に失敗しました")
+    elif pp__dashboard_health_ok; then
       pp__record_step "dashboard-health" "true"
       PP_DASHBOARD_HEALTH_OK="true"
       pp__log "  dashboard health: OK (127.0.0.1:${PP_DASHBOARD_PORT}/api/health status=ok)"
     else
       pp__record_step "dashboard-health" "false"
-      PP_RESULT="ROLLBACK_FAILED"
-      PP_REASON="復旧後の dashboard health (3737) が status=ok になりませんでした"
-      return 1
+      PP_ROLLBACK_ERRORS+=("復旧後の dashboard health (3737) が status=ok になりませんでした")
     fi
   fi
 
-  if [[ -n "$dropin_failed" ]]; then
+  if (( ${#PP_ROLLBACK_ERRORS[@]} > 0 )); then
     PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="$dropin_failed"
-    return 1
-  fi
-
-  if (( artifact_failed )); then
-    PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="成果物 (production-current / previous) を昇格前の状態へ戻せませんでした"
+    PP_REASON="${PP_ROLLBACK_ERRORS[0]}"
+    local e
+    for e in "${PP_ROLLBACK_ERRORS[@]}"; do log_error "復旧の失敗: $e"; done
     return 1
   fi
 
@@ -678,13 +695,15 @@ pp__json_line() {
     --argjson dashboard_enabled "$(if (( PP_DASHBOARD )); then printf true; else printf false; fi)" \
     --arg dashboard_unit "$PP_DASHBOARD_UNIT" \
     --arg artifact_rollback "$PP_ARTIFACT_ROLLBACK" \
+    --arg pre "$PP_PRE_LINK" \
+    --argjson errors "$(pp__errors_json)" \
     --arg dropin "$PP_DROPIN" \
     --argjson dashboard_port "$PP_DASHBOARD_PORT" \
     '{ok:$ok, release:$release, steps:$steps, rolled_back:$rolled_back,
       backup:$backup, result:$result, failed_step:$failed_step,
       reason:(if $reason == "" then null else $reason end),
       unit:$unit, home:$home, port:$port,
-      artifact_rollback:$artifact_rollback,
+      artifact_rollback:$artifact_rollback, pre_promotion_target:$pre, rollback_errors:$errors,
       dashboard:{enabled:$dashboard_enabled, unit:$dashboard_unit, dropin:$dropin, port:$dashboard_port}}'
 }
 
@@ -877,7 +896,7 @@ main() {
   if ! pp__run_step "symlink-prep" \
     env CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 \
     bash "$(pp__bin release-promote.sh)" --env production --release "$PP_RELEASE" --no-restart --json; then
-    pp__disarm_trap
+    pp__shield_trap
     # release-promote は失敗しても previous を書き換えていることがあるため、控えた状態へ戻す
     local first_failed="$PP_FAILED_STEP"
     if ! pp__artifact_rollback; then
