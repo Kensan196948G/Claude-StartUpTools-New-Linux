@@ -163,7 +163,7 @@ CCSU_PROMOTE_CONFIG_PATH=/home/kensan/Projects/Claude-StartUpTools-New-Linux/con
 | (1) | 本番 unit を `.bak-<ts>` へ退避（sha256 記録） | 中止 |
 | (2) | `production-current` を準備（`--no-restart`） | 中止（unit 未変更） |
 | (3) | unit 定義を成果物起動へ差し替え（`--state-file <repo>/state.json` 付き。`enable --now` は稼働中 unit を再起動しないため、この時点の稼働はまだ作業ツリー） | **自動復旧** |
-| (3d) | 本番 dashboard を drop-in（`…/claude-startuptools-dashboard.service.d/50-release.conf`）で成果物起動へ切替 → restart → 3737 health | **自動復旧**（drop-in 削除） |
+| (3d) | 本番 dashboard を drop-in（`…/claude-startuptools-dashboard.service.d/50-release.conf`）で成果物起動へ切替 → restart → 3737 health | **自動復旧**（drop-in を昇格前の状態へ戻す） |
 | (4) | 昇格確定（**ここで restart され実体が成果物になる**。health + 台帳 PROMOTED） | **自動復旧** |
 | (5) | `post-deploy-smoke --env production` | **自動復旧** |
 
@@ -242,6 +242,18 @@ journalctl --user -u claudeos-web-startup.service --since "10 min ago" | grep -c
 > 2026-11-23 時点では **Production 昇格は人間の Y/N 待ち**のため未実施。実施後にこの表を埋める。
 
 ## 5. ロールバック
+
+**先に現在の状態を確認する。** `promote-production.sh` の自動復旧は、失敗（exit 4）した場合でも版を戻し済みのことがある。
+その状態で `--rollback` を実行すると、本番がさらに 1 つ前の版へ後退する。
+
+```bash
+readlink "$HOME/.claudeos/releases/production-current"
+tail -1 "$HOME/.claudeos/releases/promotions.jsonl"
+```
+
+- 台帳の復旧行の `artifact_rollback` が `ROLLED_BACK` / `UNCHANGED` / `NO_PREVIOUS_REMOVED`: 成果物は戻っている。**下表の「成果物」は実行しない**。失敗した unit・dashboard・health だけを直す。
+- `artifact_rollback` が `FAILED`、または復旧行が無い: `production-current` の指す先が昇格前の版（復旧行の `restored_target`）か確認し、違う場合だけ直す。
+- 自動復旧ではなく、昇格後に手動で前の版へ戻す場合: 下表の「成果物」を使う。
 
 | 層 | 操作 |
 |---|---|

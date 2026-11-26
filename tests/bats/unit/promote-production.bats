@@ -408,6 +408,8 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$(_current)" = "$OLD" ]
   [ "$(_previous)" = "$OLDER" ]
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r .artifact_rollback)" = "UNCHANGED" ]
+  # シグナル経路を通ったことを確認する (届かずに手順 (2) が失敗しただけでは通さない)
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .failed_step)" = "signal-TERM" ]
 }
 
 @test "promote-production: 同じ版の再昇格が失敗しても版を後退させない (#245)" {
