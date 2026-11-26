@@ -23,6 +23,7 @@
 | 昇格前に symlink が無い初回昇格 | symlink を削除する（従来と同じ） | `NO_PREVIOUS_REMOVED` |
 | 2 回目以降の昇格の失敗 | 昇格前からある drop-in は削除せず同じ内容へ戻し、dashboard を restart する | — |
 | 手順 (2) の失敗 | `production-current` と previous を控えた状態へ戻して `ABORTED`。戻せなければ `ROLLBACK_FAILED` | — |
+| drop-in を戻せない | 残りの復旧（daemon-reload・restart・health）は続け、`ROLLBACK_FAILED`・exit 4 | — |
 | symlink を戻せない | unit・dashboard の復旧は続け、`ROLLBACK_FAILED`・exit 4（従来は警告のみで `ROLLED_BACK` 扱い） | `FAILED` |
 
 - 台帳の復旧行に、戻し先の `restored_target`（昇格前の `production-current`）を追加する。

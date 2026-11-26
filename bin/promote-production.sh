@@ -34,7 +34,7 @@
 #   unit をバックアップから戻す → 成果物 symlink と production-previous を昇格前の状態へ戻す
 #     （昇格前に symlink が無い初回昇格では削除し、新 artifact を指したままにしない）
 #   → systemctl --user daemon-reload → restart → health(3740) 200 + ok:true を確認
-#   → dashboard の drop-in を削除し restart（(3d) を実行していた場合）→ 3737 health status=ok を確認
+#   → dashboard の drop-in を昇格前の状態へ戻し restart → 3737 health status=ok を確認
 #   → promotions.jsonl に result=ROLLED_BACK を追記（復旧も失敗した場合は result=ROLLBACK_FAILED）
 # 中断: (1) 完了〜(5) 完了までの INT/TERM/HUP は自動復旧を実行して exit 1（復旧失敗は 4）。
 #       正常終了・中止時はトラップを解除する。
@@ -346,7 +346,11 @@ pp__restore_previous_file() {
     return
   fi
   tmp="${previous}.tmp.$$"
-  printf '%s' "$PP_PRE_PREVIOUS" > "$tmp" && mv -Tf -- "$tmp" "$previous"
+  if printf '%s' "$PP_PRE_PREVIOUS" > "$tmp" && mv -Tf -- "$tmp" "$previous"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  return 1
 }
 
 # pp__artifact_rollback — 成果物 symlink と previous を昇格前の状態へ戻す
@@ -510,28 +514,27 @@ pp__rollback() {
     return 1
   fi
 
-  # 2) 成果物 symlink を戻す。previous が無い初回昇格では symlink を削除する (H1)
+  # 2) 成果物 symlink を昇格前へ戻す。昇格前に symlink が無い初回昇格では削除する (H1)
   # 戻せなくても unit / dashboard の復旧は続け、最後に失敗として返す
   local artifact_failed=0
   pp__artifact_rollback || artifact_failed=1
 
   # 2.5) dashboard の drop-in を昇格前の状態へ（昇格前からあれば内容を戻し、無ければ削除）
+  # 戻せなくても daemon-reload / restart / health は続ける (失敗した版を動かしたままにしない)
+  local dropin_failed=""
   if (( PP_DASHBOARD )); then
     local dropin
     dropin="$(pp__dropin_path)"
     if [[ -n "$PP_PRE_DROPIN_BACKUP" ]]; then
       if ! pp__run_step "dashboard-dropin-restore" cp -p -- "$PP_PRE_DROPIN_BACKUP" "$dropin"; then
-        PP_RESULT="ROLLBACK_FAILED"
-        PP_REASON="dashboard の drop-in を昇格前の内容へ戻せませんでした: $dropin"
-        return 1
+        dropin_failed="dashboard の drop-in を昇格前の内容へ戻せませんでした: $dropin"
       fi
     elif [[ -e "$dropin" ]]; then
       if ! pp__run_step "dashboard-dropin-remove" rm -f -- "$dropin"; then
-        PP_RESULT="ROLLBACK_FAILED"
-        PP_REASON="dashboard の drop-in を削除できませんでした: $dropin"
-        return 1
+        dropin_failed="dashboard の drop-in を削除できませんでした: $dropin"
+      else
+        PP_DASHBOARD_DROPIN_REMOVED="true"
       fi
-      PP_DASHBOARD_DROPIN_REMOVED="true"
     else
       pp__record_step "dashboard-dropin-remove" "true"
       PP_DASHBOARD_DROPIN_REMOVED="true"
@@ -581,6 +584,12 @@ pp__rollback() {
     fi
   fi
 
+  if [[ -n "$dropin_failed" ]]; then
+    PP_RESULT="ROLLBACK_FAILED"
+    PP_REASON="$dropin_failed"
+    return 1
+  fi
+
   if (( artifact_failed )); then
     PP_RESULT="ROLLBACK_FAILED"
     PP_REASON="成果物 (production-current / previous) を昇格前の状態へ戻せませんでした"
@@ -628,7 +637,7 @@ pp__print_plan() {
   fi
   printf '    (4) %s --env production --release %s --json\n' "$(pp__bin release-promote.sh)" "$rel"
   printf '    (5) %s --env production --json\n' "$(pp__bin post-deploy-smoke.sh)"
-  printf '  失敗時 (3)〜(5): unit をバックアップへ戻す → symlink と previous を昇格前へ戻す → dashboard drop-in を削除 → daemon-reload → restart → health 確認\n'
+  printf '  失敗時 (3)〜(5): unit をバックアップへ戻す → symlink と previous を昇格前へ戻す → dashboard drop-in を昇格前へ戻す → daemon-reload → restart → health 確認\n'
   printf '  exit: 0 成功 / 1 失敗（復旧済み） / 2 引数 / 3 確認待ち / 4 復旧も失敗\n'
 }
 

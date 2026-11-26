@@ -142,12 +142,12 @@ case " $* " in
       sleep 0.5
       exit 1
     fi
-    (( ${PP_STUB_SYMLINK_RC:-0} == 0 )) && _swap
-    # PP_STUB_SYMLINK_PARTIAL: 実物の health 失敗と同じく previous を書き換え link は変えずに失敗する
+    # PP_STUB_SYMLINK_PARTIAL: 実物の health 失敗と同じく previous を書き換え link は旧版のまま失敗する
     if [[ "${PP_STUB_SYMLINK_PARTIAL:-0}" == "1" ]]; then
       [[ -L "$link" ]] && printf '%s' "$(readlink "$link")" > "$CLAUDEOS_HOME/releases/production-previous"
       exit 1
     fi
+    (( ${PP_STUB_SYMLINK_RC:-0} == 0 )) && _swap
     exit "${PP_STUB_SYMLINK_RC:-0}" ;;
   *)
     # PP_STUB_BREAK_LINK: symlink を戻せない状態 (中身のあるディレクトリ) にする
@@ -169,6 +169,7 @@ EOF
   cat > "$CCSU_PROMOTE_BIN_DIR/post-deploy-smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "post-deploy-smoke $*" >> "${ORDER:?}"
+[[ -n "${PP_STUB_LOCK_DROPIN:-}" ]] && chmod 400 "$PP_STUB_LOCK_DROPIN"
 if [[ -n "${PP_STUB_SMOKE_SIGNAL:-}" ]]; then
   # このスタブは pp__run_step のコマンド置換 (サブシェル) から呼ばれるため、
   # その親 = promote-production.sh 本体へシグナルを送る
@@ -395,7 +396,8 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$(_previous)" = "$OLDER" ]
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r .artifact_rollback)" = "ROLLED_BACK" ]
   # 復旧は previous を読む --rollback に頼らない
-  ! grep -q -- "--rollback" "$ORDER"
+  run grep -q -- "--rollback" "$ORDER"
+  [ "$status" -eq 1 ]
 }
 
 @test "promote-production: symlink 張り替え前の中断では版を後退させない (#245)" {
@@ -432,6 +434,21 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .restored_target)" = "$OLD" ]
 }
 
+@test "promote-production: drop-in を戻せなくても restart と health 確認は続けて ROLLBACK_FAILED" {
+  _seed_current "$OLD"
+  mkdir -p "$(dirname "$DROPIN")"
+  printf '# previous promotion\n[Service]\n' > "$DROPIN"
+  [[ "$(id -u)" -eq 0 ]] && skip "root は読み取り専用ファイルへ書ける"
+  export PP_STUB_SMOKE_RC=1 PP_STUB_LOCK_DROPIN="$DROPIN"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ROLLBACK_FAILED" ]
+  grep -q "systemctl --user restart claudeos-web-startup.service" "$ORDER"
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r '.steps[] | select(.name=="health") | .ok')" = "true" ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLBACK_FAILED" ]
+}
+
 @test "promote-production: 手順 (2) の失敗でも previous を昇格前へ戻す" {
   _seed_current "$OLD" "$OLDER"
   export PP_STUB_SYMLINK_PARTIAL=1
@@ -449,7 +466,8 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   run bash "$SCRIPT" --release "$SHA" --yes --json
   [ "$status" -eq 1 ]
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ABORTED" ]
-  ! grep -q -- "--no-restart" "$ORDER"
+  run grep -q -- "--no-restart" "$ORDER"
+  [ "$status" -eq 1 ]
   [ "$(_current)" = "$OLD" ]
 }
 

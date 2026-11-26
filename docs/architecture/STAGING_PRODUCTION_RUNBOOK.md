@@ -256,4 +256,4 @@ journalctl --user -u claudeos-web-startup.service --since "10 min ago" | grep -c
 - Staging 用の公開 hostname / Access application は未作成（Tunnel ingress は 1 hostname のみ）。
 - Staging dashboard（3743）は構築済み。Staging ttyd（3744）は意図的に未構築（端末ゲートウェイは環境非依存）。
 - `scripts/e2e/staging-smoke.sh` の CI ジョブは未追加（`.github/workflows/ci.yml` の変更はセッションの self-evolution policy gate が `DEPLOY=critical` として拒否するため、人間の適用が必要）。
-- `release-promote` の `--no-restart` は health 確認も行う（失敗すれば切戻す）。初回 bootstrap ではこの挙動を理解して使うこと。
+- `release-promote` の昇格（`--release`）は `--no-restart` でも health 確認を行う（失敗すれば切戻す）。`--rollback --no-restart` は health を確認しない。初回 bootstrap ではこの挙動を理解して使うこと。
