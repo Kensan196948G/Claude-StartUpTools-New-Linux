@@ -387,6 +387,8 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$(printf '%s' "$last" | jq -r .result)" = "ROLLBACK_FAILED" ]
   # 復旧も失敗した試行が台帳から消えない
   [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLBACK_FAILED" ]
+  # 復旧中の失敗 (restart) で上書きせず、最初に失敗した手順を残す
+  [[ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .note)" == "promote-production: dashboard-switch が失敗。"* ]]
 }
 
 # ------------------------------------------------------------

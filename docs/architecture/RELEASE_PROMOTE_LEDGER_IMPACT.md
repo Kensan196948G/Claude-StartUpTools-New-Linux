@@ -29,5 +29,11 @@
 ## 3. ロールバック手順
 
 1. `git revert <マージコミット>` で PR 全体を戻し、通常の手順で成果物を作成して昇格する。
-2. 台帳の形式は変わらない（行が 1 行減るだけ）ため、戻した後に台帳の移行は不要。既に残った 1 行の記録はそのままでよい。
-3. 既に `--register` 済みの unit は `Documentation=` が新形式のまま残るが、動作に影響しない（旧形式は警告が出るだけ）。必要なら `--register` を再実行して旧形式へ戻す。
+2. 台帳の項目の形式は変わらない（`PROMOTED` が 1 行になり、`result=ROLLBACK_FAILED` の行が増え得る）ため、戻した後に台帳の移行は不要。記録済みの行はそのままでよい。
+3. 既に `--register` 済みの unit は `Documentation=` が新形式のまま残るが、動作に影響しないため書き戻さなくてよい。**引数なしの `--register` は実行しない**（本番 unit が作業ツリー直実行に変わり、`--env`・`--state-file` も消える）。書き戻す場合は `STAGING_PRODUCTION_RUNBOOK.md` の本番 unit 差し替え手順にある引数をすべて指定する。
+
+## 4. 残る限界
+
+- SIGKILL・ホスト再起動・復旧中の 2 回目の中断では、symlink が新版のまま台帳に行が残らないことがある（手順 (2) の `PROMOTED` を省いたため）。実状態は `production-current` の指す先で確認する。
+- `post-deploy-smoke.sh` の `promotions` 項目は最終行の `at` だけを見るため、`ROLLBACK_FAILED` の直後でも PASS になる（判定ロジックは本 PR 以前から）。
+- 復旧経路の既存の不具合は Issue #244 などで扱う。

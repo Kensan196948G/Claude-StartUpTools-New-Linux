@@ -104,6 +104,7 @@ PP_HEALTH_INTERVAL="${CCSU_PROMOTE_HEALTH_INTERVAL:-1}"
 
 PP_RESULT=""
 PP_FAILED_STEP=""
+PP_FIRST_FAILED_STEP=""   # 復旧前の最初の失敗手順 (復旧中の失敗で上書きされるため台帳用に退避)
 PP_REASON=""
 PP_ROLLED_BACK="false"
 PP_BACKUP_SHA_AFTER=""
@@ -406,7 +407,7 @@ pp__record_rollback() {
     --arg commit "$PP_RELEASE" \
     --arg result "$result" \
     --arg unit "$PP_UNIT_NAME" \
-    --arg note "promote-production: ${PP_FAILED_STEP:-unknown} が失敗。artifact=${PP_ARTIFACT_ROLLBACK}; dashboard=${dashboard_note}" \
+    --arg note "promote-production: ${PP_FIRST_FAILED_STEP:-unknown} が失敗。artifact=${PP_ARTIFACT_ROLLBACK}; dashboard=${dashboard_note}" \
     --arg artifact "$PP_ARTIFACT_ROLLBACK" \
     --arg dashboard_unit "$PP_DASHBOARD_UNIT" \
     --arg dropin "$PP_DROPIN" \
@@ -433,6 +434,7 @@ pp__rollback() {
   sysctl="$(pp__systemctl)"
   pp__log ""
   pp__log "== 自動復旧を開始 =="
+  PP_FIRST_FAILED_STEP="$PP_FAILED_STEP"
 
   # 1) unit をバックアップから戻す
   if [[ -n "$PP_BACKUP" && -f "$PP_BACKUP" ]]; then

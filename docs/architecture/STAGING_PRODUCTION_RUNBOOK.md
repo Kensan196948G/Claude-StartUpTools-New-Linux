@@ -182,6 +182,8 @@ exit: 0 成功 / 1 失敗（復旧済み）/ 2 引数 / 3 確認待ち（`--yes`
 
 実行順序（記録と実体を一致させるため、この順で行う）:
 
+台帳 `promotions.jsonl` の `result` は `PROMOTED`・`ROLLED_BACK`・`ROLLBACK_FAILED` の 3 種類。`ROLLBACK_FAILED` は `promote-production.sh` の自動復旧も失敗した記録で、`production-current` の指す先と unit の状態を人が確認して戻す。
+
 ```bash
 # 4-1. 本番 unit のバックアップ（必ず戻せる状態にする）
 cp ~/.config/systemd/user/claudeos-web-startup.service \
