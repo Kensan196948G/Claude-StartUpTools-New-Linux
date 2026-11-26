@@ -36,7 +36,7 @@
 #   → dashboard の drop-in を削除し restart（(3d) を実行していた場合）→ 3737 health status=ok を確認
 #     （previous が無い初回昇格では release-promote --rollback が NO_PREVIOUS を返すため、
 #       production-current symlink を削除して新 artifact を指したままにしない）
-#   → promotions.jsonl に result=ROLLED_BACK を追記
+#   → promotions.jsonl に result=ROLLED_BACK を追記（復旧も失敗した場合は result=ROLLBACK_FAILED）
 # 中断: (1) 完了〜(5) 完了までの INT/TERM/HUP は自動復旧を実行して exit 1（復旧失敗は 4）。
 #       正常終了・中止時はトラップを解除する。
 # 二重実行防止: <home>/releases/.promote-production.lock を flock で排他取得できない場合は
@@ -60,6 +60,9 @@
 #   CCSU_SYSTEMD_UNIT_DIR          unit / drop-in のディレクトリ（既定 unit path の dirname）
 #   CCSU_PROMOTE_NODE_BIN          drop-in の ExecStart に書く node（未指定なら現行 dashboard unit の ExecStart から抽出 → command -v node）
 #   CCSU_PROMOTE_DASHBOARD_HEALTH_TIMEOUT  3737 health の待ち（既定 10 秒）
+#
+# 内部用（利用者は設定しない。起動時に unset し、手順 (2) だけがオーケストレータから付ける）:
+#   CCSU_PROMOTE_SKIP_PROMOTED_LEDGER  1 なら release-promote.sh --no-restart が PROMOTED を台帳に書かない
 # ============================================================
 
 set -euo pipefail
@@ -292,6 +295,7 @@ pp__on_signal() {
     if (( PP_JSON )); then pp__json_line "false" "ROLLED_BACK" "$PP_REASON"; fi
     exit 1
   fi
+  pp__record_rollback "ROLLBACK_FAILED"
   pp__log "== 自動復旧に失敗しました。人手で §5 を実行してください: $PP_REASON =="
   if (( PP_JSON )); then pp__json_line "false" "ROLLBACK_FAILED" "$PP_REASON"; fi
   exit 4
@@ -382,8 +386,10 @@ pp__health_ok() {
   return 1
 }
 
-# pp__record_rollback — 台帳に ROLLED_BACK を追記（失敗は警告のみ）
+# pp__record_rollback [result] — 台帳に復旧結果を追記（既定 ROLLED_BACK。失敗は警告のみ）
+#   復旧も失敗した場合は ROLLBACK_FAILED を残し、この昇格の試行が台帳から消えないようにする。
 pp__record_rollback() {
+  local result="${1:-ROLLED_BACK}"
   local releases ledger line
   releases="$(pp__home)/releases"
   ledger="$releases/promotions.jsonl"
@@ -398,7 +404,7 @@ pp__record_rollback() {
   line="$(jq -cn \
     --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg commit "$PP_RELEASE" \
-    --arg result "ROLLED_BACK" \
+    --arg result "$result" \
     --arg unit "$PP_UNIT_NAME" \
     --arg note "promote-production: ${PP_FAILED_STEP:-unknown} が失敗。artifact=${PP_ARTIFACT_ROLLBACK}; dashboard=${dashboard_note}" \
     --arg artifact "$PP_ARTIFACT_ROLLBACK" \
@@ -414,7 +420,7 @@ pp__record_rollback() {
                  dropin_removed:$dashboard_dropin_removed,health_ok:$dashboard_health_ok}}' 2>/dev/null)" \
     || { log_warn "台帳の行を作成できません"; return 0; }
   if printf '%s\n' "$line" >> "$ledger" 2>/dev/null; then
-    pp__log "  台帳に ROLLED_BACK を記録: $ledger"
+    pp__log "  台帳に $result を記録: $ledger"
   else
     log_warn "台帳に追記できません: $ledger"
   fi
@@ -851,6 +857,7 @@ main() {
     return 1
   fi
 
+  pp__record_rollback "ROLLBACK_FAILED"
   pp__log "== 自動復旧に失敗しました。人手で §5 を実行してください: $PP_REASON =="
   if (( PP_JSON )); then pp__json_line "false" "ROLLBACK_FAILED" "$PP_REASON"; fi
   return 4

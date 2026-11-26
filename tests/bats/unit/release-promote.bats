@@ -372,6 +372,16 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
 }
 
+@test "promotions.jsonl: 省略指定が残っていても --no-restart でなければ PROMOTED を記録する" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _stub_systemctl
+  _stub_curl
+  _health_body '{"ok":true}'
+  CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+}
+
 @test "promotions.jsonl: 昇格を 1 行追記し、既存行を壊さない" {
   printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"deadbeef","result":"PROMOTED","unit":"u","port":3742}\n' \
     "$COMMIT_B" > "$RELEASES/promotions.jsonl"

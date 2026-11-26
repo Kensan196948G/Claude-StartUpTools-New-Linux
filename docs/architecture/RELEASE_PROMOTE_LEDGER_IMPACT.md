@@ -14,14 +14,17 @@
 | --- | --- | --- |
 | 稼働中の本番 | なし。コード変更のみで、既存の unit ファイルは書き換えない | 次回の `--register` から新形式になる |
 | 次回の本番昇格 | 台帳の `PROMOTED` が 2 行から 1 行になる。`Documentation=` の警告が出なくなる | `release-promote.bats`・`promote-production.bats` |
-| 失敗して復旧する昇格 | 従来の「`PROMOTED` → `ROLLED_BACK`」の 2 行が `ROLLED_BACK` のみになる。昇格は確定していないため記録として妥当 | PR 本文「仕様の変更」 |
+| 手順 (3)・(3d) の失敗・中断 | 手順 (2) の `PROMOTED` は残らず、`ROLLED_BACK` が記録される（`release-promote --rollback` とオーケストレータの 2 経路のため複数行になり得る） | コードの読解 |
+| 手順 (4) の失敗 | 手順 (4) は `ROLLED_BACK` を記録し、外側の復旧もさらに追記する（複数行になり得る） | コードの読解 |
+| 手順 (5) の失敗 | 手順 (4) が書いた `PROMOTED` は残り、その後に `ROLLED_BACK` が追記される | コードの読解 |
+| 自動復旧も失敗 | `ROLLBACK_FAILED` を 1 行追記し、試行が台帳から消えないようにする（本 PR で追加） | `promote-production.bats` |
 | 台帳の読み手 | `post-deploy-smoke.sh` は最終行の時刻のみ、`deploy-status.sh` は末尾 5 件の表示のみで影響なし | 両スクリプトの参照箇所を確認済み |
-| 環境変数の継承 | 外部で `CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1` を設定しても、`unset` により手順 (4) は常に 1 行を残す（回帰テストあり） | 独立レビューの important 1 件を修正済み |
+| 環境変数の継承 | `promote-production.sh` は起動時に `unset` する。`release-promote.sh` を直接実行して変数が残っていても、省略は `--no-restart` に限るため通常の昇格は記録される（回帰テストあり） | 独立レビューの important 1 件を修正済み |
 | `ROLLED_BACK` の記録 | 変更なし（常に記録） | |
 | セキュリティ | secret・権限・公開範囲の変更なし。判定・検証には影響せず、記録の省略のみ | |
 | データ・migration | なし | |
 
-既知の限界（PR 本文の残課題）: 台帳の `previous_commit` が手順 (4) の記録では対象 commit と同じになる（`production-previous` ファイルは正しい）。`Documentation=` のパスに空白・`%` を含む場合は従来と同じ。
+既知の限界: 台帳の行に `previous_commit` 項目はない（`--json` の標準出力にだけあり、手順 (4) では対象 commit と同じ値になる。`production-previous` ファイルは正しい）。`Documentation=` のパスに空白・`%` を含む場合は従来と同じ。手順 (4) の health 失敗時の切り戻し先が新版自身になり得る既存の不具合は、本 PR の対象外として別 Issue で扱う。
 
 ## 3. ロールバック手順
 

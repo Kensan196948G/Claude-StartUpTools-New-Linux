@@ -626,7 +626,8 @@ rp__append_promotion() {
   local result="$1" line file rot_rc=0
   # promote-production.sh の手順 (2) は symlink の事前準備で、同じ昇格を手順 (4) が記録する。
   # 二重に PROMOTED を残さないため、手順 (2) だけが内部の環境変数で省く。ROLLED_BACK は常に記録する。
-  if [[ "$result" == "PROMOTED" && "${CCSU_PROMOTE_SKIP_PROMOTED_LEDGER:-}" == "1" ]]; then
+  # 変数が export されたまま直接実行しても欠けないよう、--no-restart の事前準備に限る。
+  if [[ "$result" == "PROMOTED" && "${CCSU_PROMOTE_SKIP_PROMOTED_LEDGER:-}" == "1" ]] && (( ${RP_NO_RESTART:-0} )); then
     return 0
   fi
   file="$(rp__releases_dir)/promotions.jsonl"

@@ -385,6 +385,8 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$status" -eq 4 ]
   local last; last="$(_last_json "$output")"
   [ "$(printf '%s' "$last" | jq -r .result)" = "ROLLBACK_FAILED" ]
+  # 復旧も失敗した試行が台帳から消えない
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLBACK_FAILED" ]
 }
 
 # ------------------------------------------------------------
