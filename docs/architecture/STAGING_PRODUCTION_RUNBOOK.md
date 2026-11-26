@@ -175,7 +175,7 @@ exit: 0 成功 / 1 失敗（復旧済み）/ 2 引数 / 3 確認待ち（`--yes`
 （別の場所を使う場合は `CCSU_PROMOTE_STATE_FILE` で上書き。置き場所が無ければ (0b) で中止）。
 安全弁: 二重実行は lock で拒否（exit 2）、(1)〜(5) 中の INT/TERM/HUP は自動復旧する。自動復旧は、手順 (2) の前に控えた
 `production-current` と `production-previous` の状態へ戻す（symlink を変える前の中断や同じ版の再昇格では版は変わらない。
-昇格前に symlink が無い初回昇格では削除する）。dashboard の drop-in も昇格前の状態へ戻す。戻せない場合も unit と dashboard の復旧は続け、`ROLLBACK_FAILED`（exit 4）にする。
+昇格前に symlink が無い初回昇格では削除する）。dashboard の drop-in も昇格前の状態へ戻す。復旧中の INT/TERM/HUP は無視する。unit を戻せない場合はコンソールを、daemon-reload に失敗した場合はコンソールと dashboard を restart しない。戻せない場合も unit と dashboard の復旧は続け、`ROLLBACK_FAILED`（exit 4）にする。
 手動の `release-promote.sh --rollback --no-restart` は health を確認しないため、restart と health 確認を続けて行う。
 
 ### 4-B. 手動手順（4-A が使えない場合）
@@ -218,7 +218,7 @@ journalctl --user -u claudeos-web-startup.service --since "10 min ago" | grep -c
 設計上の注意:
 
 - `release-promote --env production` は **staging-current と同一 `tree_sha256`** を要求する（未検証は `STAGING_NOT_VERIFIED` で拒否、`--force` は無い）。
-- `--no-restart` でも health 確認は行われ、失敗すれば切戻す。4-2 は「本番が今も作業ツリーで応答している」ため通る。
+- `--no-restart` でも health 確認は行われ、失敗すれば切戻す（昇格前と同じ版を指している場合は戻すものが無いため、エラーを返すだけ）。4-2 は「本番が今も作業ツリーで応答している」ため通る。
 - 4-3 の `systemctl enable --now` は**既に active な unit を再起動しない**（systemd の仕様）。
   この時点で変わるのは unit ファイルだけで、稼働プロセスはまだ旧（作業ツリー）のまま。
   **実切替は 4-4 の `release-promote` が行う restart**で、4-4 が最終的な検証記録になる。
@@ -251,8 +251,16 @@ readlink "$HOME/.claudeos/releases/production-current"
 tail -1 "$HOME/.claudeos/releases/promotions.jsonl"
 ```
 
-- 台帳の復旧行の `artifact_rollback` が `ROLLED_BACK` / `UNCHANGED` / `NO_PREVIOUS_REMOVED`: 成果物は戻っている。**下表の「成果物」は実行しない**。失敗した unit・dashboard・health だけを直す。
-- `artifact_rollback` が `FAILED`、または復旧行が無い: `production-current` の指す先が昇格前の版（復旧行の `restored_target`）か確認し、違う場合だけ直す。
+以下の `<sha>` は昇格しようとした版。**末尾の行が今回の復旧行であること**（`commit` が `<sha>`、`at` が今回の実行時刻（UTC）、`artifact_rollback` がある）を確認してから読む。
+
+- 今回の復旧行の `artifact_rollback` が `ROLLED_BACK` / `UNCHANGED` / `NO_PREVIOUS_REMOVED`: 成果物は戻っている。**下表の「成果物」は実行しない**。復旧行の `rollback_errors` にある項目（unit・dashboard・health）だけを直す。
+- `artifact_rollback` が `FAILED`: `production-current` が `pre_promotion_target` を指すように直す。`pre_promotion_target` が空なら初回昇格なので、unit を戻した後に symlink を削除する。`production-current` が正しい場合は `production-previous` の書き戻しだけが失敗している。
+- `artifact_rollback` が `KEPT`: 初回昇格で unit を戻せていない。**先に unit をバックアップから戻し**、`daemon-reload` の後に `production-current` を削除する。
+- 今回の復旧行が無い（SIGKILL・再起動など）: 台帳からは推測せず、`promote-production.sh` が symlink を変える前に残した控えを読む。
+  ```bash
+  cat "$HOME/.claudeos/releases/production-pre-promotion.json"
+  ```
+  `release` が `<sha>`、`at` が今回の実行時刻であることを確認する。昇格前の版は `pre_link`（空なら初回昇格。`unit_backup` から unit を戻した後に symlink を削除する）。**控えが今回のものでない場合（手動の 4-2 / 4-4 など）は symlink を変えず**、稼働中の版を確認してから判断する。
 - 自動復旧ではなく、昇格後に手動で前の版へ戻す場合: 下表の「成果物」を使う。
 
 | 層 | 操作 |
@@ -268,4 +276,4 @@ tail -1 "$HOME/.claudeos/releases/promotions.jsonl"
 - Staging 用の公開 hostname / Access application は未作成（Tunnel ingress は 1 hostname のみ）。
 - Staging dashboard（3743）は構築済み。Staging ttyd（3744）は意図的に未構築（端末ゲートウェイは環境非依存）。
 - `scripts/e2e/staging-smoke.sh` の CI ジョブは未追加（`.github/workflows/ci.yml` の変更はセッションの self-evolution policy gate が `DEPLOY=critical` として拒否するため、人間の適用が必要）。
-- `release-promote` の昇格（`--release`）は `--no-restart` でも health 確認を行う（失敗すれば切戻す）。`--rollback --no-restart` は health を確認しない。初回 bootstrap ではこの挙動を理解して使うこと。
+- `release-promote` の昇格（`--release`）は `--no-restart` でも health 確認を行う（失敗すれば切戻す。昇格前と同じ版の場合はエラーを返すだけ）。`--rollback --no-restart` は health を確認しない。初回 bootstrap ではこの挙動を理解して使うこと。

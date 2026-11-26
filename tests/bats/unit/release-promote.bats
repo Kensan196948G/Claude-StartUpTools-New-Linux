@@ -290,6 +290,23 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "ROLLED_BACK" ]
 }
 
+@test "同じ版の昇格で health が失敗しても、戻したとは記録しない" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+
+  : > "$TEST_TEMP/systemctl.calls"
+  _health_body '{"ok":false}'
+  _stub_curl 0
+  run bash "$SCRIPT" --env staging --release "$REL_A" --json
+  [ "$status" -eq 1 ]
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_A" ]
+  [ "$(_last_json "$output" | jq -r .ok)" = "false" ]
+  [ "$(_last_json "$output" | jq -r .error)" = "HEALTH_CHECK_FAILED" ]
+  [ "$(grep -c 'restart' "$TEST_TEMP/systemctl.calls")" -eq 1 ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+}
+
 @test "自動ロールバック: restart 失敗でも旧 target へ戻して ROLLED_BACK" {
   _make_release "$REL_B" "$COMMIT_B" app/index.js
   run bash "$SCRIPT" --env staging --release "$REL_B" --no-restart
