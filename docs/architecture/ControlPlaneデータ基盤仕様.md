@@ -18,8 +18,8 @@ Neon / managed PostgreSQL は使用しない（`docs/architecture/PostgreSQLデ�
 |---|---|---|
 | Agent Router の決定 | `state.json.execution.routing_log`（最新 20 件のみ、実測で長さ 0） | `control.workflow_events` / `control.agent_assignments` へ射影。`state.json` 側は当面併存（フォールバック） |
 | 監査証跡 | `.claude/claudeos/data/audit-log.jsonl`（`PostToolUse` のみ、5 キー、消費者コード無し） | `control.audit_events`（追記専用、改ざん検知付き）へ射影 |
-| 推論履歴 | `.claude/claudeos/data/reasoning-bank.json` | 当面は現状維持。将来 `control.failure_patterns` 等と突き合わせる |
-| 信頼スコア | `.claude/claudeos/data/trust-score.json` | 当面は現状維持。`control.trust_scores` は Agent/Skill 単位の粒度を追加するもので、プロジェクト単位の既存ファイルを置き換えない |
+| 推論履歴 | `.claude/claudeos/data/reasoning-bank.json`（実行時データ。Git 管理外） | 当面は現状維持。将来 `control.failure_patterns` 等と突き合わせる |
+| 信頼スコア | `.claude/claudeos/data/trust-score.json`（実行時データ。Git 管理外） | 当面は現状維持。`control.trust_scores` は Agent/Skill 単位の粒度を追加するもので、プロジェクト単位の既存ファイルを置き換えない |
 | Human Approval Gate | 各所の Y/N プロンプトのみ。永続記録なし | `control.approvals` / `control.approval_decisions` で記録・期限・改変検出を付与（PR#5） |
 
 **移行方針**: 既存ファイルは直ちに廃止しない。段階的ロールアウト（§5）を経て、観測が十分に積み上がった時点でどちらを正本にするかを利用者が判断する。

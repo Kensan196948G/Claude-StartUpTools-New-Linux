@@ -23,8 +23,8 @@ function dataDirPath(tmp) { return path.join(tmp, '.claude', 'claudeos', 'data')
 
 function runHook(tmp) {
   // session-end.js はローカルバンクの dataDir を __dirname 基準
-  // (.claude/claudeos/data = tracked) で解決する。テストがフックを実行すると
-  // 追跡ファイルを書き換えてしまうため、CLAUDEOS_DATA_DIR で一時ディレクトリへ
+  // (.claude/claudeos/data = 実行時データ) で解決する。テストがフックを実行すると
+  // 実データを書き換えてしまうため、CLAUDEOS_DATA_DIR で一時ディレクトリへ
   // 隔離する。HOME も一時化し、グローバルバンク (~/.claude/data) を実環境へ
   // 書かせない。
   const home = path.join(tmp, 'home');
@@ -125,7 +125,7 @@ test('reasoning-bank: CLAUDEOS_DATA_DIR は既定 dataDir より優先され、�
   }
 });
 
-test('session-end: 実行しても tracked な .claude/claudeos/data を書き換えない (回帰)', (t) => {
+test('session-end: 実行しても .claude/claudeos/data の実データを書き換えない (回帰)', (t) => {
   const repo = path.join(__dirname, '..');
   if (!fs.existsSync(path.join(repo, '.git'))) {
     t.skip('git checkout ではないため skip');
@@ -153,7 +153,8 @@ test('session-end: 実行しても tracked な .claude/claudeos/data を書き�
 
   const statusAfter = execFileSync('git', statusArgs, { encoding: 'utf8' });
   const bankAfter = fs.existsSync(bankPath) ? fs.readFileSync(bankPath) : null;
-  assert.deepStrictEqual(bankAfter, bankBefore, 'tracked reasoning-bank.json がフック実行で書き換わった');
+  // reasoning-bank.json は ignore 対象で git status に現れないため、この内容比較が実際の防御。
+  assert.deepStrictEqual(bankAfter, bankBefore, '実行時データ reasoning-bank.json がフック実行で書き換わった');
   assert.strictEqual(statusAfter, statusBefore, 'フック実行で tracked ファイルの git status が変化した');
   if (statusBefore === '') {
     assert.strictEqual(statusAfter, '', 'テスト実行後も git status --porcelain は空であること');

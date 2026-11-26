@@ -15,7 +15,7 @@ gh issue list --label "agent-msg,agent:qa,status:open" --limit 5
 
 # 2. urgent メッセージがあれば作業を中断して対応
 # 3. Trust Level 確認
-cat .claude/claudeos/data/trust-score.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'Level={d[\"level\"]} score={d[\"score\"]}')"
+python3 -c "import json,os; p='.claude/claudeos/data/trust-score.json'; d=json.load(open(p)) if os.path.exists(p) else {}; print(f'Level={d.get(\"level\",1)} score={d.get(\"score\",0)}')"
 
 # 4. 状態確認
 cat state.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('goal',''))"
