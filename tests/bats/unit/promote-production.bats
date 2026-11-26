@@ -143,6 +143,11 @@ case " $* " in
       exit 1
     fi
     (( ${PP_STUB_SYMLINK_RC:-0} == 0 )) && _swap
+    # PP_STUB_SYMLINK_PARTIAL: 実物の health 失敗と同じく previous を書き換え link は変えずに失敗する
+    if [[ "${PP_STUB_SYMLINK_PARTIAL:-0}" == "1" ]]; then
+      [[ -L "$link" ]] && printf '%s' "$(readlink "$link")" > "$CLAUDEOS_HOME/releases/production-previous"
+      exit 1
+    fi
     exit "${PP_STUB_SYMLINK_RC:-0}" ;;
   *)
     # PP_STUB_BREAK_LINK: symlink を戻せない状態 (中身のあるディレクトリ) にする
@@ -411,6 +416,41 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$(_current)" = "$SHA" ]
   [ "$(_previous)" = "$OLD" ]
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r .artifact_rollback)" = "UNCHANGED" ]
+}
+
+@test "promote-production: 2 回目以降の昇格の失敗では昇格前の dashboard drop-in を戻す" {
+  _seed_current "$OLD"
+  mkdir -p "$(dirname "$DROPIN")"
+  printf '# previous promotion\n[Service]\n' > "$DROPIN"
+  cp "$DROPIN" "$TEST_TEMP/dropin.before"
+  export PP_STUB_SMOKE_RC=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  cmp "$DROPIN" "$TEST_TEMP/dropin.before"
+  grep -q "systemctl --user restart $DASHBOARD_UNIT" "$ORDER"
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .dashboard.dropin_removed)" = "false" ]
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .restored_target)" = "$OLD" ]
+}
+
+@test "promote-production: 手順 (2) の失敗でも previous を昇格前へ戻す" {
+  _seed_current "$OLD" "$OLDER"
+  export PP_STUB_SYMLINK_PARTIAL=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ABORTED" ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(_previous)" = "$OLDER" ]
+}
+
+@test "promote-production: 控えが取れなければ何も変えずに中止する" {
+  _seed_current "$OLD" "$OLDER"
+  chmod 000 "$CLAUDEOS_HOME/releases/production-previous"
+  [[ -r "$CLAUDEOS_HOME/releases/production-previous" ]] && skip "読み取り不可を作れない環境 (root)"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ABORTED" ]
+  ! grep -q -- "--no-restart" "$ORDER"
+  [ "$(_current)" = "$OLD" ]
 }
 
 @test "promote-production: symlink を戻せなければ復旧は続行して ROLLBACK_FAILED (exit 4)" {
