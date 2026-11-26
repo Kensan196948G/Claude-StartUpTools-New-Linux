@@ -155,7 +155,7 @@ stg_timer__service_body() {
   cat <<EOF
 [Unit]
 Description=ClaudeOS staging smoke (release artifact health check, read-only)
-Documentation=$CCSU_ROOT/docs/architecture/STAGING_PRODUCTION_RUNBOOK.md
+Documentation=file:$CCSU_ROOT/docs/architecture/STAGING_PRODUCTION_RUNBOOK.md
 After=network.target
 
 [Service]

@@ -357,6 +357,31 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
 # 台帳 / JSON
 # ------------------------------------------------------------
 
+@test "promotions.jsonl: CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 のときは PROMOTED を追記しない (昇格自体は行う)" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 run bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+  # symlink は張り替わるが、台帳には何も書かない (本実行の側が 1 行だけ記録する)
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_A" ]
+  [ ! -e "$RELEASES/promotions.jsonl" ]
+
+  # 環境変数なしの通常実行は、従来どおり 1 行追記する
+  run bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$RELEASES/promotions.jsonl")" -eq 1 ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+}
+
+@test "promotions.jsonl: 省略指定が残っていても --no-restart でなければ PROMOTED を記録する" {
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  _stub_systemctl
+  _stub_curl
+  _health_body '{"ok":true}'
+  CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 run bash "$SCRIPT" --env staging --release "$REL_A"
+  [ "$status" -eq 0 ]
+  [ "$(tail -1 "$RELEASES/promotions.jsonl" | jq -r .result)" = "PROMOTED" ]
+}
+
 @test "promotions.jsonl: 昇格を 1 行追記し、既存行を壊さない" {
   printf '{"at":"2026-01-01T00:00:00Z","env":"staging","commit":"%s","tree_sha256":"deadbeef","result":"PROMOTED","unit":"u","port":3742}\n' \
     "$COMMIT_B" > "$RELEASES/promotions.jsonl"

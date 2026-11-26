@@ -79,6 +79,14 @@ teardown() { _bats_common_teardown; }
   grep -q '^WantedBy=timers.target$' "$TMR"
 }
 
+@test "unit 本文: Documentation= は systemd が受け付ける URI (file:/絶対パス) で書く" {
+  run bash "$SCRIPT" --register
+  [ "$status" -eq 0 ]
+  # パスのままだと systemd が "Invalid URL, ignoring" を警告する (2026-11-25 の本番昇格で観測)
+  grep -qF "Documentation=file:$REPO_ROOT/docs/architecture/STAGING_PRODUCTION_RUNBOOK.md" "$SVC"
+  ! grep -E '^Documentation=/' "$SVC"
+}
+
 @test "unit 本文: 本番 unit 名・本番ポート・本番 CLAUDEOS_HOME を含まない (Staging 専用)" {
   run bash "$SCRIPT" --register
   [ "$status" -eq 0 ]
