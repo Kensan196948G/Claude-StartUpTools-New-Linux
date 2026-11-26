@@ -178,7 +178,7 @@ ws_svc__resolve() {
 }
 
 # ws_svc__unit_body — unit ファイル内容 (stdout)
-#   既定 (CLAUDEOS_HOME 空) の出力は従来とバイト単位で同一。
+#   既定 (CLAUDEOS_HOME 空) の出力は、Documentation= を file: URI にした点を除き従来と同一。
 ws_svc__unit_body() {
   local node server
   node="$(command -v node || echo /usr/bin/node)"
@@ -186,7 +186,7 @@ ws_svc__unit_body() {
   cat <<EOF
 [Unit]
 Description=ClaudeOS Web Startup Console (bin/menu.sh の Web 版)
-Documentation=$ROOT/docs/architecture/WEB_STARTUP_TOOL.md
+Documentation=file:$ROOT/docs/architecture/WEB_STARTUP_TOOL.md
 After=network.target
 
 [Service]

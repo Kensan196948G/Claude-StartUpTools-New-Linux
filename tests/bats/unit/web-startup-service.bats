@@ -154,7 +154,7 @@ sandbox_home() {
   cat > "$TEST_TEMP/expected.unit" <<EOF
 [Unit]
 Description=ClaudeOS Web Startup Console (bin/menu.sh の Web 版)
-Documentation=$REPO_ROOT/docs/architecture/WEB_STARTUP_TOOL.md
+Documentation=file:$REPO_ROOT/docs/architecture/WEB_STARTUP_TOOL.md
 After=network.target
 
 [Service]
