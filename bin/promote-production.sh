@@ -292,7 +292,8 @@ pp__disarm_trap() {
 #   子プロセスも無視を引き継ぐ。止める必要がある場合は SIGKILL を使う。
 pp__shield_trap() {
   PP_TRAP_ARMED=0
-  trap '' INT TERM HUP
+  # PIPE も無視する (出力先の tee などが Ctrl-C で終了しても復旧を止めない)
+  trap '' INT TERM HUP PIPE
 }
 
 # pp__on_signal <SIG> — (1) 完了〜(5) 完了までの INT/TERM/HUP で自動復旧 (H2)
@@ -571,12 +572,15 @@ pp__rollback() {
   fi
 
   # 3) daemon-reload (何も restart しない。drop-in の反映にも必要)
+  #    失敗した場合、systemd は昇格後の定義を読み込んだままなので、どの unit も restart しない
+  local reloaded=1
   if ! pp__run_step "daemon-reload" "$sysctl" --user daemon-reload; then
-    PP_ROLLBACK_ERRORS+=("daemon-reload に失敗しました")
+    reloaded=0
+    PP_ROLLBACK_ERRORS+=("daemon-reload に失敗しました。読み込み済みの定義が古いため restart しません")
   fi
 
   # 4) コンソールの restart と health 確認
-  if (( unit_restored )); then
+  if (( unit_restored && reloaded )); then
     if ! pp__run_step "restart" "$sysctl" --user restart "$PP_UNIT_NAME"; then
       PP_ROLLBACK_ERRORS+=("unit の restart に失敗しました")
     fi
@@ -588,11 +592,11 @@ pp__rollback() {
       PP_ROLLBACK_ERRORS+=("復旧後の health が ok:true になりませんでした")
     fi
   else
-    pp__log "  unit を戻せないため、コンソールは restart しません (稼働中のプロセスを残します)"
+    pp__log "  unit を戻せないか daemon-reload に失敗したため、コンソールは restart しません (稼働中のプロセスを残します)"
   fi
 
   # 5) dashboard を restart し、3737 の health を確認
-  if (( PP_DASHBOARD )); then
+  if (( PP_DASHBOARD && reloaded )); then
     if ! pp__run_step "dashboard-restart" "$sysctl" --user restart "$PP_DASHBOARD_UNIT"; then
       PP_ROLLBACK_ERRORS+=("dashboard の restart に失敗しました")
     elif pp__dashboard_health_ok; then
@@ -903,6 +907,7 @@ main() {
       PP_FIRST_FAILED_STEP="$first_failed"
       PP_RESULT="ROLLBACK_FAILED"
       PP_REASON="symlink 準備に失敗し、昇格前の状態へも戻せませんでした（unit は未変更）"
+      PP_ROLLBACK_ERRORS+=("成果物 (production-current / previous) を昇格前の状態へ戻せませんでした")
       pp__record_rollback "ROLLBACK_FAILED"
       pp__log "== $PP_REASON =="
       if (( PP_JSON )); then pp__json_line "false" "ROLLBACK_FAILED" "$PP_REASON"; fi

@@ -91,6 +91,9 @@ _stub_systemctl() {
   cat > "$CCSU_SYSTEMCTL_BIN" <<'EOF'
 #!/usr/bin/env bash
 echo "systemctl $*" >> "${ORDER:?}"
+if [[ -n "${PP_STUB_FAIL_RECOVERY_RELOAD:-}" && "$*" == *daemon-reload* ]]; then
+  (( $(grep -c "daemon-reload" "$ORDER") >= 2 )) && exit 1
+fi
 if [[ -n "${PP_STUB_SIGNAL_ON_CONSOLE_RESTART:-}" && "$*" == *"restart claudeos-web-startup.service"* ]]; then
   # 祖先のうち promote-production.sh を実行している最上位のプロセスへ送る (bats には送らない)
   p="$PPID"; target=""
@@ -159,6 +162,10 @@ case " $* " in
     fi
     if [[ "${PP_STUB_SYMLINK_READONLY:-0}" == "1" ]]; then
       chmod 555 "$CLAUDEOS_HOME/releases"
+      exit 1
+    fi
+    if [[ "${PP_STUB_SYMLINK_BREAK:-0}" == "1" ]]; then
+      rm -f "$link"; mkdir -p "$link/busy"
       exit 1
     fi
     (( ${PP_STUB_SYMLINK_RC:-0} == 0 )) && _swap
@@ -515,6 +522,30 @@ OLDER=cccccccccccccccccccccccccccccccccccccccc
   [ "$status" -eq 1 ]
   [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ROLLED_BACK" ]
   [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLED_BACK" ]
+}
+
+@test "promote-production: 復旧の daemon-reload が失敗したら console も dashboard も restart しない" {
+  _seed_current "$OLD"
+  export PP_STUB_SMOKE_RC=1 PP_STUB_FAIL_RECOVERY_RELOAD=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  local last; last="$(_last_json "$output")"
+  [ "$(_current)" = "$OLD" ]
+  run grep -c "restart claudeos-web-startup.service" "$ORDER"
+  [ "$output" = "0" ]
+  # dashboard の restart は手順 (3d) の 1 回だけ
+  run grep -c "restart $DASHBOARD_UNIT" "$ORDER"
+  [ "$output" = "1" ]
+  [[ "$(printf '%s' "$last" | jq -r '.rollback_errors | join(" / ")')" == *"daemon-reload"*"restart しません"* ]]
+}
+
+@test "promote-production: 手順 (2) の復旧失敗も rollback_errors に残る" {
+  _seed_current "$OLD"
+  export PP_STUB_SYMLINK_BREAK=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r '.rollback_errors | length')" -eq 1 ]
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r '.rollback_errors | length')" -eq 1 ]
 }
 
 @test "promote-production: 手順 (2) の失敗でも previous を昇格前へ戻す" {
