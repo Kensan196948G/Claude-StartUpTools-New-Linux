@@ -899,12 +899,12 @@ rp__rollback() {
     fi
   fi
 
-  if ! rp__wait_health "$RP_PORT"; then
+  # --no-restart では稼働中のプロセスは変わらないため、health は戻し先を測れない (戻し先を取り消さない)。
+  # 呼び出し側が restart と health 確認を行う。
+  if (( ! RP_NO_RESTART )) && ! rp__wait_health "$RP_PORT"; then
     # rollback 先も健全でない → rollback 前の状態へ戻す (壊れたまま放置しない)
     rp__restore_link "$link" "$cur_rel" || log_error "symlink の切り戻しに失敗: $link"
-    if (( ! RP_NO_RESTART )); then
-      rp__restart_unit || log_error "切り戻し後の restart に失敗: $RP_UNIT"
-    fi
+    rp__restart_unit || log_error "切り戻し後の restart に失敗: $RP_UNIT"
     if [[ -n "$cur_rel" ]]; then
       rp__write_previous "$RP_ENV" "$prev" || log_warn "previous の更新に失敗"
     fi

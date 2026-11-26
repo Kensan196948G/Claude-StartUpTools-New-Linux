@@ -173,8 +173,10 @@ exit: 0 成功 / 1 失敗（復旧済み）/ 2 引数 / 3 確認待ち（`--yes`
 `CCSU_STATE_FILE` は既定で `CCSU_PROMOTE_CONFIG_PATH` の 2 階層上の `state.json`（= 実機 repo の state）を unit に渡す。
 これにより成果物起動後もコンソールの「デプロイ準備」「保守モード」は repo 側 `state.json` を読み書きし、成果物は不変のまま保たれる
 （別の場所を使う場合は `CCSU_PROMOTE_STATE_FILE` で上書き。置き場所が無ければ (0b) で中止）。
-安全弁: 二重実行は lock で拒否（exit 2）、(1)〜(5) 中の INT/TERM/HUP は自動復旧、初回昇格で失敗した場合は
-`production-current` を削除して「昇格前」の状態に戻す。
+安全弁: 二重実行は lock で拒否（exit 2）、(1)〜(5) 中の INT/TERM/HUP は自動復旧する。自動復旧は、手順 (2) の前に控えた
+`production-current` と `production-previous` の状態へ戻す（symlink を変える前の中断や同じ版の再昇格では版は変わらない。
+昇格前に symlink が無い初回昇格では削除する）。戻せない場合も unit と dashboard の復旧は続け、`ROLLBACK_FAILED`（exit 4）にする。
+手動の `release-promote.sh --rollback --no-restart` は health を確認しないため、restart と health 確認を続けて行う。
 
 ### 4-B. 手動手順（4-A が使えない場合）
 
