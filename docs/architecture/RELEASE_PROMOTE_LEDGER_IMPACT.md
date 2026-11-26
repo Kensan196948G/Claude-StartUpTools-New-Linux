@@ -2,6 +2,8 @@
 
 状態: 2026-11-26。PR #241 の R3 要件（変更影響分析・ロールバック手順）を満たすための文書。変更の目的と対象外は PR 本文を参照する。
 
+注: 本書は PR #241 時点の記録。自動復旧の経路は後に `PROMOTE_ROLLBACK_TARGET_IMPACT.md` の変更で置き換えた（`release-promote --rollback` は呼ばない）。
+
 ## 1. 変更内容
 
 - `bin/web-startup-service.sh`・`bin/staging-smoke-timer.sh`: 生成する systemd unit の `Documentation=` を `file:/絶対パス` 形式にする（従来はパスのままで、systemd が `Invalid URL, ignoring` を警告していた）。

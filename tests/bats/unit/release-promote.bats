@@ -327,6 +327,24 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [[ "$output" == *"NO_PREVIOUS"* ]]
 }
 
+@test "--rollback --no-restart: 稼働中プロセスの health では戻し先を取り消さない (#244)" {
+  _make_release "$REL_B" "$COMMIT_B" app/index.js
+  run bash "$SCRIPT" --env staging --release "$REL_B" --no-restart
+  [ "$status" -eq 0 ]
+  _make_release "$REL_A" "$COMMIT_A" app/index.js
+  run bash "$SCRIPT" --env staging --release "$REL_A" --no-restart
+  [ "$status" -eq 0 ]
+
+  # 稼働中の版が不健全でも、restart しない rollback は symlink を戻したままにする
+  _stub_curl
+  _health_body '{"ok":false}'
+  rm -f "$TEST_TEMP/curl.calls"
+  run bash "$SCRIPT" --env staging --rollback --no-restart
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$STG_LINK")" = "$COMMIT_B" ]
+  [ ! -f "$TEST_TEMP/curl.calls" ]
+}
+
 # ------------------------------------------------------------
 # --dry-run
 # ------------------------------------------------------------

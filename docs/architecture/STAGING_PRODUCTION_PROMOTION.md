@@ -272,7 +272,7 @@
 
 | ID | 指摘 | 対応 |
 |---|---|---|
-| H1 | 初回昇格の自動復旧で `production-current` が新成果物を指したまま残る | previous 不在時は symlink を削除し台帳に `NO_PREVIOUS_REMOVED`（#212） |
+| H1 | 初回昇格の自動復旧で `production-current` が新成果物を指したまま残る | 昇格前に symlink が無ければ削除し台帳に `NO_PREVIOUS_REMOVED`（#212、判定条件は #244・#245 の修正で変更） |
 | H2 | 中断（INT/TERM/HUP）時に復旧が走らない | (1)〜(5) 間は trap で自動復旧（#212） |
 | H3 | 成果物起動後に state.json が成果物内へ書かれる | unit に `CCSU_STATE_FILE=<repo>/state.json`（#211 + #214） |
 | M1 | `enable --now` は稼働中 unit を再起動しない（Runbook 記述と乖離） | Runbook 訂正: 稼働切替は (4)（#211 / #214） |

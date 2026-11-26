@@ -31,11 +31,10 @@
 #   (5) scripts/release/post-deploy-smoke.sh --env production --json
 #
 # 自動復旧: (3)〜(5) のいずれかが失敗したら
-#   unit をバックアップから戻す → 成果物 symlink を release-promote --rollback で戻す（previous がある場合）
+#   unit をバックアップから戻す → 成果物 symlink と production-previous を昇格前の状態へ戻す
+#     （昇格前に symlink が無い初回昇格では削除し、新 artifact を指したままにしない）
 #   → systemctl --user daemon-reload → restart → health(3740) 200 + ok:true を確認
-#   → dashboard の drop-in を削除し restart（(3d) を実行していた場合）→ 3737 health status=ok を確認
-#     （previous が無い初回昇格では release-promote --rollback が NO_PREVIOUS を返すため、
-#       production-current symlink を削除して新 artifact を指したままにしない）
+#   → dashboard の drop-in を昇格前の状態へ戻し restart → 3737 health status=ok を確認
 #   → promotions.jsonl に result=ROLLED_BACK を追記（復旧も失敗した場合は result=ROLLBACK_FAILED）
 # 中断: (1) 完了〜(5) 完了までの INT/TERM/HUP は自動復旧を実行して exit 1（復旧失敗は 4）。
 #       正常終了・中止時はトラップを解除する。
@@ -104,6 +103,10 @@ PP_HEALTH_INTERVAL="${CCSU_PROMOTE_HEALTH_INTERVAL:-1}"
 
 PP_RESULT=""
 PP_FAILED_STEP=""
+PP_PRE_LINK=""            # 昇格前の production-current の target (無ければ空)
+PP_PRE_PREVIOUS=""        # 昇格前の production-previous の内容
+PP_PRE_PREVIOUS_EXISTS=0
+PP_PRE_DROPIN_BACKUP=""   # 昇格前からある dashboard drop-in の控え (無ければ空)
 PP_FIRST_FAILED_STEP=""   # 復旧前の最初の失敗手順 (復旧中の失敗で上書きされるため台帳用に退避)
 PP_REASON=""
 PP_ROLLED_BACK="false"
@@ -310,40 +313,90 @@ pp__arm_trap() {
   trap 'pp__on_signal HUP' HUP
 }
 
-# pp__artifact_rollback — 成果物 symlink を戻す。(H1) previous 不在なら symlink を削除する
-#   0: 戻せた（ROLLED_BACK）または初回昇格として削除できた（NO_PREVIOUS_REMOVED）
-#   1: 削除に失敗（復旧失敗として扱う）
-pp__artifact_rollback() {
-  local out="" rc=0 current
-  out="$(bash "$(pp__bin release-promote.sh)" --env production --rollback --no-restart --json 2>&1)" || rc=$?
-  if (( PP_JSON )); then
-    printf '%s\n' "$out" >&2
-  else
-    if [[ -n "$out" ]]; then printf '%s\n' "$out" | sed 's/^/    /'; fi
+# pp__snapshot_artifact — 手順 (2) の前に、symlink・previous・dashboard drop-in を控える (読めなければ 1)
+pp__snapshot_artifact() {
+  local link previous
+  link="$(pp__home)/releases/production-current"
+  previous="$(pp__home)/releases/production-previous"
+  PP_PRE_LINK=""
+  PP_PRE_PREVIOUS=""
+  PP_PRE_PREVIOUS_EXISTS=0
+  PP_PRE_DROPIN_BACKUP=""
+  if [[ -L "$link" ]]; then PP_PRE_LINK="$(readlink -- "$link")" || return 1; fi
+  if [[ -f "$previous" ]]; then
+    PP_PRE_PREVIOUS_EXISTS=1
+    PP_PRE_PREVIOUS="$(cat -- "$previous")" || return 1
   fi
-  if (( rc == 0 )); then
-    pp__record_step "artifact-rollback" "true"
-    PP_ARTIFACT_ROLLBACK="ROLLED_BACK"
+  # 前回の昇格で作った drop-in は、復旧で削除せず同じ内容へ戻す (.conf で終わらない名前は systemd が読まない)
+  local dropin
+  dropin="$(pp__dropin_path)"
+  if (( PP_DASHBOARD )) && [[ -f "$dropin" ]]; then
+    cp -p -- "$dropin" "$dropin.bak-$PP_TS" || return 1
+    PP_PRE_DROPIN_BACKUP="$dropin.bak-$PP_TS"
+  fi
+  return 0
+}
+
+# pp__restore_previous_file — production-previous を控えた内容へ戻す
+pp__restore_previous_file() {
+  local previous tmp
+  previous="$(pp__home)/releases/production-previous"
+  if (( ! PP_PRE_PREVIOUS_EXISTS )); then
+    rm -f -- "$previous"
+    return
+  fi
+  tmp="${previous}.tmp.$$"
+  if printf '%s' "$PP_PRE_PREVIOUS" > "$tmp" && mv -Tf -- "$tmp" "$previous"; then
     return 0
   fi
-  if [[ "$out" == *"NO_PREVIOUS"* ]]; then
-    # 初回昇格: 戻し先が無い。新 artifact を指したままにせず symlink を削除する
-    current="$(pp__home)/releases/production-current"
-    if rm -f -- "$current"; then
-      pp__record_step "production-current-remove" "true"
-      PP_ARTIFACT_ROLLBACK="NO_PREVIOUS_REMOVED"
-      pp__log "  previous が無いため production-current を削除しました（初回昇格の巻き戻し）: $current"
-      return 0
+  rm -f -- "$tmp"
+  return 1
+}
+
+# pp__artifact_rollback — 成果物 symlink と previous を昇格前の状態へ戻す
+#   どの手順まで進んだかではなく、実際の symlink を控えと比べて判断する (中断は手順の途中で起こる)。
+#   previous を読む release-promote --rollback は使わない (手順 (2) が previous を書き換えた後や、
+#   symlink を変える前の中断では、1 つ前の版へ後退するため)。
+#   0: ROLLED_BACK / UNCHANGED / NO_PREVIOUS_REMOVED（初回昇格の symlink を削除）  1: 戻せない
+pp__artifact_rollback() {
+  local link now="" ok=1
+  link="$(pp__home)/releases/production-current"
+  if [[ -L "$link" ]]; then now="$(readlink -- "$link")"; fi
+
+  if [[ -n "$PP_PRE_LINK" ]]; then
+    if [[ -L "$link" && "$now" == "$PP_PRE_LINK" ]]; then
+      PP_ARTIFACT_ROLLBACK="UNCHANGED"
+    elif ln -sfn -- "$PP_PRE_LINK" "${link}.tmp.$$" && mv -Tf -- "${link}.tmp.$$" "$link"; then
+      PP_ARTIFACT_ROLLBACK="ROLLED_BACK"
+      pp__log "  production-current を昇格前の版へ戻しました: $PP_PRE_LINK"
+    else
+      rm -f -- "${link}.tmp.$$"
+      ok=0
     fi
-    pp__record_step "production-current-remove" "false"
-    PP_ARTIFACT_ROLLBACK="REMOVE_FAILED"
-    log_error "production-current を削除できません: $current"
-    return 1
+  elif [[ -L "$link" ]]; then
+    # 初回昇格: 戻し先が無い。新 artifact を指したままにせず symlink を削除する
+    if rm -f -- "$link"; then
+      PP_ARTIFACT_ROLLBACK="NO_PREVIOUS_REMOVED"
+      pp__log "  昇格前に production-current が無いため削除しました（初回昇格の巻き戻し）: $link"
+    else
+      ok=0
+    fi
+  elif [[ -e "$link" ]]; then
+    ok=0
+  else
+    PP_ARTIFACT_ROLLBACK="UNCHANGED"
+  fi
+
+  if (( ok )) && ! pp__restore_previous_file; then ok=0; fi
+
+  if (( ok )); then
+    pp__record_step "artifact-rollback" "true"
+    return 0
   fi
   pp__record_step "artifact-rollback" "false"
   PP_ARTIFACT_ROLLBACK="FAILED"
-  log_warn "成果物の切り戻しに失敗しました (previous が無い場合は正常)"
-  return 0
+  log_error "成果物を昇格前の状態へ戻せません: $link (昇格前の target: ${PP_PRE_LINK:-<なし>})"
+  return 1
 }
 
 pp__record_step() {
@@ -409,6 +462,7 @@ pp__record_rollback() {
     --arg unit "$PP_UNIT_NAME" \
     --arg note "promote-production: ${PP_FIRST_FAILED_STEP:-unknown} が失敗。artifact=${PP_ARTIFACT_ROLLBACK}; dashboard=${dashboard_note}" \
     --arg artifact "$PP_ARTIFACT_ROLLBACK" \
+    --arg restored "$PP_PRE_LINK" \
     --arg dashboard_unit "$PP_DASHBOARD_UNIT" \
     --arg dropin "$PP_DROPIN" \
     --argjson dashboard_enabled "$(if (( PP_DASHBOARD )); then printf true; else printf false; fi)" \
@@ -416,7 +470,7 @@ pp__record_rollback() {
     --argjson dashboard_health_ok "$(if [[ "$PP_DASHBOARD_HEALTH_OK" == "true" ]]; then printf true; else printf false; fi)" \
     --argjson port "$PP_PRODUCTION_PORT" \
     '{at:$at,env:"production",commit:$commit,result:$result,unit:$unit,port:$port,note:$note,
-      artifact_rollback:$artifact,
+      artifact_rollback:$artifact,restored_target:$restored,
       dashboard:{enabled:$dashboard_enabled,unit:$dashboard_unit,dropin:$dropin,
                  dropin_removed:$dashboard_dropin_removed,health_ok:$dashboard_health_ok}}' 2>/dev/null)" \
     || { log_warn "台帳の行を作成できません"; return 0; }
@@ -460,24 +514,27 @@ pp__rollback() {
     return 1
   fi
 
-  # 2) 成果物 symlink を戻す。previous が無い初回昇格では symlink を削除する (H1)
-  if ! pp__artifact_rollback; then
-    PP_RESULT="ROLLBACK_FAILED"
-    PP_REASON="production-current の削除に失敗しました"
-    return 1
-  fi
+  # 2) 成果物 symlink を昇格前へ戻す。昇格前に symlink が無い初回昇格では削除する (H1)
+  # 戻せなくても unit / dashboard の復旧は続け、最後に失敗として返す
+  local artifact_failed=0
+  pp__artifact_rollback || artifact_failed=1
 
-  # 2.5) dashboard の drop-in を削除（(3d) を実行した場合のみ）
+  # 2.5) dashboard の drop-in を昇格前の状態へ（昇格前からあれば内容を戻し、無ければ削除）
+  # 戻せなくても daemon-reload / restart / health は続ける (失敗した版を動かしたままにしない)
+  local dropin_failed=""
   if (( PP_DASHBOARD )); then
     local dropin
     dropin="$(pp__dropin_path)"
-    if [[ -e "$dropin" ]]; then
-      if ! pp__run_step "dashboard-dropin-remove" rm -f -- "$dropin"; then
-        PP_RESULT="ROLLBACK_FAILED"
-        PP_REASON="dashboard の drop-in を削除できませんでした: $dropin"
-        return 1
+    if [[ -n "$PP_PRE_DROPIN_BACKUP" ]]; then
+      if ! pp__run_step "dashboard-dropin-restore" cp -p -- "$PP_PRE_DROPIN_BACKUP" "$dropin"; then
+        dropin_failed="dashboard の drop-in を昇格前の内容へ戻せませんでした: $dropin"
       fi
-      PP_DASHBOARD_DROPIN_REMOVED="true"
+    elif [[ -e "$dropin" ]]; then
+      if ! pp__run_step "dashboard-dropin-remove" rm -f -- "$dropin"; then
+        dropin_failed="dashboard の drop-in を削除できませんでした: $dropin"
+      else
+        PP_DASHBOARD_DROPIN_REMOVED="true"
+      fi
     else
       pp__record_step "dashboard-dropin-remove" "true"
       PP_DASHBOARD_DROPIN_REMOVED="true"
@@ -527,6 +584,18 @@ pp__rollback() {
     fi
   fi
 
+  if [[ -n "$dropin_failed" ]]; then
+    PP_RESULT="ROLLBACK_FAILED"
+    PP_REASON="$dropin_failed"
+    return 1
+  fi
+
+  if (( artifact_failed )); then
+    PP_RESULT="ROLLBACK_FAILED"
+    PP_REASON="成果物 (production-current / previous) を昇格前の状態へ戻せませんでした"
+    return 1
+  fi
+
   PP_ROLLED_BACK="true"
   pp__record_rollback
   pp__log "== 自動復旧が完了しました（本番は元の状態で稼働中）=="
@@ -568,7 +637,7 @@ pp__print_plan() {
   fi
   printf '    (4) %s --env production --release %s --json\n' "$(pp__bin release-promote.sh)" "$rel"
   printf '    (5) %s --env production --json\n' "$(pp__bin post-deploy-smoke.sh)"
-  printf '  失敗時 (3)〜(5): unit をバックアップへ戻す → symlink を --rollback → dashboard drop-in を削除 → daemon-reload → restart → health 確認\n'
+  printf '  失敗時 (3)〜(5): unit をバックアップへ戻す → symlink と previous を昇格前へ戻す → dashboard drop-in を昇格前へ戻す → daemon-reload → restart → health 確認\n'
   printf '  exit: 0 成功 / 1 失敗（復旧済み） / 2 引数 / 3 確認待ち / 4 復旧も失敗\n'
 }
 
@@ -790,6 +859,16 @@ main() {
   PP_BACKUP_SHA="$(sha256sum -- "$PP_BACKUP" | awk '{print $1}')"
   pp__log "  (1) unit バックアップ: $PP_BACKUP (sha256=${PP_BACKUP_SHA:0:12}…)"
 
+  if ! pp__snapshot_artifact; then
+    pp__record_step "snapshot" "false"
+    PP_FAILED_STEP="snapshot"
+    PP_RESULT="ABORTED"
+    PP_REASON="昇格前の状態を控えられません（何も変更していません）"
+    pp__log "中止: $PP_REASON"
+    if (( PP_JSON )); then pp__json_line "false" "ABORTED" "$PP_REASON"; fi
+    return 1
+  fi
+
   # ここから (5) 完了までは、中断されても必ず自動復旧する (H2)
   pp__arm_trap
 
@@ -799,6 +878,17 @@ main() {
     env CCSU_PROMOTE_SKIP_PROMOTED_LEDGER=1 \
     bash "$(pp__bin release-promote.sh)" --env production --release "$PP_RELEASE" --no-restart --json; then
     pp__disarm_trap
+    # release-promote は失敗しても previous を書き換えていることがあるため、控えた状態へ戻す
+    local first_failed="$PP_FAILED_STEP"
+    if ! pp__artifact_rollback; then
+      PP_FIRST_FAILED_STEP="$first_failed"
+      PP_RESULT="ROLLBACK_FAILED"
+      PP_REASON="symlink 準備に失敗し、昇格前の状態へも戻せませんでした（unit は未変更）"
+      pp__record_rollback "ROLLBACK_FAILED"
+      pp__log "== $PP_REASON =="
+      if (( PP_JSON )); then pp__json_line "false" "ROLLBACK_FAILED" "$PP_REASON"; fi
+      return 4
+    fi
     PP_RESULT="ABORTED"
     PP_REASON="symlink 準備に失敗しました（unit は未変更）"
     pp__log "中止: $PP_REASON"

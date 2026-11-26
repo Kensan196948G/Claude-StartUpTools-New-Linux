@@ -123,15 +123,38 @@ case " $* " in
   *) _label=step4 ;;
 esac
 echo "$_label=${CCSU_PROMOTE_SKIP_PROMOTED_LEDGER:-unset}" >> "${ORDER}.ledger-env"
+# 実物と同じく、昇格は旧 target を previous へ残して production-current を張り替える
+rel=""; prev_arg=""
+for a in "$@"; do [[ "$prev_arg" == "--release" ]] && rel="$a"; prev_arg="$a"; done
+link="${CLAUDEOS_HOME:?}/releases/production-current"
+_swap() {
+  local cur=""
+  [[ -L "$link" ]] && cur="$(readlink "$link")"
+  [[ -n "$cur" && "$cur" != "$rel" ]] && printf '%s' "$cur" > "$CLAUDEOS_HOME/releases/production-previous"
+  ln -sfn "$rel" "$link"
+}
 case " $* " in
-  *" --rollback "*)
-    if [[ "${PP_STUB_ROLLBACK_NO_PREVIOUS:-0}" == "1" ]]; then
-      echo '{"ok":false,"error":"NO_PREVIOUS","message":"戻り先 (previous) がありません"}'
+  *" --no-restart "*)
+    # PP_STUB_SYMLINK_SIGNAL: 張り替え前にオーケストレータへシグナルを送る
+    if [[ -n "${PP_STUB_SYMLINK_SIGNAL:-}" ]]; then
+      gp="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
+      kill "-${PP_STUB_SYMLINK_SIGNAL}" "$gp" 2>/dev/null || true
+      sleep 0.5
       exit 1
     fi
-    exit "${PP_STUB_ROLLBACK_RC:-0}" ;;
-  *" --no-restart "*) exit "${PP_STUB_SYMLINK_RC:-0}" ;;
-  *) exit "${PP_STUB_PROMOTE_RC:-0}" ;;
+    # PP_STUB_SYMLINK_PARTIAL: 実物の health 失敗と同じく previous を書き換え link は旧版のまま失敗する
+    if [[ "${PP_STUB_SYMLINK_PARTIAL:-0}" == "1" ]]; then
+      [[ -L "$link" ]] && printf '%s' "$(readlink "$link")" > "$CLAUDEOS_HOME/releases/production-previous"
+      exit 1
+    fi
+    (( ${PP_STUB_SYMLINK_RC:-0} == 0 )) && _swap
+    exit "${PP_STUB_SYMLINK_RC:-0}" ;;
+  *)
+    # PP_STUB_BREAK_LINK: symlink を戻せない状態 (中身のあるディレクトリ) にする
+    if [[ "${PP_STUB_BREAK_LINK:-0}" == "1" ]]; then
+      rm -f "$link"; mkdir -p "$link/busy"
+    fi
+    exit "${PP_STUB_PROMOTE_RC:-0}" ;;
 esac
 EOF
   cat > "$CCSU_PROMOTE_BIN_DIR/web-startup-service.sh" <<'EOF'
@@ -146,6 +169,7 @@ EOF
   cat > "$CCSU_PROMOTE_BIN_DIR/post-deploy-smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "post-deploy-smoke $*" >> "${ORDER:?}"
+[[ -n "${PP_STUB_LOCK_DROPIN:-}" ]] && chmod 400 "$PP_STUB_LOCK_DROPIN"
 if [[ -n "${PP_STUB_SMOKE_SIGNAL:-}" ]]; then
   # このスタブは pp__run_step のコマンド置換 (サブシェル) から呼ばれるため、
   # その親 = promote-production.sh 本体へシグナルを送る
@@ -350,20 +374,118 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
   [ "$(sha256sum "$CCSU_SYSTEMD_UNIT_PATH" | awk '{print $1}')" = "$(sha256sum "$BACKUP" | awk '{print $1}')" ]
 }
 
-@test "promote-production: 復旧時に成果物の rollback も実行する" {
-  export PP_STUB_SMOKE_RC=1
-  run bash "$SCRIPT" --release "$SHA" --yes
-  [ "$status" -eq 1 ]
-  grep -q "release-promote --env production --rollback --no-restart --json" "$ORDER"
+# _seed_current <current> [previous] — 昇格前の symlink と previous を用意する
+_seed_current() {
+  mkdir -p "$CLAUDEOS_HOME/releases"
+  ln -sfn "$1" "$CLAUDEOS_HOME/releases/production-current"
+  [[ -n "${2:-}" ]] && printf '%s' "$2" > "$CLAUDEOS_HOME/releases/production-previous"
+  return 0
 }
+_current() { readlink "$CLAUDEOS_HOME/releases/production-current"; }
+_previous() { cat "$CLAUDEOS_HOME/releases/production-previous"; }
 
-@test "promote-production: 成果物 rollback が失敗しても unit 復旧は続行する" {
-  export PP_STUB_SMOKE_RC=1 PP_STUB_ROLLBACK_RC=1
+OLD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+OLDER=cccccccccccccccccccccccccccccccccccccccc
+
+@test "promote-production: 手順 (4) の失敗では昇格前の版と previous へ戻す (#244)" {
+  _seed_current "$OLD" "$OLDER"
+  export PP_STUB_PROMOTE_RC=1
   run bash "$SCRIPT" --release "$SHA" --yes --json
   [ "$status" -eq 1 ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(_previous)" = "$OLDER" ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .artifact_rollback)" = "ROLLED_BACK" ]
+  # 復旧は previous を読む --rollback に頼らない
+  run grep -q -- "--rollback" "$ORDER"
+  [ "$status" -eq 1 ]
+}
+
+@test "promote-production: symlink 張り替え前の中断では版を後退させない (#245)" {
+  _seed_current "$OLD" "$OLDER"
+  export PP_STUB_SYMLINK_SIGNAL=TERM
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(_previous)" = "$OLDER" ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .artifact_rollback)" = "UNCHANGED" ]
+  # シグナル経路を通ったことを確認する (届かずに手順 (2) が失敗しただけでは通さない)
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .failed_step)" = "signal-TERM" ]
+}
+
+@test "promote-production: 同じ版の再昇格が失敗しても版を後退させない (#245)" {
+  _seed_current "$SHA" "$OLD"
+  export PP_STUB_SMOKE_RC=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  [ "$(_current)" = "$SHA" ]
+  [ "$(_previous)" = "$OLD" ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .artifact_rollback)" = "UNCHANGED" ]
+}
+
+@test "promote-production: 2 回目以降の昇格の失敗では昇格前の dashboard drop-in を戻す" {
+  _seed_current "$OLD"
+  mkdir -p "$(dirname "$DROPIN")"
+  printf '# previous promotion\n[Service]\n' > "$DROPIN"
+  cp "$DROPIN" "$TEST_TEMP/dropin.before"
+  export PP_STUB_SMOKE_RC=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  cmp "$DROPIN" "$TEST_TEMP/dropin.before"
+  grep -q "systemctl --user restart $DASHBOARD_UNIT" "$ORDER"
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .dashboard.dropin_removed)" = "false" ]
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .restored_target)" = "$OLD" ]
+}
+
+@test "promote-production: drop-in を戻せなくても restart と health 確認は続けて ROLLBACK_FAILED" {
+  _seed_current "$OLD"
+  mkdir -p "$(dirname "$DROPIN")"
+  printf '# previous promotion\n[Service]\n' > "$DROPIN"
+  [[ "$(id -u)" -eq 0 ]] && skip "root は読み取り専用ファイルへ書ける"
+  export PP_STUB_SMOKE_RC=1 PP_STUB_LOCK_DROPIN="$DROPIN"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ROLLBACK_FAILED" ]
+  grep -q "systemctl --user restart claudeos-web-startup.service" "$ORDER"
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r '.steps[] | select(.name=="health") | .ok')" = "true" ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(tail -1 "$CLAUDEOS_HOME/releases/promotions.jsonl" | jq -r .result)" = "ROLLBACK_FAILED" ]
+}
+
+@test "promote-production: 手順 (2) の失敗でも previous を昇格前へ戻す" {
+  _seed_current "$OLD" "$OLDER"
+  export PP_STUB_SYMLINK_PARTIAL=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ABORTED" ]
+  [ "$(_current)" = "$OLD" ]
+  [ "$(_previous)" = "$OLDER" ]
+}
+
+@test "promote-production: 控えが取れなければ何も変えずに中止する" {
+  _seed_current "$OLD" "$OLDER"
+  chmod 000 "$CLAUDEOS_HOME/releases/production-previous"
+  [[ -r "$CLAUDEOS_HOME/releases/production-previous" ]] && skip "読み取り不可を作れない環境 (root)"
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 1 ]
+  [ "$(printf '%s' "$(_last_json "$output")" | jq -r .result)" = "ABORTED" ]
+  run grep -q -- "--no-restart" "$ORDER"
+  [ "$status" -eq 1 ]
+  [ "$(_current)" = "$OLD" ]
+}
+
+@test "promote-production: symlink を戻せなければ復旧は続行して ROLLBACK_FAILED (exit 4)" {
+  _seed_current "$OLD"
+  export PP_STUB_PROMOTE_RC=1 PP_STUB_BREAK_LINK=1
+  run bash "$SCRIPT" --release "$SHA" --yes --json
+  [ "$status" -eq 4 ]
   local last; last="$(_last_json "$output")"
-  [ "$(printf '%s' "$last" | jq -r .rolled_back)" = "true" ]
-  [ "$(cat "$CCSU_SYSTEMD_UNIT_PATH")" = "ORIGINAL UNIT" ]
+  [ "$(printf '%s' "$last" | jq -r .result)" = "ROLLBACK_FAILED" ]
+  [ "$(printf '%s' "$last" | jq -r .artifact_rollback)" = "FAILED" ]
+  # unit と dashboard の復旧は続行している
+  [ ! -e "$DROPIN" ]
+  grep -q "systemctl --user restart claudeos-web-startup.service" "$ORDER"
+  local ledger="$CLAUDEOS_HOME/releases/promotions.jsonl"
+  [ "$(tail -1 "$ledger" | jq -r .result)" = "ROLLBACK_FAILED" ]
 }
 
 @test "promote-production: 復旧後の health が NG なら exit 4（要人手）" {
@@ -523,7 +645,7 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
 
   # L1: 台帳に dashboard の復旧結果が入る
   local ledger="$CLAUDEOS_HOME/releases/promotions.jsonl"
-  [ "$(tail -1 "$ledger" | jq -r .artifact_rollback)" = "ROLLED_BACK" ]
+  [ "$(tail -1 "$ledger" | jq -r .artifact_rollback)" = "NO_PREVIOUS_REMOVED" ]
   [ "$(tail -1 "$ledger" | jq -r '.dashboard.enabled')" = "true" ]
   [ "$(tail -1 "$ledger" | jq -r '.dashboard.dropin_removed')" = "true" ]
   [ "$(tail -1 "$ledger" | jq -r '.dashboard.health_ok')" = "true" ]
@@ -577,10 +699,8 @@ _last_json() { printf '%s\n' "$1" | tail -1; }
 # ------------------------------------------------------------
 
 @test "promote-production: H1 初回昇格 (previous 不在) の復旧で production-current を削除する" {
-  # (2) が作るはずの symlink を用意しておく
-  ln -sfn "$SHA" "$CLAUDEOS_HOME/releases/production-current"
+  # 昇格前に production-current は無く、(2) が作る
   export PP_STUB_SMOKE_RC=1
-  export PP_STUB_ROLLBACK_NO_PREVIOUS=1
 
   run bash "$SCRIPT" --release "$SHA" --yes --json
   [ "$status" -eq 1 ]
