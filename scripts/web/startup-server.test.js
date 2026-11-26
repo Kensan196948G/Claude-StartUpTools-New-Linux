@@ -1965,6 +1965,8 @@ test('ops-restart: ヘルパ (checkOpsDailyLimit / isProtectedOpsTarget)', () =>
   assert.equal(srv.checkOpsDailyLimit({ count: 0, corrupt: true }, 2).error, 'OPS_USAGE_UNREADABLE', '破損は fail-closed');
   ['web-startup', 'Web-Startup-Tools', 'cloudflared', 'my-Tunnel-svc'].forEach(n => assert.equal(srv.isProtectedOpsTarget(n), true, n));
   ['Alpha-App', 'Mirai-DX-Project'].forEach(n => assert.equal(srv.isProtectedOpsTarget(n), false, n));
+  // 意図した fail-closed: 単語境界ではなく部分一致。tunnel を含む正当な名前の誤拒否と引き換えに、cftunnel 等を保護する
+  ['cftunnel', 'wind-tunnel-sim', 'CloudflaredQuick'].forEach(n => assert.equal(srv.isProtectedOpsTarget(n), true, n));
 });
 
 test('ops-restart: 子プロセスの環境は絞る (サーバーの秘密・claude の認証は渡さず、systemctl --user に必要な変数は通す)', () => {
