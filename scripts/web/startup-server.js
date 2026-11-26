@@ -632,6 +632,9 @@ function opsChildEnv(env) {
  *   このサービス自身 (web-startup) を再起動すると実行中のリクエストごと止まり、
  *   公開トンネル (cloudflared / tunnel) を再起動すると、利用者の唯一の経路が切れる。
  *   台帳に載っていなくても (将来載っても) 拒否できるよう、名前で固定拒否する。
+ *   部分一致 (大文字小文字を区別しない) は意図した fail-closed。tunnel を名前に含む正当な
+ *   プロジェクト (例: wind-tunnel-sim) も拒否される (誤拒否)。単語境界や完全一致へ狭めると
+ *   cftunnel のような実在し得る unit が保護から外れ、唯一の経路を切る再起動を許すため、狭めない。
  */
 function isProtectedOpsTarget(project) {
   return /web-startup|cloudflared|tunnel/i.test(String(project || ''));
